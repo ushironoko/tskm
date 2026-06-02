@@ -2,7 +2,7 @@
 
 A [Standard Schema](https://standardschema.dev) compliant, functional validation library — with an **AOT type compiler** that materializes inferred types into static `.ts` files.
 
-> **Status:** proven core. The runtime and the sidecar AOT compiler work end-to-end and are covered by unit, type-level, and integration tests. Broad features (in-place rewrite, JSON Schema, watch mode, the Vite plugin) are in progress.
+> **Status:** the runtime, the AOT compiler (sidecar **and** experimental in-place rewrite), watch mode, the experimental JSON Schema emitter, and the Vite plugin all work end-to-end and are covered by unit, type-level, and real-checker integration tests. In-place rewrite and JSON Schema output are opt-in/experimental.
 
 ## Overview
 
@@ -81,16 +81,29 @@ export type User = {
 import type { User } from "./user.schema.gen"
 ```
 
-Schemas: `string number boolean bigint date literal null_ undefined_ any unknown never_ picklist object array record tuple union optional nullable nullish lazy` (+ async `objectAsync` `arrayAsync`).
+Schemas: `string number boolean bigint date literal null_ undefined_ any unknown never_ picklist object array record tuple union optional nullable nullish lazy` (+ async `objectAsync` `arrayAsync` `unionAsync`).
 Actions (via `pipe`): `minLength maxLength length minValue maxValue integer multipleOf email url regex nonEmpty check transform brand readonly` (+ `checkAsync` `transformAsync`).
 Methods: `pipe parse safeParse is assert fallback` (+ `parseAsync safeParseAsync pipeAsync`).
+
+## CLI
+
+```bash
+tskm init           # write a starter tskm.config.ts
+tskm gen            # generate sidecar .gen.ts for every included schema
+tskm gen --mode inplace   # rewrite `type T = Infer<typeof X>` markers in place (experimental)
+tskm watch          # generate, then re-generate on change
+tskm json-schema    # emit JSON Schema per schema, via an isolated worker (experimental)
+```
+
+Use it from Vite with `@tskm/vite`: `import { tskm } from "@tskm/vite"` and add `tskm()` to `plugins` —
+it runs the compiler on `buildStart` and watches during `vite dev`.
 
 ## How It Works
 
 The compiler never reads your schema at runtime — the inferred type only exists in the type system, so it asks the type checker directly:
 
 1. **Discover** — [`oxc-parser`](https://oxc.rs) scans each source file (syntactically) for exported `const`s whose factory is imported from `tskm`, and for explicit `type T = Infer<typeof X>` markers.
-2. **Query** — for each schema, the compiler writes a tiny sibling file next to the source that declares a marker against the schema's output type:
+2. **Query** — for each schema, the compiler writes a tiny sibling file (`<base>.tskm-query.ts`, deleted afterward) next to the source that declares a marker against the schema's output type:
 
    ```ts
    import { userSchema } from "./user.schema"
@@ -103,6 +116,49 @@ The compiler never reads your schema at runtime — the inferred type only exist
 3. **Emit** — the resolved type is pretty-printed deterministically and written to a sidecar `*.gen.ts`. The temporary query files are deleted; your source is never modified. If a schema fails to type-check (resolves to `any`/`unknown`/`never`), the previous output is kept and a diagnostic is reported instead of overwriting good types.
 
 The checker runs as a long-lived process: it opens the project once and is fed incremental file changes, so generating many schemas stays fast. No `tsc` plugin, no `ts-patch`, no transformer in your build.
+
+## Type support
+
+**Sidecar / in-place `.ts` output has no fixed "supported subset".** Because the type comes from the
+real checker, whatever `InferOutput<typeof schema>` resolves to is what you get — including types produced
+by `transform`, generics, and conditional types. The only failure mode is **fail-closed**: if a schema
+resolves to `any`/`unknown`/`never`, the previous output is kept and a diagnostic is reported.
+
+The **experimental JSON Schema** emitter is different: it walks the runtime schema structurally, so it has
+a documented mapping (and warns on anything it cannot represent).
+
+| schema | generated `.ts` type | JSON Schema (draft 2020-12) |
+| --- | --- | --- |
+| `string` `number` `boolean` | `string` `number` `boolean` | `{ "type": … }` |
+| `bigint` | `bigint` | `{ "type": "string" }` ⚠ |
+| `date` | `Date` | `{ "type": "string", "format": "date-time" }` ⚠ |
+| `literal(x)` | `x` | `{ "const": x }` |
+| `picklist([…])` | union of literals | `{ "enum": […] }` |
+| `null_` `undefined_` | `null` `undefined` | `{ "type": "null" }` · `{}` ⚠ |
+| `any` `unknown` `never_` | `any` `unknown` `never` | `{}` · `{}` · `{ "not": {} }` |
+| `object({…})` | `{ k: T }` | `{ "type": "object", "properties", "required", "additionalProperties": false }` |
+| `array(T)` | `T[]` | `{ "type": "array", "items": T }` |
+| `record(V)` | `Record<string, V>` | `{ "type": "object", "additionalProperties": V }` |
+| `tuple([A, B])` | `[A, B]` | `{ "type": "array", "prefixItems": [A, B], "items": false }` |
+| `union([A, B])` | `A \| B` | `{ "anyOf": [A, B] }` |
+| `optional(T)` | `T \| undefined` | inside `object`: `T`, key dropped from `required`; standalone: `T` ⚠ (drops `undefined`) |
+| `nullable(T)` | `T \| null` | `{ "anyOf": [T, { "type": "null" }] }` |
+| `nullish(T)` | `T \| null \| undefined` | `{ "anyOf": [T, { "type": "null" }] }` ⚠ (drops `undefined`) |
+| `lazy(() => T)` | recursive `T` | `$ref` / `$defs` |
+| pipe `minLength`/`maxLength`/`length`/`nonEmpty` | unchanged | `minLength`/`maxLength` (or `minItems`/`maxItems`) |
+| pipe `minValue`/`maxValue`/`integer`/`multipleOf` | unchanged | `minimum`/`maximum`/`"type":"integer"`/`multipleOf` (numeric bases only) |
+| pipe `email`/`url`/`regex` | unchanged | `format: "email"`/`format: "uri"`/`pattern` |
+| pipe `transform`/`brand`/`check`/`readonly` (+ `checkAsync`/`transformAsync`) | **output type** (resolved) | ⚠ not representable — warns, keeps the base constraints |
+
+⚠ = lossy or unrepresentable in JSON Schema; the emitter records a warning.
+
+## Limitations
+
+- **`optional(x)`** renders as `k: T | undefined`, not `k?: T` (the value is the same; the key is still required in the object position). JSON Schema correctly drops it from `required`.
+- **In-place mode** only recognizes *single-line* `export type T = Infer<typeof X>` markers, and trailing content on that line is dropped on first conversion. It is experimental and opt-in.
+- **JSON Schema** runs your schema module in an isolated subprocess; it assumes the module is side-effect-free and imports cleanly under the chosen runtime (`--exec`/`execPath`). `transform`/refinements that JSON Schema can't express are warned and omitted. `minValue`/`maxValue` map to `minimum`/`maximum` and are only meaningful on a number base (on a `date` base they emit numeric bounds that don't apply to the string schema).
+- **`union`** emits a single schema-level issue on failure (no per-member aggregation yet).
+- **`pipe(schema, transform(fn))`** infers `fn`'s input from an explicit parameter annotation; annotate it (`transform((s: string) => …)`) when the input isn't otherwise constrained.
 
 ## Development
 
