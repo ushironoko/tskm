@@ -1,0 +1,39 @@
+{
+  "name": "@tskm/compiler",
+  "version": "0.0.0",
+  "description": "AOT schema-to-type compiler for tskm, powered by the tsgo (Corsa) checker API",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "tskm": "./dist/cli.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@corsa-bind/napi": "0.35.0",
+    "oxc-parser": "0.134.0"
+  },
+  "peerDependencies": {
+    "@typescript/native-preview": ">=7.0.0-dev.20260601.1"
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "7.0.0-dev.20260601.1"
+  },
+  "engines": {
+    "node": ">=22",
+    "bun": ">=1.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

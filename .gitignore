@@ -1,0 +1,7 @@
+node_modules
+dist
+*.tsbuildinfo
+.tskm
+*.tskm-query.ts
+coverage
+.DS_Store
