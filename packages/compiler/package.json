@@ -17,7 +17,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown"
+    "build": "rolldown -c rolldown.config.ts"
   },
   "dependencies": {
     "@corsa-bind/napi": "0.35.0",

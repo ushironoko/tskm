@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "bun:test"
 import { planWatchActions, type WatchEvent, type WatchPlanContext } from "../src/watch.ts"
 
 const root = "/proj"

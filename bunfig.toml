@@ -1,2 +1,10 @@
 [install]
 exact = true
+
+[test]
+# Coverage is measured (text + lcov for CI), but not gated on a threshold.
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"
+coverageSkipTestFiles = true
+# Temp config files that loadConfig dynamically imports during tests must not pollute the report.
+coveragePathIgnorePatterns = ["**/tmp/**", "**/node_modules/**"]

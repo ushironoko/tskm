@@ -1,6 +1,6 @@
+import { afterAll, describe, expect, it } from "bun:test"
 import { existsSync, readFileSync, rmSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { afterAll, describe, expect, it } from "vitest"
 import { generate } from "../src/index.ts"
 
 const fixtureRoot = fileURLToPath(new URL("./fixtures/basic", import.meta.url))
@@ -39,7 +39,7 @@ describe("compiler generate (real tsgo) — the gate", () => {
     expect(gen).toContain("nameLength: number")
     // a bare string schema materializes to `string`
     expect(gen).toContain("export type Tag = string")
-  })
+  }, 60_000)
 
   it("leaves no query files behind", () => {
     expect(existsSync(queryGlob)).toBe(false)

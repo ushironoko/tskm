@@ -1,8 +1,16 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // `bun:test` runtime tests and Node-using integration tests are type-checked here too,
+    // so both ambient global sets must be available for the type lane (`tsc --noEmit`).
+    "types": ["bun", "node"],
+    // Resolve the workspace package to its source so `bun test` and the type lane work from a
+    // fresh checkout with no prior build (the published entry still goes through `exports` → dist).
+    "paths": {
+      "@tskm/compiler": ["./packages/compiler/src/index.ts"]
+    }
   },
-  "include": ["packages/*/src", "packages/*/test", "packages/*/*.config.ts", "vitest.config.ts"],
+  "include": ["packages/*/src", "packages/*/test", "packages/*/*.config.ts"],
   "exclude": ["**/node_modules/**", "**/dist/**", "**/fixtures/**"]
 }
