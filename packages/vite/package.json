@@ -14,7 +14,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown"
+    "build": "rolldown -c rolldown.config.ts"
   },
   "dependencies": {
     "@tskm/compiler": "workspace:*"

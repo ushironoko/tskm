@@ -1,6 +1,6 @@
+import { describe, expect, it } from "bun:test"
 import type { GenerateResult, WatchController } from "@tskm/compiler"
 import type { ResolvedConfig, ViteDevServer } from "vite"
-import { describe, expect, it, vi } from "vitest"
 import {
   createTskmPlugin,
   type TskmPluginDeps,
@@ -9,6 +9,23 @@ import {
 } from "../src/index.ts"
 
 const emptyResult: GenerateResult = { files: [], diagnostics: [] }
+
+// Polls an assertion until it passes or the timeout elapses — a local stand-in for
+// vitest's `vi.waitFor`, used to await the async watcher close.
+async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
+  const start = Date.now()
+  for (;;) {
+    try {
+      assertion()
+      return
+    } catch (error) {
+      if (Date.now() - start > timeout) {
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+}
 
 function makeDeps(): {
   deps: TskmPluginDeps
@@ -111,7 +128,7 @@ describe("tskm vite plugin", () => {
 
     expect(fake.controller.closed).toBe(0)
     fireClose()
-    await vi.waitFor(() => expect(fake.controller.closed).toBe(1))
+    await waitFor(() => expect(fake.controller.closed).toBe(1))
   })
 
   it("watch === false does not start a watcher", async () => {

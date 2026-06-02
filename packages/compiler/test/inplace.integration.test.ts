@@ -1,6 +1,6 @@
+import { afterAll, describe, expect, it } from "bun:test"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { afterAll, describe, expect, it } from "vitest"
 import { generate } from "../src/index.ts"
 
 // A throwaway schema written INTO the fixture's `src/` (so it sits under the tsconfig
@@ -48,7 +48,7 @@ describe("compiler generate — inplace mode (real tsgo)", () => {
     expect(written).toContain("// @tskm-end Widget")
     // The schema declaration itself is preserved verbatim.
     expect(written).toContain("export const widgetSchema = object({")
-  })
+  }, 60_000)
 
   it("is idempotent: a second run reports no change and leaves the file untouched", async () => {
     const before = readFileSync(source, "utf8")
@@ -59,7 +59,7 @@ describe("compiler generate — inplace mode (real tsgo)", () => {
     })
     expect(result.files[0]?.changed).toBe(false)
     expect(readFileSync(source, "utf8")).toBe(before)
-  })
+  }, 60_000)
 
   it("leaves no query files behind", () => {
     expect(existsSync(query)).toBe(false)

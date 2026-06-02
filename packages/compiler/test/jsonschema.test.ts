@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "bun:test"
 import { resolveConfig } from "../src/config.ts"
 import { jsonSchemaOutputPath, schemaToJsonSchema } from "../src/jsonschema.ts"
 

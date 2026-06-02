@@ -1,7 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@tskm/compiler": ["../compiler/src/index.ts"]
+    }
   },
   "include": ["src", "test"]
 }

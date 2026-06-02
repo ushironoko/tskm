@@ -1,13 +1,13 @@
+import { afterAll, describe, expect, it } from "bun:test"
 import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { afterAll, describe, expect, it } from "vitest"
 import { generateJsonSchema } from "../src/index.ts"
 
 // Runs the REAL isolated worker subprocess against the existing fixture schema module.
-// The worker must import a `.ts` module that bare-imports `tskm`; vitest's own
-// `process.execPath` is plain node (which, in this bun-workspace, cannot resolve the
-// workspace `tskm`), so we point the worker at a TS-capable `bun` when one is on PATH.
+// The worker must import a `.ts` module that bare-imports `tskm`, so it needs a TS-capable
+// runtime that can resolve the workspace `tskm`; we resolve a `bun` on PATH and pass it
+// explicitly as the worker exec path.
 const fixtureRoot = fileURLToPath(new URL("./fixtures/basic", import.meta.url))
 const output = fileURLToPath(new URL("./fixtures/basic/src/account.schema.json", import.meta.url))
 const noisySource = fileURLToPath(new URL("./fixtures/basic/src/noisy.schema.ts", import.meta.url))
@@ -68,7 +68,7 @@ describe.skipIf(!bun)("generateJsonSchema — isolated subprocess (real import)"
     expect(account.required).toEqual(expect.arrayContaining(["id", "age", "roles", "nameLength"]))
 
     expect(doc.tagSchema).toEqual({ type: "string" })
-  })
+  }, 60_000)
 
   it("tolerates a schema module that writes to stdout (envelope is file-based)", async () => {
     // A stray console.log used to corrupt the stdout envelope; the worker now writes to a
@@ -90,5 +90,5 @@ describe.skipIf(!bun)("generateJsonSchema — isolated subprocess (real import)"
     }
     expect(doc.noisySchema.type).toBe("object")
     expect(doc.noisySchema.properties.a?.type).toBe("string")
-  })
+  }, 60_000)
 })

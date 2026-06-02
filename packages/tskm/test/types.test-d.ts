@@ -1,4 +1,5 @@
-import { describe, expectTypeOf, test } from "vitest"
+import { describe, test } from "bun:test"
+import { expectTypeOf } from "expect-type"
 import {
   array,
   type InferInput,
