@@ -1,0 +1,12 @@
+{
+  "name": "@tskm/example-basic",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "tskm": "workspace:*"
+  },
+  "devDependencies": {
+    "@tskm/compiler": "workspace:*"
+  }
+}
