@@ -1,8 +1,8 @@
 import { describe, expectTypeOf, test } from "vitest"
 import {
+  array,
   type InferInput,
   type InferOutput,
-  array,
   number,
   object,
   objectAsync,

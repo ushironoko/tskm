@@ -62,6 +62,11 @@ export {
 } from "./schemas/tuple.ts"
 export { type UndefinedSchema, undefined_ } from "./schemas/undefinedSchema.ts"
 export { type UnionOptions, type UnionSchema, union } from "./schemas/union.ts"
+export {
+  type UnionOptionsAsync,
+  type UnionSchemaAsync,
+  unionAsync,
+} from "./schemas/unionAsync.ts"
 export { type UnknownSchema, unknown } from "./schemas/unknownSchema.ts"
 export type { Config } from "./types/config.ts"
 export type {
