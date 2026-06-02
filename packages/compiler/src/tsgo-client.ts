@@ -27,8 +27,6 @@ export interface TsgoClient {
   readonly updateFile: (absPath: string, kind: "created" | "changed" | "deleted") => void
   /** Resolves the checker type at a position, then renders it fully expanded. */
   readonly resolveTypeAt: (queryFileAbs: string, position: number) => ResolvedType | null
-  /** Passthrough to an arbitrary JSON endpoint. */
-  readonly callJson: (method: string, params?: unknown) => unknown
   readonly close: () => void
 }
 
@@ -137,8 +135,6 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
     }
   }
 
-  const callJson: TsgoClient["callJson"] = (method, params) => client.callJson(method, params)
-
   const close: TsgoClient["close"] = () => {
     client.close()
   }
@@ -169,5 +165,5 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
   }
   probe()
 
-  return { updateFile, resolveTypeAt, callJson, close }
+  return { updateFile, resolveTypeAt, close }
 }

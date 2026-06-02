@@ -4,8 +4,24 @@ import { pathToFileURL } from "node:url"
 
 export type TskmMode = "sidecar" | "inplace"
 
+/** Options for the experimental JSON Schema output (`tskm json-schema`). */
+export interface TskmJsonSchemaOptions {
+  /**
+   * Directory (relative to the project root) the `*.schema.json` files are
+   * written to. When omitted, each JSON Schema is written next to its source as
+   * `<base>.schema.json`.
+   */
+  readonly outDir?: string
+}
+
+/** Options for `tskm watch`. */
+export interface TskmWatchOptions {
+  /** Debounce window (ms) for coalescing bursts of file-system events. */
+  readonly debounceMs?: number
+}
+
 export interface TskmConfig {
-  /** Output strategy. Only "sidecar" is implemented in v1. */
+  /** Output strategy: `sidecar` (default) writes `*.gen.ts`; `inplace` rewrites markers in place. */
   readonly mode?: TskmMode
   /** Glob patterns (relative to the project root) of source files to scan. */
   readonly include?: ReadonlyArray<string>
@@ -13,6 +29,18 @@ export interface TskmConfig {
   readonly tsconfig?: string
   /** Explicit override for the tsgo binary. */
   readonly executable?: string
+  /** Experimental JSON Schema output options. */
+  readonly jsonSchema?: TskmJsonSchemaOptions
+  /** Watch-mode options. */
+  readonly watch?: TskmWatchOptions
+}
+
+export interface ResolvedJsonSchemaOptions {
+  readonly outDir: string | undefined
+}
+
+export interface ResolvedWatchOptions {
+  readonly debounceMs: number
 }
 
 export interface ResolvedTskmConfig {
@@ -20,11 +48,14 @@ export interface ResolvedTskmConfig {
   readonly include: ReadonlyArray<string>
   readonly tsconfig: string
   readonly executable: string | undefined
+  readonly jsonSchema: ResolvedJsonSchemaOptions
+  readonly watch: ResolvedWatchOptions
   /** The directory the config was resolved against (the checker cwd). */
   readonly root: string
 }
 
 const DEFAULT_INCLUDE = ["src/**/*.ts"] as const
+const DEFAULT_DEBOUNCE_MS = 50
 
 /** Identity helper for authoring `tskm.config.ts` with full type inference. */
 export function defineConfig(config: TskmConfig): TskmConfig {
@@ -46,6 +77,8 @@ export function resolveConfig(config: TskmConfig, root: string): ResolvedTskmCon
     include: config.include ?? DEFAULT_INCLUDE,
     tsconfig,
     executable: config.executable,
+    jsonSchema: { outDir: config.jsonSchema?.outDir },
+    watch: { debounceMs: config.watch?.debounceMs ?? DEFAULT_DEBOUNCE_MS },
     root: absRoot,
   }
 }

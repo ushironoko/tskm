@@ -1,21 +1,40 @@
-import { globSync, readFileSync } from "node:fs"
-import { isAbsolute, resolve } from "node:path"
+import { resolve } from "node:path"
 import {
   defineConfig,
   loadConfig,
   type ResolvedTskmConfig,
   resolveConfig,
   type TskmConfig,
+  type TskmJsonSchemaOptions,
   type TskmMode,
+  type TskmWatchOptions,
 } from "./config.ts"
-import { discoverSchemas } from "./discovery.ts"
-import { emitSidecar } from "./emit.ts"
-import { resolveSchemas } from "./resolve.ts"
-import { createTsgoClient, type TsgoClient } from "./tsgo-client.ts"
+import { createSession, type GenerateResult } from "./session.ts"
 
-export { deriveTypeName, discoverSchemas } from "./discovery.ts"
-export { emitSidecar, reindentType, renderSidecar, sidecarPath } from "./emit.ts"
-export { resolveSchemas } from "./resolve.ts"
+export { type DiscoveredSchema, deriveTypeName, discoverSchemas } from "./discovery.ts"
+export { type EmitResult, emitSidecar, reindentType, renderSidecar, sidecarPath } from "./emit.ts"
+export {
+  collectInplaceTargets,
+  type EmitInplaceOptions,
+  emitInplace,
+  type InplaceEmitResult,
+} from "./inplace.ts"
+export {
+  generateJsonSchema,
+  type JsonSchema,
+  type JsonSchemaOptions,
+  type JsonSchemaResult,
+  schemaToJsonSchema,
+} from "./jsonschema.ts"
+export { type ResolvedSchema, type ResolveResult, resolveSchemas } from "./resolve.ts"
+export {
+  createSession,
+  GENERATOR_VERSION,
+  type GeneratedFile,
+  type GenerateResult,
+  type PerFileResult,
+  type TskmSession,
+} from "./session.ts"
 export type { ResolvedType, TsgoClient } from "./tsgo-client.ts"
 export {
   createTsgoClient,
@@ -23,7 +42,8 @@ export {
   resolveTsgoExecutable,
   TYPE_TO_STRING_FLAGS,
 } from "./tsgo-client.ts"
-export type { ResolvedTskmConfig, TskmConfig, TskmMode }
+export { type WatchController, type WatchOptions, watch } from "./watch.ts"
+export type { ResolvedTskmConfig, TskmConfig, TskmJsonSchemaOptions, TskmMode, TskmWatchOptions }
 export { defineConfig, loadConfig, resolveConfig }
 
 export interface GenerateOptions {
@@ -31,103 +51,28 @@ export interface GenerateOptions {
   readonly root?: string
   /** A pre-built config object; when omitted, the config file is loaded from `root`. */
   readonly config?: TskmConfig
+  /** Overrides the resolved config's emit mode (e.g. from a CLI `--mode` flag). */
+  readonly mode?: TskmMode
   /** Pretty-print generated types (default true). */
   readonly pretty?: boolean
 }
 
-export interface GeneratedFile {
-  readonly source: string
-  readonly sidecar: string
-  readonly typeNames: ReadonlyArray<string>
-}
-
-export interface GenerateResult {
-  readonly files: ReadonlyArray<GeneratedFile>
-  readonly diagnostics: ReadonlyArray<string>
-}
-
-function collectSources(config: ResolvedTskmConfig): ReadonlyArray<string> {
-  const matches = new Set<string>()
-  for (const pattern of config.include) {
-    for (const match of globSync(pattern, { cwd: config.root })) {
-      const abs = isAbsolute(match) ? match : resolve(config.root, match)
-      // Never scan generated sidecars or our own query files.
-      if (abs.endsWith(".gen.ts") || abs.endsWith(".tskm-query.ts")) {
-        continue
-      }
-      matches.add(abs)
-    }
-  }
-  return [...matches].sort()
-}
-
-function generateForFile(
-  client: TsgoClient,
-  sourceAbs: string,
-  pretty: boolean,
-): { file: GeneratedFile | null; diagnostics: ReadonlyArray<string> } {
-  const sourceText = readFileSync(sourceAbs, "utf8")
-  const discovery = discoverSchemas(sourceAbs, sourceText)
-  if (discovery.schemas.length === 0) {
-    return { file: null, diagnostics: discovery.diagnostics }
-  }
-
-  const { resolved, diagnostics } = resolveSchemas(client, sourceAbs, discovery.schemas)
-  const allDiagnostics = [...discovery.diagnostics, ...diagnostics]
-  if (resolved.length === 0) {
-    return { file: null, diagnostics: allDiagnostics }
-  }
-
-  const emitted = emitSidecar(sourceAbs, resolved, { pretty })
-  return {
-    file: {
-      source: sourceAbs,
-      sidecar: emitted.sidecar,
-      typeNames: resolved.map((r) => r.typeName),
-    },
-    diagnostics: allDiagnostics,
-  }
-}
-
 /**
- * High-level pipeline: config -> discovery -> resolve -> emit across all included
- * files. Sidecar mode only for v1. A single tsgo client is reused for the whole run.
+ * High-level one-shot pipeline: config -> discovery -> resolve -> emit across all
+ * included files, using a single reused {@link createSession}. Supports both
+ * `sidecar` (default) and experimental `inplace` modes.
  */
 export async function generate(options: GenerateOptions = {}): Promise<GenerateResult> {
   const root = resolve(options.root ?? process.cwd())
-  const config = options.config ? resolveConfig(options.config, root) : await loadConfig(root)
+  const base: ResolvedTskmConfig = options.config
+    ? resolveConfig(options.config, root)
+    : await loadConfig(root)
+  const config: ResolvedTskmConfig = options.mode ? { ...base, mode: options.mode } : base
 
-  if (config.mode !== "sidecar") {
-    throw new Error(`tskm: mode "${config.mode}" is not implemented yet (v1 supports "sidecar").`)
-  }
-
-  const sources = collectSources(config)
-  const files: GeneratedFile[] = []
-  const diagnostics: string[] = []
-
-  if (sources.length === 0) {
-    return { files, diagnostics: [`tskm: no source files matched ${config.include.join(", ")}`] }
-  }
-
-  const client = createTsgoClient({
-    cwd: config.root,
-    tsconfigPath: config.tsconfig,
-    executable: config.executable,
-  })
-
+  const session = createSession(config)
   try {
-    for (const sourceAbs of sources) {
-      const result = generateForFile(client, sourceAbs, options.pretty ?? true)
-      diagnostics.push(...result.diagnostics)
-      if (result.file) {
-        files.push(result.file)
-      }
-    }
+    return session.generateAll(options.pretty ?? true)
   } finally {
-    client.close()
+    session.close()
   }
-
-  // Re-anchor diagnostics' absolute paths to be root-relative for readability.
-  const readable = diagnostics.map((d) => d.replaceAll(`${config.root}/`, ""))
-  return { files, diagnostics: readable }
 }

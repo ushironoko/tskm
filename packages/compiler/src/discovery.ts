@@ -11,6 +11,12 @@ export interface DiscoveredSchema {
   readonly name: string
   /** The emitted type alias name, derived from `name` or the explicit type alias. */
   readonly typeName: string
+  /**
+   * Where the schema was found: `const` = auto-discovered `export const` factory
+   * call; `alias` = explicit `export type T = Infer<typeof X>` marker. Sidecar mode
+   * emits both; inplace mode only rewrites `alias` markers.
+   */
+  readonly origin: "const" | "alias"
 }
 
 /**
@@ -55,7 +61,7 @@ function collectRuntimeNames(body: ReadonlyArray<OxcNode>): Set<string> {
 }
 
 function calleeName(init: OxcNode | undefined): string | undefined {
-  if (!init || init.type !== "CallExpression") {
+  if (init?.type !== "CallExpression") {
     return undefined
   }
   const callee = init.callee as OxcNode | undefined
@@ -71,7 +77,7 @@ function calleeName(init: OxcNode | undefined): string | undefined {
  * schema name plus the declared alias name.
  */
 function readInferAlias(decl: OxcNode | undefined): DiscoveredSchema | undefined {
-  if (!decl || decl.type !== "TSTypeAliasDeclaration") {
+  if (decl?.type !== "TSTypeAliasDeclaration") {
     return undefined
   }
   const id = decl.id as { name?: string } | undefined
@@ -99,14 +105,14 @@ function readInferAlias(decl: OxcNode | undefined): DiscoveredSchema | undefined
   const params = (annotation.typeArguments as { params?: ReadonlyArray<OxcNode> } | undefined)
     ?.params
   const first = params?.[0]
-  if (!first || first.type !== "TSTypeQuery") {
+  if (first?.type !== "TSTypeQuery") {
     return undefined
   }
   const exprName = first.exprName as { name?: string } | undefined
   if (!exprName?.name) {
     return undefined
   }
-  return { name: exprName.name, typeName: id.name }
+  return { name: exprName.name, typeName: id.name, origin: "alias" }
 }
 
 export interface DiscoveryResult {
@@ -139,7 +145,7 @@ export function discoverSchemas(fileName: string, sourceText: string): Discovery
     const callee = calleeName(init)
     if (callee && runtimeNames.has(callee)) {
       seenNames.add(id.name)
-      schemas.push({ name: id.name, typeName: deriveTypeName(id.name) })
+      schemas.push({ name: id.name, typeName: deriveTypeName(id.name), origin: "const" })
     }
   }
 

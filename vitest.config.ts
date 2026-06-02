@@ -35,6 +35,9 @@ export default defineConfig({
           include: ["packages/*/test/**/*.integration.test.ts"],
           testTimeout: 60_000,
           hookTimeout: 60_000,
+          // Each file spawns the real tsgo (and writes into a shared fixture dir), so run
+          // them serially to avoid checker contention and cross-file file-system races.
+          fileParallelism: false,
         },
       },
     ],
