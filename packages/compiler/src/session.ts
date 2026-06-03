@@ -9,6 +9,7 @@ import type { ResolvedSchema } from "./resolve.ts"
 import { resolveSchemas } from "./resolve.ts"
 import { resolveRecursiveSchemas } from "./structural-resolve.ts"
 import { createTsgoClient, type TsgoClient } from "./tsgo-client.ts"
+import { applyTier1 } from "./verify-splice.ts"
 
 /** Version stamp folded into inplace content hashes (invalidates on generator change). */
 export const GENERATOR_VERSION = "tskm-compiler@0.0.0"
@@ -140,13 +141,18 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       timeoutMs: config.worker.timeoutMs,
     })
 
+    // Tier-1: transform-bearing recursive roots try the sentinel-unroll splice; a
+    // candidate is used ONLY when the cross-check + fixpoint oracle both pass,
+    // otherwise the Tier-2 skeleton stands.
+    const tier1 = applyTier1(client, sourceAbs, structuralResult.resolutions)
+
     // Merge both paths back into DISCOVERY order so mixed files emit stably.
     const byTypeName = new Map<string, string>()
     for (const r of checkerResult.resolved) {
       byTypeName.set(r.typeName, r.typeString)
     }
     for (const r of structuralResult.resolutions) {
-      byTypeName.set(r.typeName, r.skeleton)
+      byTypeName.set(r.typeName, tier1.upgraded.get(r.typeName) ?? r.skeleton)
     }
     const resolved: ResolvedSchema[] = []
     for (const target of targets) {
@@ -161,6 +167,7 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       ...extraDiagnostics,
       ...checkerResult.diagnostics,
       ...structuralResult.diagnostics,
+      ...tier1.diagnostics,
     ]
     if (resolved.length === 0) {
       return { file: null, diagnostics: allDiagnostics }
