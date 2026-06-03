@@ -1,0 +1,45 @@
+# Continuous preview releases via pkg.pr.new. These are NOT published to npm — they are
+# ephemeral, install-from-URL tarballs served by pkg.pr.new (auth = the pkg-pr-new GitHub
+# App + GitHub Actions run metadata, no npm token, no secrets). Safe on untrusted fork
+# PRs because the job holds no secrets and only a read-only token.
+#
+# Prerequisite: install the pkg.pr.new GitHub App on this repo (https://github.com/apps/pkg-pr-new).
+name: Preview release
+
+# branches: ["**"] matches branch pushes only, so tag pushes do not trigger this.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# No secrets and no elevated token are needed; comments are posted by the GitHub App.
+permissions: {}
+
+concurrency:
+  group: preview-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Publish preview (pkg.pr.new)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Build
+        run: bun run build
+
+      # Single invocation over ./packages/* so pkg.pr.new rewrites the @tskm/vite →
+      # @tskm/compiler workspace dependency to the matching preview URL. Runs the
+      # lockfile-installed binary (not bunx). examples/* are private and excluded.
+      - name: Publish preview packages
+        run: bun run preview

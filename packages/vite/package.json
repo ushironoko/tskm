@@ -1,9 +1,16 @@
 {
   "name": "@tskm/vite",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Vite plugin that runs the tskm AOT type compiler",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ushironoko/tskm.git",
+    "directory": "packages/vite"
+  },
+  "homepage": "https://github.com/ushironoko/tskm/tree/main/packages/vite#readme",
+  "bugs": "https://github.com/ushironoko/tskm/issues",
   "files": [
     "dist"
   ],
@@ -14,7 +21,9 @@
     }
   },
   "scripts": {
-    "build": "rolldown -c rolldown.config.ts"
+    "build": "rolldown -c rolldown.config.ts",
+    "attw": "attw --pack . --profile esm-only",
+    "publint": "publint --strict"
   },
   "dependencies": {
     "@tskm/compiler": "workspace:*"
@@ -26,6 +35,7 @@
     "vite": "8.0.16"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   }
 }

@@ -1,9 +1,16 @@
 {
   "name": "tskm",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Standard Schema compliant, functional validation library with AOT type compilation",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ushironoko/tskm.git",
+    "directory": "packages/tskm"
+  },
+  "homepage": "https://github.com/ushironoko/tskm/tree/main/packages/tskm#readme",
+  "bugs": "https://github.com/ushironoko/tskm/issues",
   "sideEffects": false,
   "files": [
     "dist"
@@ -16,7 +23,8 @@
   },
   "scripts": {
     "build": "rolldown -c rolldown.config.ts",
-    "attw": "attw --pack ."
+    "attw": "attw --pack . --profile esm-only",
+    "publint": "publint --strict"
   },
   "devDependencies": {
     "@standard-schema/spec": "1.1.0"
@@ -26,6 +34,7 @@
     "bun": ">=1.2"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   }
 }

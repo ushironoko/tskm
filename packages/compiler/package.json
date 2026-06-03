@@ -1,9 +1,16 @@
 {
   "name": "@tskm/compiler",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "AOT schema-to-type compiler for tskm, powered by the tsgo (Corsa) checker API",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ushironoko/tskm.git",
+    "directory": "packages/compiler"
+  },
+  "homepage": "https://github.com/ushironoko/tskm/tree/main/packages/compiler#readme",
+  "bugs": "https://github.com/ushironoko/tskm/issues",
   "files": [
     "dist"
   ],
@@ -17,7 +24,9 @@
     }
   },
   "scripts": {
-    "build": "rolldown -c rolldown.config.ts"
+    "build": "rolldown -c rolldown.config.ts",
+    "attw": "attw --pack . --profile esm-only",
+    "publint": "publint --strict"
   },
   "dependencies": {
     "@corsa-bind/napi": "0.35.0",
@@ -34,6 +43,7 @@
     "bun": ">=1.2"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   }
 }

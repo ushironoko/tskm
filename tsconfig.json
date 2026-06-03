@@ -11,6 +11,6 @@
       "@tskm/compiler": ["./packages/compiler/src/index.ts"]
     }
   },
-  "include": ["packages/*/src", "packages/*/test", "packages/*/*.config.ts"],
+  "include": ["packages/*/src", "packages/*/test", "packages/*/*.config.ts", "scripts"],
   "exclude": ["**/node_modules/**", "**/dist/**", "**/fixtures/**"]
 }

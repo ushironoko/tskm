@@ -1,0 +1,112 @@
+# Release pipeline. Two jobs so the OIDC credential exists only where it is used:
+#   - version: opens/updates the Changesets "Version Packages" PR and decides whether a
+#     release is due. No id-token here.
+#   - publish: runs only when an unpublished version is on main, behind a manual
+#     `release` Environment gate, and is the ONLY job that can mint an npm OIDC token.
+#
+# Security boundary for a real publish = Version PR merge + main branch protection +
+# the `release` Environment approval. This is the workflow file registered as the npm
+# Trusted Publisher (settings on npmjs.com must reference `release.yml`).
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never cancel a release mid-publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Version PR & publish gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # changesets/action commits + pushes the version branch
+      pull-requests: write # opens/updates the Version PR
+    outputs:
+      should_publish: ${{ steps.gate.outputs.should_publish }}
+    steps:
+      # persist-credentials stays default (true): changesets/action pushes the version
+      # branch using the checkout-provided git credentials.
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      # Runs BEFORE changesets/action mutates the working tree, so it reads the COMMITTED
+      # versions and compares them to the registry. should_publish=true only on a
+      # Version-PR-merge commit (versions bumped, changesets consumed). Fail-closed.
+      - name: Publish gate (should_publish)
+        id: gate
+        run: bun run scripts/publish.ts --check
+
+      - name: Create or update the Version PR
+        uses: changesets/action@63a615b9cd06ba9a3e6d13796c7fbcb080a60a0b # v1.8.0
+        with:
+          version: bun run version
+          # No `publish:` input — publishing is the separate, OIDC-gated job below.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: Publish to npm (OIDC + provenance)
+    needs: version
+    if: needs.version.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    environment: release # manual approval gate (configure required reviewers)
+    permissions:
+      contents: read
+      id-token: write # OIDC trusted publishing — the credential is scoped to this job only
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false # publish auth is OIDC, not git
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22" # latest 22.x (OIDC trusted publishing requires >= 22.14)
+          registry-url: "https://registry.npmjs.org"
+
+      # OIDC trusted publishing requires npm >= 11.5.1; pin it explicitly.
+      - name: Pin npm
+        run: npm install -g npm@11.5.1
+
+      - name: Assert toolchain
+        run: |
+          node --version
+          npm --version
+          node -e "const v=process.versions.node.split('.').map(Number); if (v[0]<22 || (v[0]===22 && v[1]<14)) throw new Error('Node >= 22.14 required for OIDC, got '+process.versions.node)"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Build
+        run: bun run build
+
+      - name: Pre-publish gates (publint + are-the-types-wrong)
+        run: |
+          bun run publint
+          bun run attw
+
+      - name: Clean-room install smoke test
+        run: bun run scripts/smoke.ts
+
+      # Ordered npm publish (compiler → tskm → vite) with workspace:* rewrite, fail-closed
+      # idempotency, and a workspace:-leak guard. OIDC + provenance are automatic here.
+      - name: Publish
+        run: bun run release
