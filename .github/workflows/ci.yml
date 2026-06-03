@@ -43,7 +43,9 @@ jobs:
         run: bun run lint
 
       # Type lane: type-checks all sources, the *.test.ts files, and the *.test-d.ts
-      # type-level assertions (expect-type / @ts-expect-error) via tsc.
+      # type-level assertions (expect-type / @ts-expect-error) via tsgo
+      # (@typescript/native-preview). Resolves on linux-x64 under --ignore-scripts
+      # because the platform binary ships as an os/cpu-constrained optionalDependency.
       - name: Typecheck
         run: bun run test:type
 
