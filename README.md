@@ -12,7 +12,7 @@ tskm is two things that fit together:
 
 - **An AOT (ahead-of-time) type compiler** — instead of deriving a type from a schema with `z.infer<typeof schema>` at every use site, tskm pre-computes it once and writes the fully-expanded, concrete type to a real file. The answer comes from the actual TypeScript type checker, queried out of process.
 
-It is a bun-workspaces monorepo: `tskm` (runtime), `@tskm/compiler` (AOT codegen + CLI), `@tskm/vite` (Vite plugin).
+It is a bun-workspaces monorepo: `@tskm/core` (runtime), `@tskm/compiler` (AOT codegen + CLI), `@tskm/vite` (Vite plugin).
 
 ## Why tskm?
 
@@ -35,7 +35,7 @@ tskm goes the **opposite direction — schema → type, not type → validator �
 **Validate at runtime** — schemas are values; `parse` / `safeParse` are standalone functions:
 
 ```ts
-import { object, string, number, array, pipe, minLength, parse, safeParse } from "tskm"
+import { object, string, number, array, pipe, minLength, parse, safeParse } from "@tskm/core"
 
 const userSchema = object({
   name: pipe(string(), minLength(2)),
@@ -54,7 +54,7 @@ const result = safeParse(userSchema, { name: "", age: 1, tags: [] })
 
 ```ts
 // user.schema.ts  (you write — note: no `type User = Infer<...>` needed)
-import { object, string, number, array, pipe, minLength } from "tskm"
+import { object, string, number, array, pipe, minLength } from "@tskm/core"
 
 export const userSchema = object({
   name: pipe(string(), minLength(2)),
@@ -102,12 +102,12 @@ it runs the compiler on `buildStart` and watches during `vite dev`.
 
 The compiler never reads your schema at runtime — the inferred type only exists in the type system, so it asks the type checker directly:
 
-1. **Discover** — [`oxc-parser`](https://oxc.rs) scans each source file (syntactically) for exported `const`s whose factory is imported from `tskm`, and for explicit `type T = Infer<typeof X>` markers.
+1. **Discover** — [`oxc-parser`](https://oxc.rs) scans each source file (syntactically) for exported `const`s whose factory is imported from `@tskm/core`, and for explicit `type T = Infer<typeof X>` markers.
 2. **Query** — for each schema, the compiler writes a tiny sibling file (`<base>.tskm-query.ts`, deleted afterward) next to the source that declares a marker against the schema's output type:
 
    ```ts
    import { userSchema } from "./user.schema"
-   import type { InferOutput } from "tskm"
+   import type { InferOutput } from "@tskm/core"
    type __P<T> = { [K in keyof T]: T[K] } & {}
    declare const __tskm_0: __P<InferOutput<typeof userSchema>>
    ```

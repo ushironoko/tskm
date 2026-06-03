@@ -1,5 +1,5 @@
 {
-  "name": "tskm",
+  "name": "@tskm/core",
   "version": "0.0.1",
   "description": "Standard Schema compliant, functional validation library with AOT type compilation",
   "type": "module",

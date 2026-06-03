@@ -8,7 +8,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "paths": {
-      "tskm": ["../../packages/tskm/src/index.ts"]
+      "@tskm/core": ["../../packages/tskm/src/index.ts"]
     }
   },
   "include": ["src"]
