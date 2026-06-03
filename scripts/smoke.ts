@@ -79,6 +79,11 @@ function main(): void {
     const tarballs = new Map<string, string>()
     for (const pkg of pkgs) tarballs.set(pkg.name, packPackage(pkg, versionMap, packDir))
 
+    // The packed @tskm/vite has `@tskm/compiler: workspace:*` rewritten to
+    // `^<compiler version>` (packPackage -> rewriteWorkspaceDeps), and the three
+    // packages are released in lockstep at the same version. So the top-level
+    // `@tskm/compiler` file: tarball installs a version that satisfies that `^` range,
+    // and npm dedupes to it without reaching the registry — no override needed.
     const consumerPkg = {
       name: "tskm-smoke-consumer",
       private: true,
@@ -90,9 +95,6 @@ function main(): void {
         "@typescript/native-preview": nativePreview,
         vite: viteVersion,
       },
-      // Force @tskm/vite's compiler dependency to resolve to our local tarball
-      // (it is not on the registry yet during a pre-publish smoke).
-      overrides: { "@tskm/compiler": `file:${tarballs.get("@tskm/compiler")}` },
     }
     writeFileSync(join(consumer, "package.json"), `${JSON.stringify(consumerPkg, null, 2)}\n`)
     for (const [file, body] of Object.entries(CHECKS)) writeFileSync(join(consumer, file), body)
