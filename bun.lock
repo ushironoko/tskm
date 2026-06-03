@@ -19,6 +19,16 @@
         "typescript": "6.0.3",
       },
     },
+    "examples/advanced": {
+      "name": "@tskm/example-advanced",
+      "version": "0.0.0",
+      "dependencies": {
+        "@tskm/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@tskm/compiler": "workspace:*",
+      },
+    },
     "examples/basic": {
       "name": "@tskm/example-basic",
       "version": "0.0.0",
@@ -273,6 +283,8 @@
     "@tskm/compiler": ["@tskm/compiler@workspace:packages/compiler"],
 
     "@tskm/core": ["@tskm/core@workspace:packages/tskm"],
+
+    "@tskm/example-advanced": ["@tskm/example-advanced@workspace:examples/advanced"],
 
     "@tskm/example-basic": ["@tskm/example-basic@workspace:examples/basic"],
 

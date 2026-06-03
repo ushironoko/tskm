@@ -45,3 +45,8 @@ export default {
   plugins: [tskm()],
 }
 ```
+
+## Next
+
+[`examples/advanced`](../advanced) goes further: discriminated unions, recursive (cyclic)
+schemas (`lazy` + `GenericSchema`), and the explicit `export type T = Infer<typeof schema>` marker.

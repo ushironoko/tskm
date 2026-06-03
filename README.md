@@ -162,6 +162,11 @@ a documented mapping (and warns on anything it cannot represent).
 - **`union`** emits a single schema-level issue on failure (no per-member aggregation yet).
 - **`pipe(schema, transform(fn))`** infers `fn`'s input from an explicit parameter annotation; annotate it (`transform((s: string) => …)`) when the input isn't otherwise constrained.
 
+## Examples
+
+- [`examples/basic`](examples/basic) — the smallest end-to-end loop: schema → generated type → validate.
+- [`examples/advanced`](examples/advanced) — discriminated unions, recursive (cyclic) schemas (`lazy` + `GenericSchema`), and the explicit `export type T = Infer<typeof schema>` marker.
+
 ## Development
 
 ```bash
