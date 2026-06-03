@@ -142,6 +142,7 @@ describe("collectInplaceTargets", () => {
       name: "postSchema",
       typeName: "Post",
       origin: "alias",
+      recursive: false,
     }
 
     const { targets, diagnostics } = collectInplaceTargets(sentinel, [fresh])
@@ -149,8 +150,8 @@ describe("collectInplaceTargets", () => {
     expect(diagnostics).toEqual([])
     expect(targets).toEqual(
       expect.arrayContaining([
-        { name: "postSchema", typeName: "Post", origin: "alias" },
-        { name: "userSchema", typeName: "User", origin: "alias" },
+        { name: "postSchema", typeName: "Post", origin: "alias", recursive: false },
+        { name: "userSchema", typeName: "User", origin: "alias", recursive: false },
       ]),
     )
     expect(targets.length).toBe(2)
@@ -163,7 +164,12 @@ describe("collectInplaceTargets", () => {
       "export type User = { id: string }",
       "// @tskm-end User",
     ].join("\n")
-    const fresh: DiscoveredSchema = { name: "userSchema", typeName: "User", origin: "alias" }
+    const fresh: DiscoveredSchema = {
+      name: "userSchema",
+      typeName: "User",
+      origin: "alias",
+      recursive: false,
+    }
 
     const { targets } = collectInplaceTargets(sentinel, [fresh])
     expect(targets.length).toBe(1)

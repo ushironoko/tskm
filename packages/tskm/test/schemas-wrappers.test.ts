@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import type { BaseSchema } from "../src/index.ts"
+import type { BaseSchema, GenericSchema } from "../src/index.ts"
 import {
   lazy,
   nullable,
@@ -8,6 +8,7 @@ import {
   object,
   optional,
   parse,
+  recursive,
   safeParse,
   string,
 } from "../src/index.ts"
@@ -227,5 +228,90 @@ describe("lazy", () => {
         "x",
       ).success,
     ).toBe(false)
+  })
+})
+
+describe("recursive", () => {
+  // Recursive tree node WITHOUT any type annotation: `self` is passed into the
+  // builder, so the initializer never references its own const (no implicit any).
+  const node = recursive((self) =>
+    object({
+      value: number(),
+      next: optional(self),
+    }),
+  )
+
+  it("parses a non-nested value", () => {
+    expect(parse(node, { value: 1, next: undefined })).toEqual({ value: 1, next: undefined })
+  })
+
+  it("parses a deeply nested recursive value", () => {
+    const input = { value: 1, next: { value: 2, next: { value: 3, next: undefined } } }
+    expect(parse(node, input)).toEqual(input)
+  })
+
+  it("fails with the correct nested path", () => {
+    const r = safeParse(node, { value: 1, next: { value: "bad", next: undefined } })
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.issues[0]?.path).toEqual([{ key: "next" }, { key: "value" }])
+    }
+  })
+
+  it("passes the returned schema object itself as `self` (identity anchor)", () => {
+    let captured: unknown
+    const schema = recursive((self) => {
+      captured = self
+      return object({ next: optional(self) })
+    })
+    parse(schema, { next: undefined }) // force the lazy build
+    expect(captured).toBe(schema)
+  })
+
+  it("memoizes the built body (build runs once across parses)", () => {
+    let calls = 0
+    const schema = recursive((self) => {
+      calls++
+      return object({ next: optional(self) })
+    })
+    parse(schema, { next: undefined })
+    parse(schema, { next: { next: undefined } })
+    expect(calls).toBe(1)
+  })
+
+  it("getter() returns the same body object by identity on repeat calls", () => {
+    const schema = recursive((self) => object({ next: optional(self) }))
+    expect(schema.getter()).toBe(schema.getter())
+  })
+
+  it("does not invoke build in the initializer (lazy until first use)", () => {
+    let calls = 0
+    const schema = recursive((self) => {
+      calls++
+      return object({ next: optional(self) })
+    })
+    expect(calls).toBe(0)
+    parse(schema, { next: undefined })
+    expect(calls).toBe(1)
+  })
+
+  it("exposes its shape on the schema object", () => {
+    const build = (self: GenericSchema) => object({ next: optional(self) })
+    const schema = recursive(build)
+    expect(schema.type).toBe("recursive")
+    expect(schema.expects).toBe("unknown")
+    expect(schema.build).toBe(build)
+    expect(schema.async).toBe(false)
+  })
+
+  it("supports a generic-arrow build (the Tier-1 capable authoring shape)", () => {
+    const schema = recursive(<S extends GenericSchema>(self: S) =>
+      object({
+        name: string(),
+        children: optional(self),
+      }),
+    )
+    const input = { name: "a", children: { name: "b", children: undefined } }
+    expect(parse(schema, input)).toEqual(input)
   })
 })

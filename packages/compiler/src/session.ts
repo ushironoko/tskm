@@ -1,10 +1,13 @@
 import { globSync, readFileSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import type { ResolvedTskmConfig, TskmMode } from "./config.ts"
+import type { DiscoveredSchema } from "./discovery.ts"
 import { discoverSchemas } from "./discovery.ts"
 import { emitSidecar } from "./emit.ts"
 import { collectInplaceTargets, emitInplace } from "./inplace.ts"
+import type { ResolvedSchema } from "./resolve.ts"
 import { resolveSchemas } from "./resolve.ts"
+import { resolveRecursiveSchemas } from "./structural-resolve.ts"
 import { createTsgoClient, type TsgoClient } from "./tsgo-client.ts"
 
 /** Version stamp folded into inplace content hashes (invalidates on generator change). */
@@ -44,6 +47,27 @@ export interface TskmSession {
 /** True for paths the compiler itself produces, which must never be scanned as sources. */
 function isGeneratedArtifact(absPath: string): boolean {
   return absPath.endsWith(".gen.ts") || absPath.endsWith(".tskm-query.ts")
+}
+
+export interface TargetSplit {
+  /** Non-recursive targets: resolved statically by the tsgo `InferOutput` query. */
+  readonly checkerTargets: ReadonlyArray<DiscoveredSchema>
+  /** Recursive targets: resolved by the structural worker (the only eval path). */
+  readonly structuralTargets: ReadonlyArray<DiscoveredSchema>
+}
+
+/**
+ * Pure routing between the two resolution paths. Recursive schemas must not reach
+ * the plain checker query (their self positions collapse and `FAILURE_TYPE_FLAGS`
+ * would mask the cause); everything else stays on the static path. An empty
+ * `structuralTargets` guarantees the structural worker is never spawned for the
+ * file — the zero-cost property for non-recursive projects.
+ */
+export function splitTargets(targets: ReadonlyArray<DiscoveredSchema>): TargetSplit {
+  return {
+    checkerTargets: targets.filter((t) => !t.recursive),
+    structuralTargets: targets.filter((t) => t.recursive),
+  }
 }
 
 function collectSources(config: ResolvedTskmConfig): ReadonlyArray<string> {
@@ -89,7 +113,12 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     if (config.mode === "inplace") {
       const aliases = discovery.schemas.filter((s) => s.origin === "alias")
       const collected = collectInplaceTargets(sourceText, aliases)
-      targets = [...collected.targets]
+      // Sentinel-region targets carry only names; re-attach recursiveness from the
+      // file's full discovery so a recursive region routes to the structural path.
+      const recursiveByName = new Map(discovery.schemas.map((s) => [s.name, s.recursive]))
+      targets = collected.targets.map((t) =>
+        t.recursive ? t : { ...t, recursive: recursiveByName.get(t.name) ?? false },
+      )
       extraDiagnostics.push(...collected.diagnostics)
     }
 
@@ -97,11 +126,42 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       return { file: null, diagnostics: [...discovery.diagnostics, ...extraDiagnostics] }
     }
 
+    // The split happens AFTER the inplace alias filter so recursive markers keep
+    // their routing; recursive schemas never reach the plain checker query.
+    const { checkerTargets, structuralTargets } = splitTargets(targets)
+
     // Inform the checker of the file's current content before querying it.
     client.updateFile(sourceAbs, "changed")
 
-    const { resolved, diagnostics } = resolveSchemas(client, sourceAbs, targets)
-    const allDiagnostics = [...discovery.diagnostics, ...extraDiagnostics, ...diagnostics]
+    const checkerResult = resolveSchemas(client, sourceAbs, checkerTargets)
+    const structuralResult = resolveRecursiveSchemas(sourceAbs, structuralTargets, {
+      root: config.root,
+      execPath: config.worker.execPath ?? process.execPath,
+      timeoutMs: config.worker.timeoutMs,
+    })
+
+    // Merge both paths back into DISCOVERY order so mixed files emit stably.
+    const byTypeName = new Map<string, string>()
+    for (const r of checkerResult.resolved) {
+      byTypeName.set(r.typeName, r.typeString)
+    }
+    for (const r of structuralResult.resolutions) {
+      byTypeName.set(r.typeName, r.skeleton)
+    }
+    const resolved: ResolvedSchema[] = []
+    for (const target of targets) {
+      const typeString = byTypeName.get(target.typeName)
+      if (typeString !== undefined) {
+        resolved.push({ typeName: target.typeName, typeString })
+      }
+    }
+
+    const allDiagnostics = [
+      ...discovery.diagnostics,
+      ...extraDiagnostics,
+      ...checkerResult.diagnostics,
+      ...structuralResult.diagnostics,
+    ]
     if (resolved.length === 0) {
       return { file: null, diagnostics: allDiagnostics }
     }
