@@ -226,7 +226,11 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): string {
     case "array":
       return `${parenthesizeIfCompound(walkChild(schema.item, ".item", ctx))}[]`
     case "record":
-      return `Record<string, ${walkChild(schema.value, ".value", ctx)}>`
+      // An index-signature literal, NOT `Record<string, V>`: type arguments to
+      // another alias are resolved eagerly, so `Record` would make a
+      // self-referential alias circular (TS2456). The literal form is deferred
+      // (legal) and matches how tsgo itself renders these types.
+      return `{ [key: string]: ${walkChild(schema.value, ".value", ctx)} }`
     case "tuple": {
       const items = Array.isArray(schema.items) ? schema.items : []
       return `[${items.map((item, i) => walkChild(item, `.items[${i}]`, ctx)).join(", ")}]`

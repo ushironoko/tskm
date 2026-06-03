@@ -17,6 +17,8 @@ const src = (file: string): string =>
 
 const cleanups = [
   src("category.schema.gen.ts"),
+  src("json.schema.gen.ts"),
+  src("json.schema.tskm-query.ts"),
   src("mutual.schema.gen.ts"),
   src("mixed.schema.gen.ts"),
   src("category.schema.tskm-query.ts"),
@@ -41,6 +43,7 @@ afterAll(() => {
 })
 
 const PROBE = `import type { Category } from "./category.schema.gen.ts"
+import type { Json } from "./json.schema.gen.ts"
 import type { A, B } from "./mutual.schema.gen.ts"
 import type { Stat, Tree } from "./mixed.schema.gen.ts"
 
@@ -53,8 +56,9 @@ const a: A = { name: "a", b }
 const linked: B = { a: { name: "a2", b: undefined } }
 const tree: Tree = { label: "t", kids: [{ label: "u", kids: [] }] }
 const stat: Stat = 42
+const json: Json = { items: [1, "two", true, null], nested: { deep: [{}] } }
 
-export const probes = [root, a, linked, tree, stat] as const
+export const probes = [root, a, linked, tree, stat, json] as const
 `
 
 describe.skipIf(!bun)("recursive structural codegen (real tsgo + real worker)", () => {
@@ -69,7 +73,7 @@ describe.skipIf(!bun)("recursive structural codegen (real tsgo + real worker)", 
       },
     })
 
-    expect(result.files.length).toBe(3)
+    expect(result.files.length).toBe(4)
 
     const categoryGen = readFileSync(src("category.schema.gen.ts"), "utf8")
     expect(categoryGen).toContain("export type Category = {")
@@ -80,6 +84,14 @@ describe.skipIf(!bun)("recursive structural codegen (real tsgo + real worker)", 
     expect(mutualGen).toContain("b?: B | undefined")
     expect(mutualGen).toContain("export type B = {")
     expect(mutualGen).toContain("a?: A | undefined")
+
+    // JSON value: recursion through array AND record — the record position must be
+    // an index-signature literal (Record<string, Json> would be TS2456).
+    const jsonGen = readFileSync(src("json.schema.gen.ts"), "utf8")
+    expect(jsonGen).toContain("export type Json =")
+    expect(jsonGen).toContain("Json[]")
+    expect(jsonGen).toContain("[key: string]: Json")
+    expect(jsonGen).not.toContain("Record<string, Json>")
 
     // Mixed file: ONE sidecar carrying both paths — the structural skeleton and the
     // checker-resolved transform output (transform's output is typed by tsgo).

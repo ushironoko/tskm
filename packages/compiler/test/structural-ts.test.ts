@@ -64,7 +64,7 @@ describe("schemaToTypeString — per-type TS bodies", () => {
       s.array(s.union([s.string(), s.number()])),
       "(string | number)[]",
     ],
-    ["record", s.record(s.number()), "Record<string, number>"],
+    ["record", s.record(s.number()), "{ [key: string]: number }"],
     ["tuple", s.tuple([s.string(), s.number()]), "[string, number]"],
     ["union", s.union([s.string(), s.number()]), "string | number"],
     ["optional", s.optional(s.string()), "string | undefined"],
@@ -128,6 +128,21 @@ describe("schemaToTypeString — recursion", () => {
     root.getter = () => body
     const result = walk(root, "Node", new Map<object, string>([[root, "Node"]]))
     expect(result.typeString).toBe("{ next?: Node | undefined }")
+    expect(result.unsupported).toBe(false)
+  })
+
+  it("renders record(self) as an index signature (legal in a recursive alias)", () => {
+    // `Record<string, Json>` would be TS2456 in a self-referential alias — type
+    // arguments to another alias are resolved eagerly. The index-signature literal
+    // is the deferred (legal) form, and matches how tsgo renders it.
+    const root: Record<string, unknown> = { kind: "schema", type: "recursive" }
+    root.getter = () => ({
+      kind: "schema",
+      type: "union",
+      options: [s.string(), s.array(root), s.record(root)],
+    })
+    const result = walk(root, "Json", new Map<object, string>([[root, "Json"]]))
+    expect(result.typeString).toBe("string | Json[] | { [key: string]: Json }")
     expect(result.unsupported).toBe(false)
   })
 
