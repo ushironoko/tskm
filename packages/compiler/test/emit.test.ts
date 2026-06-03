@@ -78,6 +78,18 @@ describe("reindentType — nested objects", () => {
     expect(out).toBe("[\n  string, number\n]")
   })
 
+  it("keeps an index-signature key inline (record output), unlike a tuple", () => {
+    // `[x: string]` is a key, not a tuple: its `]` is followed by `:`, so it stays on
+    // one line. The value still formats normally.
+    expect(reindentType("{ [x: string]: number }")).toBe("{\n  [x: string]: number\n}")
+    expect(reindentType("{ [key: string]: Json; }")).toBe("{\n  [key: string]: Json;\n}")
+  })
+
+  it("formats a record nested in a union without splitting the index signature", () => {
+    const out = reindentType("string | { [x: string]: Json; } | null")
+    expect(out).toBe("string | {\n  [x: string]: Json;\n} | null")
+  })
+
   it("indents parenthesized groups", () => {
     const out = reindentType("( string | number )")
     expect(out).toBe("(\n  string | number\n)")

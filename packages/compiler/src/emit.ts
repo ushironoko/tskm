@@ -12,6 +12,45 @@ export function sidecarPath(sourceFileAbs: string): string {
 }
 
 /**
+ * Index in `text` of the bracket/brace/paren that closes the one opened at
+ * `openIdx`, or -1 if unbalanced. String/template literals are skipped so
+ * delimiters inside them are not counted.
+ */
+function matchingBracket(text: string, openIdx: number): number {
+  let depth = 0
+  let i = openIdx
+  while (i < text.length) {
+    const c = text[i]
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c
+      i++
+      while (i < text.length) {
+        if (text[i] === "\\") {
+          i += 2
+          continue
+        }
+        if (text[i] === quote) {
+          i++
+          break
+        }
+        i++
+      }
+      continue
+    }
+    if (c === "{" || c === "[" || c === "(") {
+      depth++
+    } else if (c === "}" || c === "]" || c === ")") {
+      depth--
+      if (depth === 0) {
+        return i
+      }
+    }
+    i++
+  }
+  return -1
+}
+
+/**
  * Deterministic balanced-brace pretty-printer for a single-line type string.
  * Indents one level per open `{`/`[`/`(`, breaks after `;` and structural
  * delimiters. Purely syntactic and stable: the same input always yields the same
@@ -68,6 +107,26 @@ export function reindentType(single: string): string {
         out += ch + next
         i += 2
         continue
+      }
+      // Index-signature key `[key: T]:` — emit the whole `[…]` inline instead of breaking
+      // it like a tuple/array. Detected by a matching `]` immediately followed by `:`
+      // (a tuple's closing `]` is never followed by `:`). Keeps `record(…)` output readable.
+      if (ch === "[") {
+        const close = matchingBracket(text, i)
+        if (close !== -1) {
+          let j = close + 1
+          while (j < text.length && (text[j] === " " || text[j] === "\t")) {
+            j++
+          }
+          if (text[j] === ":") {
+            out += `[${text
+              .slice(i + 1, close)
+              .trim()
+              .replace(/\s+/g, " ")}]`
+            i = close + 1
+            continue
+          }
+        }
       }
       depth++
       out += `${ch}\n`
