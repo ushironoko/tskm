@@ -1,5 +1,6 @@
 import type { DiscoveredSchema } from "./discovery.ts"
-import { resolveWorker, runWorker } from "./worker-harness.ts"
+import type { StructuralWorkerEntry } from "./structural-ts.ts"
+import { resolveWorker, runWorker, type SchemaWorkerEnvelope } from "./worker-harness.ts"
 
 /**
  * Parent-side driver for the structural recursive-type worker: spawns one isolated
@@ -21,28 +22,17 @@ export interface StructuralResolution {
   readonly opaquePaths: ReadonlyArray<string>
   /** Structural side of the brand-absorption cross-check. */
   readonly dataKeys: ReadonlyArray<string>
+  /**
+   * The walker's per-root warnings (e.g. the Tier-2 `unknown` notes). Surfaced by
+   * the session ONLY when the skeleton is what actually gets emitted — a successful
+   * Tier-1 upgrade supersedes them.
+   */
+  readonly warnings: ReadonlyArray<string>
 }
 
 export interface StructuralResolveResult {
   readonly resolutions: ReadonlyArray<StructuralResolution>
   readonly diagnostics: ReadonlyArray<string>
-}
-
-interface StructuralEntry {
-  readonly name: string
-  readonly typeName: string
-  readonly recursive: boolean
-  readonly typeString: string
-  readonly bearsOpaque: boolean
-  readonly opaquePaths: ReadonlyArray<string>
-  readonly dataKeys: ReadonlyArray<string>
-  readonly unsupported: boolean
-  readonly warnings: ReadonlyArray<string>
-}
-
-interface StructuralEnvelope {
-  readonly schemas?: ReadonlyArray<StructuralEntry>
-  readonly error?: string
 }
 
 export interface ResolveRecursiveOptions {
@@ -65,7 +55,7 @@ export function resolveRecursiveSchemas(
   // alias-renamed targets (`export type TreeNode = Infer<typeof nodeSchema>`) emit
   // back-edges that exactly match the declared alias.
   const overrides = Object.fromEntries(targets.map((t) => [t.name, t.typeName]))
-  const run = runWorker<StructuralEnvelope>(workerAbs, sourceAbs, {
+  const run = runWorker<SchemaWorkerEnvelope<StructuralWorkerEntry>>(workerAbs, sourceAbs, {
     root: options.root,
     execPath: options.execPath,
     timeoutMs: options.timeoutMs,
@@ -76,7 +66,7 @@ export function resolveRecursiveSchemas(
     return { resolutions: [], diagnostics: [run.diagnostic] }
   }
 
-  const byExport = new Map<string, StructuralEntry>()
+  const byExport = new Map<string, StructuralWorkerEntry>()
   for (const entry of run.envelope.schemas ?? []) {
     byExport.set(entry.name, entry)
   }
@@ -100,8 +90,8 @@ export function resolveRecursiveSchemas(
       )
       continue
     }
-    diagnostics.push(...entry.warnings)
     if (entry.unsupported) {
+      diagnostics.push(...entry.warnings)
       continue
     }
     resolutions.push({
@@ -111,6 +101,7 @@ export function resolveRecursiveSchemas(
       bearsOpaque: entry.bearsOpaque,
       opaquePaths: entry.opaquePaths,
       dataKeys: entry.dataKeys,
+      warnings: entry.warnings,
     })
   }
   return { resolutions, diagnostics }

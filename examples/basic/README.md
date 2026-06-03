@@ -5,7 +5,8 @@ The smallest end-to-end tskm loop: **write a schema → generate a concrete type
 ## Files
 
 - [`src/user.schema.ts`](src/user.schema.ts) — the schemas you author (`userSchema`, `productSchema`).
-- [`src/user.schema.gen.ts`](src/user.schema.gen.ts) — **generated** by `tskm gen`. Concrete types, no `Infer<…>`.
+- [`src/category.schema.ts`](src/category.schema.ts) — a RECURSIVE schema via `recursive((self) => …)`: no hand-written type, and the transform inside the cycle still resolves to its real output type.
+- [`src/user.schema.gen.ts`](src/user.schema.gen.ts) / [`src/category.schema.gen.ts`](src/category.schema.gen.ts) — **generated** by `tskm gen`. Concrete types, no `Infer<…>` — including the materialized self-referential `Category`.
 - [`src/main.ts`](src/main.ts) — a consumer: imports the generated `User` / `Product` types and validates with `safeParse`.
 
 `tsconfig.json` maps `tskm` to the workspace source via `paths` so the checker can resolve the inferred

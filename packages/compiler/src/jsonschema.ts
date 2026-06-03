@@ -2,7 +2,7 @@ import { globSync, writeFileSync } from "node:fs"
 import { basename, isAbsolute, join, resolve } from "node:path"
 import { loadConfig, type ResolvedTskmConfig, resolveConfig, type TskmConfig } from "./config.ts"
 import { type CycleGuardState, createCycleGuard, walkWithCycleGuard } from "./cycle-guard.ts"
-import { resolveWorker, runWorker } from "./worker-harness.ts"
+import { resolveWorker, runWorker, type SchemaWorkerEnvelope } from "./worker-harness.ts"
 
 /**
  * Experimental JSON Schema output.
@@ -330,13 +330,10 @@ function collectSources(config: ResolvedTskmConfig): string[] {
   return [...matches].sort()
 }
 
-interface WorkerEnvelope {
-  readonly schemas?: ReadonlyArray<{
-    readonly name: string
-    readonly schema: JsonSchema
-    readonly warnings: ReadonlyArray<string>
-  }>
-  readonly error?: string
+interface JsonWorkerEntry {
+  readonly name: string
+  readonly schema: JsonSchema
+  readonly warnings: ReadonlyArray<string>
 }
 
 export async function generateJsonSchema(
@@ -355,7 +352,7 @@ export async function generateJsonSchema(
   for (const sourceAbs of sources) {
     // Each source imports the user's module in an isolated, SIGKILL-guarded child;
     // per-file serialization is acceptable for this experimental path.
-    const result = runWorker<WorkerEnvelope>(workerAbs, sourceAbs, {
+    const result = runWorker<SchemaWorkerEnvelope<JsonWorkerEntry>>(workerAbs, sourceAbs, {
       root,
       execPath,
       timeoutMs,

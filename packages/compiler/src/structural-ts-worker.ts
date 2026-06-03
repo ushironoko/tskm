@@ -1,5 +1,5 @@
 import { deriveTypeName } from "./naming.ts"
-import { schemaToTypeString } from "./structural-ts.ts"
+import { type StructuralWorkerEntry, schemaToTypeString } from "./structural-ts.ts"
 import { buildExportNames, runSchemaWorker } from "./worker-harness.ts"
 
 /**
@@ -14,20 +14,6 @@ import { buildExportNames, runSchemaWorker } from "./worker-harness.ts"
  * Every exported schema gets an entry (`recursive: false` ones carry no body) so the
  * parent can distinguish "not recursive at runtime" from "export not found".
  */
-
-interface StructuralEntry {
-  /** The export binding name (matches `DiscoveredSchema.name`). */
-  readonly name: string
-  readonly typeName: string
-  /** True when the runtime object is a `recursive()` root. */
-  readonly recursive: boolean
-  readonly typeString: string
-  readonly bearsOpaque: boolean
-  readonly opaquePaths: ReadonlyArray<string>
-  readonly dataKeys: ReadonlyArray<string>
-  readonly unsupported: boolean
-  readonly warnings: ReadonlyArray<string>
-}
 
 // argv[4] (optional): JSON map of export name -> alias typeName, sent by the parent
 // from DISCOVERY — the single naming source. An explicit `export type TreeNode =
@@ -44,7 +30,7 @@ const nameFor = (exportName: string): string => overrides[exportName] ?? deriveT
 // match their declarations.
 let typeNames: ReadonlyMap<object, string> | undefined
 
-await runSchemaWorker<StructuralEntry>((name, value, mod) => {
+await runSchemaWorker<StructuralWorkerEntry>((name, value, mod) => {
   typeNames ??= buildExportNames(mod, nameFor)
   const typeName = nameFor(name)
   if ((value as { type?: unknown }).type !== "recursive") {

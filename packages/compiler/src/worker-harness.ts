@@ -24,6 +24,11 @@ export interface WorkerEnvelopeBase {
   readonly error?: string
 }
 
+/** The shared schema-worker envelope: per-export entries + the error channel. */
+export interface SchemaWorkerEnvelope<TEntry> extends WorkerEnvelopeBase {
+  readonly schemas?: ReadonlyArray<TEntry>
+}
+
 export interface RunWorkerOptions {
   /** Working directory for the child (the project root). */
   readonly root: string

@@ -148,11 +148,18 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
 
     // Merge both paths back into DISCOVERY order so mixed files emit stably.
     const byTypeName = new Map<string, string>()
+    const skeletonWarnings: string[] = []
     for (const r of checkerResult.resolved) {
       byTypeName.set(r.typeName, r.typeString)
     }
     for (const r of structuralResult.resolutions) {
-      byTypeName.set(r.typeName, tier1.upgraded.get(r.typeName) ?? r.skeleton)
+      const upgradedBody = tier1.upgraded.get(r.typeName)
+      byTypeName.set(r.typeName, upgradedBody ?? r.skeleton)
+      if (upgradedBody === undefined) {
+        // The skeleton is what ships, so its honest-degradation notes matter; a
+        // successful Tier-1 splice supersedes them.
+        skeletonWarnings.push(...r.warnings)
+      }
     }
     const resolved: ResolvedSchema[] = []
     for (const target of targets) {
@@ -167,6 +174,7 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       ...extraDiagnostics,
       ...checkerResult.diagnostics,
       ...structuralResult.diagnostics,
+      ...skeletonWarnings,
       ...tier1.diagnostics,
     ]
     if (resolved.length === 0) {

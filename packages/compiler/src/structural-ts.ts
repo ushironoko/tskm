@@ -49,6 +49,19 @@ export interface StructuralTypeResult {
   readonly warnings: ReadonlyArray<string>
 }
 
+/**
+ * One worker-envelope entry: the walk result plus the export identity. Declared
+ * HERE (single source) and imported by both ends of the process boundary so the
+ * worker and the parent cannot drift apart.
+ */
+export interface StructuralWorkerEntry extends StructuralTypeResult {
+  /** The export binding name (matches `DiscoveredSchema.name`). */
+  readonly name: string
+  readonly typeName: string
+  /** True when the runtime object is a `recursive()` root. */
+  readonly recursive: boolean
+}
+
 /** A duck-typed view of a runtime tskm schema object. */
 type SchemaLike = { readonly type?: unknown; readonly pipe?: unknown; [key: string]: unknown }
 
