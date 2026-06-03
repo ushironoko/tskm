@@ -75,7 +75,7 @@ describe.skipIf(!bun)("generateJsonSchema — isolated subprocess (real import)"
     // file, so module output cannot break parsing.
     writeFileSync(
       noisySource,
-      `import { object, string } from "tskm"\nconsole.log("side effect on stdout")\nexport const noisySchema = object({ a: string() })\n`,
+      `import { object, string } from "@tskm/core"\nconsole.log("side effect on stdout")\nexport const noisySchema = object({ a: string() })\n`,
     )
     const result = await generateJsonSchema({
       root: fixtureRoot,

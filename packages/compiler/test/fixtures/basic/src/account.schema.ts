@@ -1,4 +1,4 @@
-import { array, number, object, optional, pipe, string, transform } from "tskm"
+import { array, number, object, optional, pipe, string, transform } from "@tskm/core"
 
 export const accountSchema = object({
   id: string(),

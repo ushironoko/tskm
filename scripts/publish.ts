@@ -31,7 +31,7 @@ export type Runner = (cmd: string, args: string[], opts?: { cwd?: string }) => C
 export type PkgInfo = { name: string; version: string; dir: string }
 
 // Dependency order: vite depends on compiler, so compiler must reach the registry first.
-export const PUBLISH_ORDER = ["@tskm/compiler", "tskm", "@tskm/vite"] as const
+export const PUBLISH_ORDER = ["@tskm/compiler", "@tskm/core", "@tskm/vite"] as const
 
 const DEP_FIELDS = [
   "dependencies",

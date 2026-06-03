@@ -42,7 +42,7 @@ function packPackage(pkg: PkgInfo, versionMap: Map<string, string>, destDir: str
 const CHECKS: Record<string, string> = {
   // tskm: zero-dependency library — a known named export must be callable.
   "check-tskm.mjs":
-    "import * as m from 'tskm'; if (typeof m.email !== 'function') { throw new Error('tskm: expected named export `email` to be a function'); } console.log('tskm import OK');",
+    "import * as m from '@tskm/core'; if (typeof m.email !== 'function') { throw new Error('tskm: expected named export `email` to be a function'); } console.log('tskm import OK');",
   // @tskm/compiler: a known named export must be present after install from the tarball.
   "check-compiler.mjs":
     "import * as m from '@tskm/compiler'; if (typeof m.defineConfig !== 'function') { throw new Error('@tskm/compiler: expected `defineConfig` export'); } console.log('@tskm/compiler import OK');",
@@ -89,7 +89,7 @@ function main(): void {
       private: true,
       type: "module",
       dependencies: {
-        tskm: `file:${tarballs.get("tskm")}`,
+        "@tskm/core": `file:${tarballs.get("@tskm/core")}`,
         "@tskm/compiler": `file:${tarballs.get("@tskm/compiler")}`,
         "@tskm/vite": `file:${tarballs.get("@tskm/vite")}`,
         "@typescript/native-preview": nativePreview,

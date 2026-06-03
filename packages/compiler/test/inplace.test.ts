@@ -61,8 +61,8 @@ describe("emitInplace — first run (Infer marker conversion)", () => {
     expect(readFileSync(file, "utf8")).toBe(result.content)
   })
 
-  it('accepts the import("tskm").InferOutput<...> marker form', () => {
-    const source = `export type User = import("tskm").InferOutput<typeof userSchema>\n`
+  it('accepts the import("@tskm/core").InferOutput<...> marker form', () => {
+    const source = `export type User = import("@tskm/core").InferOutput<typeof userSchema>\n`
     const file = tmpFile("b.ts", source)
     const result = emitInplace(file, source, [{ typeName: "User", typeString: "{ id: string }" }], {
       version: VERSION,

@@ -11,7 +11,7 @@ const query = fileURLToPath(
   new URL("./fixtures/basic/src/widget.schema.tskm-query.ts", import.meta.url),
 )
 
-const SOURCE = `import { object, string, number, type Infer } from "tskm"
+const SOURCE = `import { object, string, number, type Infer } from "@tskm/core"
 
 export const widgetSchema = object({
   id: string(),

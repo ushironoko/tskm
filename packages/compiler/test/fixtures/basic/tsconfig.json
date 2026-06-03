@@ -9,7 +9,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "tskm": ["../../../../tskm/src/index.ts"]
+      "@tskm/core": ["../../../../tskm/src/index.ts"]
     }
   },
   "include": ["src"]

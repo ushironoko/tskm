@@ -16,7 +16,7 @@ const query = fileURLToPath(
 )
 
 function inplaceSource(sizeField: string): string {
-  return `import { object, string, number, type Infer } from "tskm"
+  return `import { object, string, number, type Infer } from "@tskm/core"
 
 export const watchSchema = object({
   id: string(),
@@ -28,7 +28,7 @@ export type WatchTarget = Infer<typeof watchSchema>
 }
 
 function sidecarSource(extraField: string): string {
-  return `import { object, string, number } from "tskm"
+  return `import { object, string, number } from "@tskm/core"
 
 export const watchSchema = object({
   id: string(),

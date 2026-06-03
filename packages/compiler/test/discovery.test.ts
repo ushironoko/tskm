@@ -37,7 +37,7 @@ describe("deriveTypeName", () => {
 describe("discoverSchemas — const (alias-origin) factory declarations", () => {
   it("discovers an exported const built from a tskm runtime import", () => {
     const src = `
-      import { object, string } from "tskm"
+      import { object, string } from "@tskm/core"
       export const userSchema = object({ name: string() })
     `
     const { schemas, diagnostics } = discoverSchemas("a.ts", src)
@@ -49,7 +49,7 @@ describe("discoverSchemas — const (alias-origin) factory declarations", () => 
 
   it("ignores consts whose callee is not a tskm runtime import", () => {
     const src = `
-      import { object } from "tskm"
+      import { object } from "@tskm/core"
       import { other } from "elsewhere"
       export const x = other({ a: 1 })
     `
@@ -59,7 +59,7 @@ describe("discoverSchemas — const (alias-origin) factory declarations", () => 
 
   it("ignores a const whose init is not a call expression", () => {
     const src = `
-      import { object } from "tskm"
+      import { object } from "@tskm/core"
       export const notACall = 42
     `
     const { schemas } = discoverSchemas("a.ts", src)
@@ -68,7 +68,7 @@ describe("discoverSchemas — const (alias-origin) factory declarations", () => 
 
   it("ignores a call whose callee is not a plain identifier (member expression)", () => {
     const src = `
-      import { v } from "tskm"
+      import { v } from "@tskm/core"
       export const x = v.object({ a: 1 })
     `
     const { schemas } = discoverSchemas("a.ts", src)
@@ -77,7 +77,7 @@ describe("discoverSchemas — const (alias-origin) factory declarations", () => 
 
   it("ignores non-exported consts", () => {
     const src = `
-      import { string } from "tskm"
+      import { string } from "@tskm/core"
       const internalSchema = string()
     `
     const { schemas } = discoverSchemas("a.ts", src)
@@ -86,7 +86,7 @@ describe("discoverSchemas — const (alias-origin) factory declarations", () => 
 
   it("honors runtime-import local aliasing (import { object as o })", () => {
     const src = `
-      import { object as o, string } from "tskm"
+      import { object as o, string } from "@tskm/core"
       export const petSchema = o({ name: string() })
     `
     const { schemas } = discoverSchemas("a.ts", src)
@@ -110,8 +110,8 @@ describe("discoverSchemas — const (alias-origin) factory declarations", () => 
 describe("discoverSchemas — Infer alias markers", () => {
   it("discovers an export type T = Infer<typeof X> marker", () => {
     const src = `
-      import { string } from "tskm"
-      import type { Infer } from "tskm"
+      import { string } from "@tskm/core"
+      import type { Infer } from "@tskm/core"
       const xSchema = string()
       export type X = Infer<typeof xSchema>
     `
@@ -129,19 +129,19 @@ describe("discoverSchemas — Infer alias markers", () => {
     expect(schemas).toEqual([{ name: "ySchema", typeName: "Y", origin: "alias" }])
   })
 
-  it('discovers the import("tskm").InferOutput<...> qualified form', () => {
+  it('discovers the import("@tskm/core").InferOutput<...> qualified form', () => {
     const src = `
       const zSchema = {}
-      export type Z = import("tskm").InferOutput<typeof zSchema>
+      export type Z = import("@tskm/core").InferOutput<typeof zSchema>
     `
     const { schemas } = discoverSchemas("a.ts", src)
     expect(schemas).toEqual([{ name: "zSchema", typeName: "Z", origin: "alias" }])
   })
 
-  it('discovers the import("tskm").Infer<...> qualified form', () => {
+  it('discovers the import("@tskm/core").Infer<...> qualified form', () => {
     const src = `
       const wSchema = {}
-      export type W = import("tskm").Infer<typeof wSchema>
+      export type W = import("@tskm/core").Infer<typeof wSchema>
     `
     const { schemas } = discoverSchemas("a.ts", src)
     expect(schemas).toEqual([{ name: "wSchema", typeName: "W", origin: "alias" }])
@@ -159,7 +159,7 @@ describe("discoverSchemas — Infer alias markers", () => {
   it("ignores an import-type whose qualifier is not an Infer alias", () => {
     const src = `
       const qSchema = {}
-      export type Q = import("tskm").SomethingElse<typeof qSchema>
+      export type Q = import("@tskm/core").SomethingElse<typeof qSchema>
     `
     const { schemas } = discoverSchemas("a.ts", src)
     expect(schemas).toHaveLength(0)
@@ -202,8 +202,8 @@ describe("discoverSchemas — Infer alias markers", () => {
 describe("discoverSchemas — multiple schemas & dedup", () => {
   it("collects const and alias origins together from one file", () => {
     const src = `
-      import { object, string, number } from "tskm"
-      import type { Infer } from "tskm"
+      import { object, string, number } from "@tskm/core"
+      import type { Infer } from "@tskm/core"
       export const userSchema = object({ name: string() })
       export const ageSchema = number()
       const hiddenSchema = string()
@@ -219,7 +219,7 @@ describe("discoverSchemas — multiple schemas & dedup", () => {
 
   it("does not re-add a const name already seen", () => {
     const src = `
-      import { string } from "tskm"
+      import { string } from "@tskm/core"
       export const dupSchema = string(), other = string()
     `
     const { schemas } = discoverSchemas("a.ts", src)

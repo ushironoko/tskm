@@ -1,4 +1,4 @@
-import { safeParse } from "tskm"
+import { safeParse } from "@tskm/core"
 import type { Product, User } from "./user.schema.gen.ts"
 import { productSchema, userSchema } from "./user.schema.ts"
 

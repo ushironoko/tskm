@@ -57,7 +57,7 @@ const START_LINE = /^\/\/ @tskm-gen (\w+) from (\w+) #([0-9a-f]{8})$/
 const END_LINE = /^\/\/ @tskm-end (\w+)$/
 
 // First-run marker: only the SINGLE-LINE form is supported. Accepts the bare
-// `Infer`/`InferOutput` reference and the `import("tskm").Infer*<...>` form — matching
+// `Infer`/`InferOutput` reference and the `import("@tskm/core").Infer*<...>` form — matching
 // discovery's alias set. (`InferInput` is intentionally excluded: the resolver always
 // queries `InferOutput`, so an input marker would be silently filled with the output type.)
 const INFER_MARKER =

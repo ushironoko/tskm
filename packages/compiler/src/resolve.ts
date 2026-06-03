@@ -30,7 +30,7 @@ function buildQueryBody(
   if (names.length > 0) {
     lines.push(`import { ${names.join(", ")} } from "${sourceImportPath}"`)
   }
-  lines.push(`import type { InferOutput } from "tskm"`)
+  lines.push(`import type { InferOutput } from "@tskm/core"`)
   lines.push(`type __P<T> = { [K in keyof T]: T[K] } & {}`)
   schemas.forEach((schema, i) => {
     lines.push(`declare const ${markers[i]}: __P<InferOutput<typeof ${schema.name}>>`)

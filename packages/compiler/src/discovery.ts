@@ -1,7 +1,7 @@
 import { parseSync } from "oxc-parser"
 
 /** The runtime package whose exports mark a value as a tskm schema. */
-const RUNTIME_MODULE = "tskm"
+const RUNTIME_MODULE = "@tskm/core"
 
 /** Type-level aliases that mark `export type T = ...<typeof schema>` AOT targets. */
 const INFER_ALIASES = new Set(["Infer", "InferOutput"])
@@ -73,7 +73,7 @@ function calleeName(init: OxcNode | undefined): string | undefined {
 
 /**
  * Reads an `export type T = Infer<typeof X>` (or `InferOutput<...>`, or
- * `import("tskm").InferOutput<typeof X>`) alias and returns the referenced
+ * `import("@tskm/core").InferOutput<typeof X>`) alias and returns the referenced
  * schema name plus the declared alias name.
  */
 function readInferAlias(decl: OxcNode | undefined): DiscoveredSchema | undefined {
