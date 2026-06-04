@@ -229,10 +229,12 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): string {
     case "never":
       return "never"
     case "literal":
-      return renderLiteral(schema.literal)
+      return renderLiteralIn(schema.literal, ctx)
     case "picklist": {
       const options = Array.isArray(schema.options) ? schema.options : []
-      return options.length === 0 ? "never" : options.map(renderLiteral).join(" | ")
+      return options.length === 0
+        ? "never"
+        : options.map((option) => renderLiteralIn(option, ctx)).join(" | ")
     }
     case "object":
       return walkObject(schema, ctx)
@@ -336,7 +338,17 @@ function markOpaque(segment: string, what: string, ctx: WalkContext): string {
   return "unknown"
 }
 
-function renderLiteral(value: unknown): string {
+function renderLiteralIn(value: unknown, ctx: WalkContext): string {
+  // NaN/Infinity/-Infinity have no TS literal type — the bare tokens are values
+  // (TS2749) or a parse error (TS1110) and would ship a non-compiling alias.
+  // Widen to `number` (what the checker itself infers for these constants) and
+  // say so, instead of silently emitting garbage.
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    ctx.warnings.push(
+      `tskm: ${ctx.rootName}: non-finite number literal (${String(value)}) has no TS literal type at ${currentPath(ctx)}; widened to 'number'.`,
+    )
+    return "number"
+  }
   return typeof value === "string" ? JSON.stringify(value) : String(value)
 }
 

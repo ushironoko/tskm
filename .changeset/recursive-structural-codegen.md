@@ -27,3 +27,12 @@ only (a re-exported or imported recursive schema can never become a dangling or
 inlined alias), duplicate declared aliases collapse to one canonical alias plus a
 thin re-export, and a dangling-alias prune cascades over anything that would
 reference a sibling alias that could not be emitted.
+
+Spec-first hardening: non-finite number literals (`NaN`/`Infinity`) widen to
+`number` with a warning instead of emitting non-compiling tokens; duplicate
+derived type names (`user` + `userSchema`) skip with a diagnostic instead of
+aborting the run; the canonical const+`Infer`-alias pair emits exactly one
+alias (never a circular `type A = A`); the brand-absorption cross-check is
+root-level-aware and a brand under a non-object recursive root now fails
+closed; property keys named like sibling aliases no longer false-positive the
+dangling-alias prune.

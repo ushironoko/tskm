@@ -28,10 +28,107 @@ export interface SpliceVerdict {
 }
 
 /**
+ * Collects the property keys declared at the ROOT level of a rendered type body:
+ * inside top-level `{ ... }` blocks only (curly depth 1 with no other bracket
+ * nesting), so an intersection of object literals contributes all of its members
+ * while keys of NESTED objects never count. Quote-aware: string spans are opaque,
+ * quoted keys are read literally.
+ */
+export function rootLevelKeys(candidate: string): ReadonlySet<string> {
+  const keys = new Set<string>()
+  let curly = 0
+  let other = 0
+  let i = 0
+  const skipString = (quote: string): void => {
+    i++
+    while (i < candidate.length) {
+      const c = candidate[i] as string
+      i++
+      if (c === "\\" && i < candidate.length) {
+        i++
+        continue
+      }
+      if (c === quote) {
+        break
+      }
+    }
+  }
+  const tryKeyAt = (start: number): string | undefined => {
+    // A member key is an identifier or string literal followed by `?:`/`:`.
+    const rest = candidate.slice(start)
+    const match =
+      /^(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([A-Za-z_$][A-Za-z0-9_$]*))\s*\??:/.exec(rest)
+    return match ? (match[1] ?? match[2] ?? match[3]) : undefined
+  }
+  let atMemberStart = false
+  while (i < candidate.length) {
+    const ch = candidate[i] as string
+    if (ch === '"' || ch === "'" || ch === "`") {
+      if (curly === 1 && other === 0 && atMemberStart) {
+        const key = tryKeyAt(i)
+        if (key !== undefined) {
+          keys.add(key)
+        }
+      }
+      skipString(ch)
+      atMemberStart = false
+      continue
+    }
+    if (ch === "{") {
+      curly++
+      atMemberStart = curly === 1 && other === 0
+      i++
+      continue
+    }
+    if (ch === "}") {
+      curly--
+      atMemberStart = false
+      i++
+      continue
+    }
+    if (ch === "[" || ch === "(" || ch === "<") {
+      other++
+      atMemberStart = false
+      i++
+      continue
+    }
+    if (ch === "]" || ch === ")" || ch === ">") {
+      other--
+      i++
+      continue
+    }
+    if (ch === ";" || ch === ",") {
+      atMemberStart = curly === 1 && other === 0
+      i++
+      continue
+    }
+    if (/\s/.test(ch)) {
+      i++
+      continue
+    }
+    if (curly === 1 && other === 0 && atMemberStart) {
+      // `readonly` is a member modifier, not the key itself.
+      if (candidate.startsWith("readonly", i) && /\s/.test(candidate[i + 8] ?? "")) {
+        i += 8
+        continue
+      }
+      const key = tryKeyAt(i)
+      if (key !== undefined) {
+        keys.add(key)
+      }
+      atMemberStart = false
+    }
+    i++
+  }
+  return keys
+}
+
+/**
  * Structural-vs-checker cross-check: when the walk saw own data keys on the root
- * body, the checker's rendered candidate must mention at least one of them. Zero
- * overlap means an intersection absorbed the body. (Missing SOME keys is left to
- * the oracle, which detects it precisely as a TS2741.)
+ * body, the checker's rendered candidate must declare at least one of them AT THE
+ * ROOT LEVEL. Zero overlap means an intersection absorbed the body. A nested
+ * occurrence proves nothing about the root body, so it must not count. (Missing
+ * SOME keys is left to the oracle, which detects it precisely as a TS2741.)
  */
 export function crossCheckDataKeys(
   candidate: string,
@@ -40,17 +137,15 @@ export function crossCheckDataKeys(
   if (dataKeys.length === 0) {
     return { sound: true }
   }
-  const present = dataKeys.some((key) => {
-    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    return new RegExp(`(?:^|[{;(\\s])(?:"${escaped}"|'${escaped}'|${escaped})\\??:`).test(candidate)
-  })
+  const rootKeys = rootLevelKeys(candidate)
+  const present = dataKeys.some((key) => rootKeys.has(key))
   return present
     ? { sound: true }
     : {
         sound: false,
         reason: `the checker output carries none of the structural data keys (${dataKeys.join(
           ", ",
-        )}) — intersection absorption suspected`,
+        )}) at the root level — intersection absorption suspected`,
       }
 }
 
@@ -170,6 +265,17 @@ export function applyTier1(
     if (substituted.failure !== undefined || substituted.typeString === undefined) {
       diagnostics.push(
         `tskm: Tier-1 candidate for ${target.typeName} rejected (${substituted.failure ?? "no result"}); keeping the structural skeleton.`,
+      )
+      return
+    }
+    // A non-object root (union/tuple) has NO data keys, so the cross-check is
+    // vacuous — and brand absorption (`unknown & Brand = Brand`) makes the oracle
+    // vacuous too. With BOTH gates blind, a brand-bearing candidate could ship a
+    // silently body-dropped branch; fail closed instead (the skeleton's honest
+    // `unknown & Brand` is strictly more correct).
+    if (target.dataKeys.length === 0 && substituted.typeString.includes('"~brand"')) {
+      diagnostics.push(
+        `tskm: Tier-1 candidate for ${target.typeName} rejected (a brand under a non-object recursive root cannot be cross-checked for absorption); keeping the structural skeleton.`,
       )
       return
     }

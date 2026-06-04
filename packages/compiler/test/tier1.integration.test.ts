@@ -20,6 +20,7 @@ const cleanups = [
   "s4.schema.gen.ts",
   "s5.schema.gen.ts",
   "s6.schema.gen.ts",
+  "s7.schema.gen.ts",
   "mono.schema.gen.ts",
   "probe.check.ts",
 ].map(src)
@@ -48,7 +49,7 @@ describe.skipIf(!bun)("Tier-1 sentinel splice (real tsgo + real worker)", () => 
         worker: { execPath: bun },
       },
     })
-    expect(result.files.length).toBe(6)
+    expect(result.files.length).toBe(7)
 
     // S2: object-in-cycle — the transform output (number) is REAL, not unknown.
     const s2 = readFileSync(src("s2.schema.gen.ts"), "utf8")
@@ -82,6 +83,21 @@ describe.skipIf(!bun)("Tier-1 sentinel splice (real tsgo + real worker)", () => 
     expect(s6).toContain("score: unknown")
     expect(s6).toContain("id: string")
     expect(result.diagnostics.some((d) => d.includes("S6") && d.includes("skeleton"))).toBe(true)
+
+    // S7: union root + brand-absorbed transform branch — dataKeys is empty so the
+    // cross-check is vacuous AND absorption makes the oracle vacuous; the dedicated
+    // non-object brand gate must keep the skeleton (honest `unknown & Brand`),
+    // never the silently body-dropped `{ "~brand": "Leaf" }` candidate.
+    const s7 = readFileSync(src("s7.schema.gen.ts"), "utf8")
+    expect(s7).toContain('"~brand": "Leaf"')
+    expect(s7).toContain("unknown")
+    expect(s7).toContain("next: S7")
+    expect(s7).not.toContain("doubled")
+    expect(
+      result.diagnostics.some(
+        (d) => d.includes("S7") && d.includes("cannot be cross-checked for absorption"),
+      ),
+    ).toBe(true)
 
     // Monomorphic build: the unroll cannot instantiate; Tier-2 floor, never `{}`.
     const mono = readFileSync(src("mono.schema.gen.ts"), "utf8")

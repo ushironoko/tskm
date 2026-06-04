@@ -342,3 +342,32 @@ describe("schemaToTypeString — parenthesizeIfCompound quote handling", () => {
     expect(result.unsupported).toBe(false)
   })
 })
+
+describe("schemaToTypeString — non-finite number literals (spec: .gen.ts must compile)", () => {
+  // NaN/Infinity have no TS literal type — the bare tokens are global VALUES
+  // (TS2749) or a parse error (TS1110). The walker widens to `number` (what the
+  // checker infers for these constants) and says so, never shipping a
+  // non-compiling alias.
+  it.each([
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["-Infinity", Number.NEGATIVE_INFINITY],
+    ["NaN", Number.NaN],
+  ])("widens literal(%s) to number with a warning", (_label, value) => {
+    const result = walk(s.literal(value))
+    expect(result.typeString).toBe("number")
+    expect(result.warnings.some((w) => w.includes("non-finite"))).toBe(true)
+    expect(result.unsupported).toBe(false)
+  })
+
+  it("widens only the non-finite member of a picklist", () => {
+    const result = walk(s.picklist([1, Number.NaN, 2]))
+    expect(result.typeString).toBe("1 | number | 2")
+    expect(result.warnings.some((w) => w.includes("non-finite"))).toBe(true)
+  })
+
+  it("keeps finite numeric literals exact (exponent, negative, -0)", () => {
+    expect(walk(s.literal(1e21)).typeString).toBe("1e+21")
+    expect(walk(s.literal(-5.5)).typeString).toBe("-5.5")
+    expect(walk(s.literal(-0)).typeString).toBe("0")
+  })
+})

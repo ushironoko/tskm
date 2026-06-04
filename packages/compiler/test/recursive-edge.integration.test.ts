@@ -24,12 +24,19 @@ const cleanups = [
   "specifier.schema.gen.ts",
   "orphan.schema.gen.ts",
   "optnull.schema.gen.ts",
+  "dupname.schema.gen.ts",
+  "selfalias.schema.gen.ts",
+  "keyclash.schema.gen.ts",
   "leaf.schema.tskm-query.ts",
   "reexport.schema.tskm-query.ts",
   "crossalias.schema.tskm-query.ts",
   "specifier.schema.tskm-query.ts",
   "orphan.schema.tskm-query.ts",
   "optnull.schema.tskm-query.ts",
+  "dupname.schema.tskm-query.ts",
+  "selfalias.schema.tskm-query.ts",
+  "keyclash.schema.tskm-query.ts",
+  "keyclash.schema.tier1.tskm-query.ts",
   "probe.check.ts",
 ].map(src)
 
@@ -58,8 +65,9 @@ describe.skipIf(!bun)("structural edge contracts (real tsgo + real worker)", () 
       },
     })
 
-    // Only the sound roots emit: Leaf, OptNull, SpecNode.
-    expect(result.files.length).toBe(3)
+    // Only the sound roots emit: Leaf, OptNull, SpecNode, User (dupname),
+    // Book (selfalias), Clash (keyclash).
+    expect(result.files.length).toBe(6)
 
     // Defining file: normal emission.
     const leafGen = readFileSync(src("leaf.schema.gen.ts"), "utf8")
@@ -104,12 +112,51 @@ describe.skipIf(!bun)("structural edge contracts (real tsgo + real worker)", () 
     expect(optGen).toContain("alt: OptNull | null | undefined")
     expect(optGen).toContain("other: OptNull | null")
     expect(optGen).not.toContain("?:")
+
+    // Duplicate derived typeName (`user` + `userSchema` -> User): the FIRST
+    // declaration wins, the later one is skipped with a diagnostic — never a
+    // renderSidecar crash that aborts the whole run.
+    const dupGen = readFileSync(src("dupname.schema.gen.ts"), "utf8")
+    expect(dupGen).toContain("export type User = {")
+    expect(dupGen).toContain("boss: User | undefined")
+    expect(dupGen).not.toContain("parent:")
+    expect(
+      result.diagnostics.some(
+        (d) => d.includes('duplicate generated type name "User"') && d.includes("userSchema"),
+      ),
+    ).toBe(true)
+
+    // The canonical const+Infer-alias pair: exactly ONE Book, never a circular
+    // `type Book = Book` thin re-export.
+    const selfGen = readFileSync(src("selfalias.schema.gen.ts"), "utf8")
+    expect(selfGen).toContain("export type Book = {")
+    expect(selfGen).toContain("sequel: Book | undefined")
+    expect(selfGen).not.toContain("Book = Book")
+    expect(selfGen.match(/export type Book/g)).toHaveLength(1)
+
+    // A property KEY named like a failing sibling alias must not get the sound
+    // Tier-1 root pruned: the key is a member declaration, not a type reference.
+    const clashGen = readFileSync(src("keyclash.schema.gen.ts"), "utf8")
+    expect(clashGen).toContain("export type Clash = {")
+    expect(clashGen).toContain("CategoryTree: string")
+    expect(clashGen).toContain("value: number")
+    expect(result.diagnostics.some((d) => d.includes("skipping Clash"))).toBe(false)
+    // ...while the failing sibling itself is honestly skipped.
+    expect(existsSync(src("categoryTree.schema.gen.ts"))).toBe(false)
+    expect(
+      result.diagnostics.some(
+        (d) => d.includes("no declared alias") && d.includes("CategoryTree.entries[inner]"),
+      ),
+    ).toBe(true)
   }, 180_000)
 
   it("KEYSTONE: emitted aliases type-check and reject missing keys", () => {
     writeFileSync(
       src("probe.check.ts"),
-      `import type { Leaf } from "./leaf.schema.gen.ts"
+      `import type { Book } from "./selfalias.schema.gen.ts"
+import type { User } from "./dupname.schema.gen.ts"
+import type { Clash } from "./keyclash.schema.gen.ts"
+import type { Leaf } from "./leaf.schema.gen.ts"
 import type { OptNull } from "./optnull.schema.gen.ts"
 import type { SpecNode } from "./specifier.schema.gen.ts"
 
@@ -121,13 +168,16 @@ const opt: OptNull = {
   alt: undefined,
   other: null,
 }
+const book: Book = { title: "t", sequel: { title: "u", sequel: undefined } }
+const user: User = { name: "u", boss: undefined }
+const clash: Clash = { CategoryTree: "not a type", value: 4, kids: [] }
 
 // Keys are REQUIRED even when their value admits undefined — a missing key must
 // not type-check (this guards the k?: regression at the type level).
 // @ts-expect-error 'next' is required
 const bad: OptNull = { name: "b", alt: undefined, other: null }
 
-export const probes = [leaf, spec, opt, bad] as const
+export const probes = [leaf, spec, opt, book, user, clash, bad] as const
 `,
     )
     const check = runTsgoNoEmit(fixtureRoot)

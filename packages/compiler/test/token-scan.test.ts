@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test"
-import { containsTokenOutsideQuotes, replaceTokenOutsideQuotes } from "../src/token-scan.ts"
+import {
+  containsTokenOutsideQuotes,
+  referencesTypeOutsideQuotes,
+  replaceTokenOutsideQuotes,
+} from "../src/token-scan.ts"
 
 // These are the quote-aware, whole-word scanners that the Tier-1 sentinel substitution
 // and the dangling-alias prune both rely on. Every span inside a string literal MUST be
@@ -108,5 +112,35 @@ describe("containsTokenOutsideQuotes", () => {
 
   it("is false when the token does not occur at all", () => {
     expect(containsTokenOutsideQuotes("string | number", "Foo")).toBe(false)
+  })
+})
+
+describe("referencesTypeOutsideQuotes", () => {
+  it("does not count an unquoted property key (Token:)", () => {
+    expect(referencesTypeOutsideQuotes("{ Broken: string }", "Broken")).toBe(false)
+  })
+
+  it("does not count an optional property key (Token?:)", () => {
+    expect(referencesTypeOutsideQuotes("{ Broken?: string }", "Broken")).toBe(false)
+  })
+
+  it("counts a reference in value position", () => {
+    expect(referencesTypeOutsideQuotes("{ broken: Broken }", "Broken")).toBe(true)
+  })
+
+  it("counts a reference at end of text (thin re-export body)", () => {
+    expect(referencesTypeOutsideQuotes("Node", "Node")).toBe(true)
+  })
+
+  it("counts a reference inside a union/array", () => {
+    expect(referencesTypeOutsideQuotes("{ a: Broken[] | null }", "Broken")).toBe(true)
+  })
+
+  it("a body with BOTH key and reference still counts the reference", () => {
+    expect(referencesTypeOutsideQuotes("{ Broken: string; b: Broken }", "Broken")).toBe(true)
+  })
+
+  it("ignores tokens inside string literals", () => {
+    expect(referencesTypeOutsideQuotes('{ kind: "Broken" }', "Broken")).toBe(false)
   })
 })

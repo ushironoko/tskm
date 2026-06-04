@@ -10,7 +10,7 @@ import {
   type ResolvedType,
   type TsgoClient,
 } from "../src/tsgo-client.ts"
-import { applyTier1, crossCheckDataKeys } from "../src/verify-splice.ts"
+import { applyTier1, crossCheckDataKeys, rootLevelKeys } from "../src/verify-splice.ts"
 
 // `applyTier1`, `resolveSentinelUnroll`, and `verifyFixpoint` WRITE real query/probe
 // files next to `sourceFileAbs` and clean them up in `finally`. Every case must run
@@ -233,5 +233,99 @@ describe("resolveSentinelUnroll — R6 failure-flag guard", () => {
     ])
     expect(result.unrolled.size).toBe(0)
     expect(result.diagnostics.some((d) => /did not resolve.*flags=1/.test(d))).toBe(true)
+  })
+})
+
+describe("crossCheckDataKeys — root-level discrimination (spec counterexamples)", () => {
+  it("rejects when the only data-key match is NESTED (proves nothing about the root)", () => {
+    // The absorbed candidate carries a coincidental nested `meta.id`; the ROOT body
+    // is gone. A depth-blind matcher would pass this — the gate must not.
+    const verdict = crossCheckDataKeys("Brand & { meta: { id: string } }", ["id"])
+    expect(verdict.sound).toBe(false)
+    expect(verdict.reason).toMatch(/root level/)
+  })
+
+  it("rejects a body-dropped brand carrying only nested survivors", () => {
+    const verdict = crossCheckDataKeys('{ readonly "~brand": "Node"; meta: { id: string } }', [
+      "id",
+      "score",
+      "parent",
+    ])
+    expect(verdict.sound).toBe(false)
+  })
+
+  it("accepts a root-level member of an intersection of object literals", () => {
+    const verdict = crossCheckDataKeys('{ id: string } & { readonly "~brand": "N" }', ["id"])
+    expect(verdict.sound).toBe(true)
+  })
+})
+
+describe("rootLevelKeys", () => {
+  it("collects unquoted, quoted and readonly-modified members at depth 1", () => {
+    const keys = rootLevelKeys('{ id: string; "two words": number; readonly "~brand": "X" }')
+    expect(keys.has("id")).toBe(true)
+    expect(keys.has("two words")).toBe(true)
+    expect(keys.has("~brand")).toBe(true)
+  })
+
+  it("never collects nested keys or index-signature parameter names", () => {
+    const keys = rootLevelKeys("{ meta: { id: string }; [key: string]: unknown }")
+    expect(keys.has("meta")).toBe(true)
+    expect(keys.has("id")).toBe(false)
+    expect(keys.has("key")).toBe(false)
+  })
+
+  it("collects across every top-level intersection/union member", () => {
+    const keys = rootLevelKeys("{ a: 1 } & { b: 2 } | { c: 3 }")
+    expect([keys.has("a"), keys.has("b"), keys.has("c")]).toEqual([true, true, true])
+  })
+})
+
+describe("applyTier1 — non-object roots bearing a brand (the attack7 hole)", () => {
+  it("rejects a brand-bearing candidate when there are NO data keys to cross-check", () => {
+    // Union root: dataKeys is empty (vacuous cross-check) AND brand absorption makes
+    // the oracle vacuous — with both gates blind, the old code emitted a candidate
+    // whose transform branch had silently dropped its body. Must fail closed now.
+    const dir = mkSourceDir()
+    const sourceFileAbs = join(dir, "attack.schema.ts")
+    const { client } = stubClient({
+      resolveTypeAt: () => ({
+        text: '{ readonly "~brand": "Leaf"; } | { next: Sentinel_0; }',
+        flags: OK_FLAGS,
+      }),
+      getDiagnostics: () => [], // the vacuous oracle would say "sound"
+    })
+    const out = applyTier1(client, sourceFileAbs, [
+      resolution({
+        typeName: "Attack",
+        exportName: "attackSchema",
+        dataKeys: [],
+        skeleton: '{ next: Attack } | unknown & { readonly "~brand": "Leaf" }',
+      }),
+    ])
+    expect(out.upgraded.size).toBe(0)
+    expect(out.diagnostics.some((d) => /cannot be cross-checked for absorption/.test(d))).toBe(true)
+  })
+
+  it("still upgrades a brand-free union root when the oracle passes (positive control)", () => {
+    const dir = mkSourceDir()
+    const sourceFileAbs = join(dir, "plainunion.schema.ts")
+    const { client } = stubClient({
+      resolveTypeAt: () => ({
+        text: "{ doubled: number; } | { next: Sentinel_0; }",
+        flags: OK_FLAGS,
+      }),
+      getDiagnostics: () => [],
+    })
+    const out = applyTier1(client, sourceFileAbs, [
+      resolution({
+        typeName: "Plain",
+        exportName: "plainSchema",
+        dataKeys: [],
+        skeleton: "{ doubled: unknown } | { next: Plain }",
+      }),
+    ])
+    expect(out.upgraded.get("Plain")).toBe("{ doubled: number; } | { next: Plain; }")
+    expect(out.diagnostics).toEqual([])
   })
 })

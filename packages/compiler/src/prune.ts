@@ -1,4 +1,4 @@
-import { containsTokenOutsideQuotes } from "./token-scan.ts"
+import { referencesTypeOutsideQuotes } from "./token-scan.ts"
 
 /**
  * Dangling-alias prune: the fail-closed backstop between resolution and emission.
@@ -41,11 +41,14 @@ export function pruneDanglingAliases(
       if (!candidate?.structural) {
         continue
       }
+      // referencesTypeOutsideQuotes, NOT a plain token scan: a property KEY named
+      // like a sibling alias (`{ CategoryTree: string }`) is a member declaration,
+      // not a type reference, and must not prune a sound body.
       const missing = [...declaredNames].find(
         (name) =>
           name !== candidate.typeName &&
           !emitted.has(name) &&
-          containsTokenOutsideQuotes(candidate.body, name),
+          referencesTypeOutsideQuotes(candidate.body, name),
       )
       if (missing !== undefined) {
         diagnostics.push(

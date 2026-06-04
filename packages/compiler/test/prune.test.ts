@@ -68,3 +68,38 @@ describe("pruneDanglingAliases", () => {
     expect(result.kept.map((k) => k.typeName)).toEqual(["Tree"])
   })
 })
+
+describe("pruneDanglingAliases — property keys are not type references", () => {
+  it("keeps a body whose property KEY is named like a missing sibling alias", () => {
+    // `{ CategoryTree: string }` declares a member named CategoryTree; it does not
+    // reference the (unemitted) CategoryTree alias. Pruning it would drop a sound
+    // resolution.
+    const result = pruneDanglingAliases(
+      [c("Node", "{ CategoryTree: string; kids: Node[] }")],
+      new Set(["Node", "CategoryTree"]),
+    )
+    expect(result.kept.map((k) => k.typeName)).toEqual(["Node"])
+    expect(result.diagnostics).toHaveLength(0)
+  })
+
+  it("keeps an optional-key match too", () => {
+    const result = pruneDanglingAliases(
+      [c("Node", "{ Broken?: string }")],
+      new Set(["Node", "Broken"]),
+    )
+    expect(result.kept.map((k) => k.typeName)).toEqual(["Node"])
+  })
+
+  it("still drops a genuine type reference in value position", () => {
+    const result = pruneDanglingAliases(
+      [c("Node", "{ broken: Broken }")],
+      new Set(["Node", "Broken"]),
+    )
+    expect(result.kept).toHaveLength(0)
+  })
+
+  it("drops a thin re-export whose body IS the missing canonical name", () => {
+    const result = pruneDanglingAliases([c("Dup", "Node")], new Set(["Dup", "Node"]))
+    expect(result.kept).toHaveLength(0)
+  })
+})

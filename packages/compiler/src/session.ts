@@ -124,6 +124,27 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       extraDiagnostics.push(...collected.diagnostics)
     }
 
+    // One emitted alias per typeName, fail-closed: two DISTINCT exports can derive
+    // the same name (`user` and `userSchema` both -> `User`), which would otherwise
+    // crash renderSidecar's duplicate guard and abort the whole run. The first
+    // declaration (discovery order) wins; a same-export duplicate (the canonical
+    // `export const aSchema = ...` + `export type A = Infer<typeof aSchema>` pair)
+    // is the SAME declaration intent and drops silently.
+    const seenTypeNames = new Map<string, string>()
+    targets = targets.filter((t) => {
+      const owner = seenTypeNames.get(t.typeName)
+      if (owner === undefined) {
+        seenTypeNames.set(t.typeName, t.name)
+        return true
+      }
+      if (owner !== t.name) {
+        extraDiagnostics.push(
+          `tskm: duplicate generated type name "${t.typeName}" (exports "${owner}" and "${t.name}"); skipping the later declaration. Existing output left untouched.`,
+        )
+      }
+      return false
+    })
+
     if (targets.length === 0) {
       return { file: null, diagnostics: [...discovery.diagnostics, ...extraDiagnostics] }
     }
@@ -157,7 +178,14 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     for (const r of structuralResult.resolutions) {
       const upgradedBody = tier1.upgraded.get(r.typeName)
       byTypeName.set(r.typeName, upgradedBody ?? r.skeleton)
-      structuralNames.add(r.typeName)
+      // Only SKELETON bodies are prune-scanned: the walker is the one writer that
+      // can introduce sibling alias references. A Tier-1 body is checker-rendered
+      // (fully inline; the substitution introduces only the root's OWN alias), so
+      // a textual match there — e.g. a property KEY named like a sibling — must
+      // not drop a sound resolution.
+      if (upgradedBody === undefined) {
+        structuralNames.add(r.typeName)
+      }
       // The skeleton's honest-degradation notes matter only when the skeleton is
       // what actually ships: a successful Tier-1 splice supersedes them, and a
       // pruned resolution (below) must not surface notes for a body never emitted.

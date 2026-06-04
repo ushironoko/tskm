@@ -67,3 +67,23 @@ describe("splitCanonicalTargets", () => {
     expect(duplicates[0]?.canonicalName).toBe("Node")
   })
 })
+
+describe("splitCanonicalTargets — same alias name on the same binding", () => {
+  const target = (name: string, typeName: string, origin: "const" | "alias") =>
+    ({ name, typeName, origin, recursive: true }) as const
+
+  it("classifies the const+Infer-alias pair as a duplicate of itself", () => {
+    // `export const bookSchema = recursive(...)` + `export type Book =
+    // Infer<typeof bookSchema>`: identical name AND typeName. The duplicate loop in
+    // resolveRecursiveSchemas drops it silently (a thin `type Book = Book` would be
+    // circular); this locks the split shape that decision relies on.
+    const { canonical, duplicates } = splitCanonicalTargets([
+      target("bookSchema", "Book", "const"),
+      target("bookSchema", "Book", "alias"),
+    ])
+    expect(canonical.map((t) => t.typeName)).toEqual(["Book"])
+    expect(duplicates).toHaveLength(1)
+    expect(duplicates[0]?.target.typeName).toBe("Book")
+    expect(duplicates[0]?.canonicalName).toBe("Book")
+  })
+})

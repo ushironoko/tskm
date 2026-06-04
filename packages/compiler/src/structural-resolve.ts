@@ -140,6 +140,14 @@ export function resolveRecursiveSchemas(
   // canonical actually resolved, so they can never dangle.
   const resolvedNames = new Set(resolutions.map((r) => r.typeName))
   for (const { target, canonicalName } of duplicates) {
+    if (target.typeName === canonicalName) {
+      // Same alias name on the same binding (`export const aSchema` + `export type
+      // A = Infer<typeof aSchema>`): one declaration intent, already emitted by the
+      // canonical — a thin `type A = A` would be circular (TS2456). Drop silently.
+      // (The session-level typeName dedupe normally catches this first; this is
+      // the in-module backstop.)
+      continue
+    }
     if (!resolvedNames.has(canonicalName)) {
       diagnostics.push(
         `tskm: "${target.typeName}" duplicates the alias for export "${target.name}", whose canonical alias ${canonicalName} could not be resolved; skipping ${target.typeName}. Existing output left untouched.`,
