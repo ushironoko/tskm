@@ -41,6 +41,35 @@ export interface ResolveRecursiveOptions {
   readonly timeoutMs: number
 }
 
+/**
+ * Splits targets into one CANONICAL target per export binding (first in discovery
+ * order) and the duplicate declared aliases for the same binding. Only canonicals
+ * are walked; each duplicate becomes a thin re-export of its canonical alias
+ * (`type Dup = Canonical`), so no emitted alias can self-reference a DIFFERENT
+ * declared alias through the identity map.
+ */
+export function splitCanonicalTargets(targets: ReadonlyArray<DiscoveredSchema>): {
+  readonly canonical: ReadonlyArray<DiscoveredSchema>
+  readonly duplicates: ReadonlyArray<{
+    readonly target: DiscoveredSchema
+    readonly canonicalName: string
+  }>
+} {
+  const canonical: DiscoveredSchema[] = []
+  const duplicates: Array<{ target: DiscoveredSchema; canonicalName: string }> = []
+  const canonicalByExport = new Map<string, string>()
+  for (const target of targets) {
+    const seen = canonicalByExport.get(target.name)
+    if (seen === undefined) {
+      canonicalByExport.set(target.name, target.typeName)
+      canonical.push(target)
+    } else {
+      duplicates.push({ target, canonicalName: seen })
+    }
+  }
+  return { canonical, duplicates }
+}
+
 export function resolveRecursiveSchemas(
   sourceAbs: string,
   targets: ReadonlyArray<DiscoveredSchema>,
@@ -51,16 +80,18 @@ export function resolveRecursiveSchemas(
   }
 
   const workerAbs = resolveWorker("structural-ts-worker")
-  // Discovery's typeName is the single naming source: it rides into the worker so
-  // alias-renamed targets (`export type TreeNode = Infer<typeof nodeSchema>`) emit
-  // back-edges that exactly match the declared alias.
-  const overrides = Object.fromEntries(targets.map((t) => [t.name, t.typeName]))
+  const { canonical, duplicates } = splitCanonicalTargets(targets)
+  // Discovery's typeName is the single naming source: the ordered pairs ride into
+  // the worker (argv[4]) and seed the target-driven identity map, so back-edges and
+  // cross-references exactly match the aliases this sidecar declares — and nothing
+  // else (re-exports and helper schemas stay out of the map).
+  const pairs = canonical.map((t) => [t.name, t.typeName] as const)
   const run = runWorker<SchemaWorkerEnvelope<StructuralWorkerEntry>>(workerAbs, sourceAbs, {
     root: options.root,
     execPath: options.execPath,
     timeoutMs: options.timeoutMs,
     tag: "structural",
-    extraArgs: [JSON.stringify(overrides)],
+    extraArgs: [JSON.stringify(pairs)],
   })
   if (run.diagnostic !== undefined) {
     return { resolutions: [], diagnostics: [run.diagnostic] }
@@ -73,11 +104,11 @@ export function resolveRecursiveSchemas(
 
   const resolutions: StructuralResolution[] = []
   const diagnostics: string[] = []
-  for (const target of targets) {
+  for (const target of canonical) {
     const entry = byExport.get(target.name)
     if (!entry) {
       diagnostics.push(
-        `tskm: could not structurally resolve "${target.name}" (not found among module exports); skipping ${target.typeName}. Existing output left untouched.`,
+        `tskm: could not structurally resolve "${target.name}" (not found among module exports — is the const exported?); skipping ${target.typeName}. Existing output left untouched.`,
       )
       continue
     }
@@ -104,5 +135,30 @@ export function resolveRecursiveSchemas(
       warnings: entry.warnings,
     })
   }
+
+  // Thin re-exports for duplicate declared aliases — emitted only when their
+  // canonical actually resolved, so they can never dangle.
+  const resolvedNames = new Set(resolutions.map((r) => r.typeName))
+  for (const { target, canonicalName } of duplicates) {
+    if (!resolvedNames.has(canonicalName)) {
+      diagnostics.push(
+        `tskm: "${target.typeName}" duplicates the alias for export "${target.name}", whose canonical alias ${canonicalName} could not be resolved; skipping ${target.typeName}. Existing output left untouched.`,
+      )
+      continue
+    }
+    diagnostics.push(
+      `tskm: "${target.typeName}" duplicates the alias for export "${target.name}"; emitted as a re-export of ${canonicalName}.`,
+    )
+    resolutions.push({
+      typeName: target.typeName,
+      exportName: target.name,
+      skeleton: canonicalName,
+      bearsOpaque: false,
+      opaquePaths: [],
+      dataKeys: [],
+      warnings: [],
+    })
+  }
+
   return { resolutions, diagnostics }
 }

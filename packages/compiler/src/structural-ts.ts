@@ -139,12 +139,25 @@ function walkNode(schema: unknown, ctx: WalkContext): string {
     return "unknown"
   }
 
-  // A reference to ANOTHER exported schema renders as its alias name — its own
-  // declaration is emitted separately (checker path or its own structural walk).
+  // A reference to ANOTHER declared target renders as its alias name — its own
+  // declaration is emitted separately by the same sidecar. The map is seeded from
+  // DECLARED TARGETS ONLY (never from raw module exports), so the walker can never
+  // emit an alias name the sidecar does not declare.
   if (schema !== ctx.root) {
     const alias = ctx.typeNames.get(schema)
     if (alias !== undefined) {
       return alias
+    }
+    // A recursive() root with NO declared alias in this file (imported, re-exported,
+    // or non-target) cannot be referenced by name, and inlining it would silently
+    // embed a foreign subgraph against the documented skip contract — fail closed
+    // here, where the diagnostic path is exact.
+    if (schema.type === "recursive") {
+      ctx.unsupported = true
+      ctx.warnings.push(
+        `tskm: ${ctx.rootName}: references a recursive() schema with no declared alias in this file (imported, re-exported, or non-target) at ${currentPath(ctx)}; cannot be materialized in v1; skipped.`,
+      )
+      return "unknown"
     }
   }
 
@@ -273,11 +286,11 @@ function walkObject(schema: SchemaLike, ctx: WalkContext): string {
   const entries = isObject(schema.entries) ? schema.entries : {}
   const fields: string[] = []
   for (const key of Object.keys(entries)) {
-    const entry = entries[key]
-    const entryType = isObject(entry) ? entry.type : undefined
-    const optionalKey = entryType === "optional" || entryType === "nullish"
-    const rendered = walkChild(entry, `.entries[${key}]`, ctx)
-    fields.push(`${renderKey(key)}${optionalKey ? "?" : ""}: ${rendered}`)
+    // Keys are ALWAYS required: `object()`'s parser writes every entry key into its
+    // output and `InferObjectOutput` carries no `?` modifier, so optionality lives
+    // in the VALUE union (`k: T | undefined`) — exactly like the checker path.
+    const rendered = walkChild(entries[key], `.entries[${key}]`, ctx)
+    fields.push(`${renderKey(key)}: ${rendered}`)
   }
   return fields.length === 0 ? "{}" : `{ ${fields.join("; ")} }`
 }

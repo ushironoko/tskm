@@ -80,10 +80,14 @@ describe.skipIf(!bun)("recursive structural codegen (real tsgo + real worker)", 
     expect(categoryGen).toContain("children: Category[]")
 
     const mutualGen = readFileSync(src("mutual.schema.gen.ts"), "utf8")
+    // Keys are REQUIRED with the union on the value: the runtime parser writes
+    // every entry key, and InferObjectOutput carries no `?` modifier.
     expect(mutualGen).toContain("export type A = {")
-    expect(mutualGen).toContain("b?: B | undefined")
+    expect(mutualGen).toContain("b: B | undefined")
+    expect(mutualGen).not.toContain("b?:")
     expect(mutualGen).toContain("export type B = {")
-    expect(mutualGen).toContain("a?: A | undefined")
+    expect(mutualGen).toContain("a: A | undefined")
+    expect(mutualGen).not.toContain("a?:")
 
     // JSON value: recursion through array AND record — the record position must be
     // an index-signature literal (Record<string, Json> would be TS2456).
@@ -139,7 +143,7 @@ export type TreeNode = Infer<typeof nodeSchema>
     const written = readFileSync(src("node.schema.ts"), "utf8")
     expect(written).toMatch(/\/\/ @tskm-gen TreeNode from nodeSchema #[0-9a-f]{8}/)
     expect(written).toContain("export type TreeNode = {")
-    expect(written).toContain("next?: TreeNode | undefined")
+    expect(written).toContain("next: TreeNode | undefined")
     expect(written).toContain("// @tskm-end TreeNode")
     // The schema declaration itself is preserved verbatim.
     expect(written).toContain("export const nodeSchema = recursive((self) =>")

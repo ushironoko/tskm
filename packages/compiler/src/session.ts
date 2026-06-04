@@ -5,6 +5,7 @@ import type { DiscoveredSchema } from "./discovery.ts"
 import { discoverSchemas } from "./discovery.ts"
 import { emitSidecar } from "./emit.ts"
 import { collectInplaceTargets, emitInplace } from "./inplace.ts"
+import { type PruneCandidate, pruneDanglingAliases } from "./prune.ts"
 import type { ResolvedSchema } from "./resolve.ts"
 import { resolveSchemas } from "./resolve.ts"
 import { resolveRecursiveSchemas } from "./structural-resolve.ts"
@@ -148,25 +149,43 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
 
     // Merge both paths back into DISCOVERY order so mixed files emit stably.
     const byTypeName = new Map<string, string>()
-    const skeletonWarnings: string[] = []
+    const structuralNames = new Set<string>()
+    const structuralWarnings = new Map<string, ReadonlyArray<string>>()
     for (const r of checkerResult.resolved) {
       byTypeName.set(r.typeName, r.typeString)
     }
     for (const r of structuralResult.resolutions) {
       const upgradedBody = tier1.upgraded.get(r.typeName)
       byTypeName.set(r.typeName, upgradedBody ?? r.skeleton)
-      if (upgradedBody === undefined) {
-        // The skeleton is what ships, so its honest-degradation notes matter; a
-        // successful Tier-1 splice supersedes them.
-        skeletonWarnings.push(...r.warnings)
+      structuralNames.add(r.typeName)
+      // The skeleton's honest-degradation notes matter only when the skeleton is
+      // what actually ships: a successful Tier-1 splice supersedes them, and a
+      // pruned resolution (below) must not surface notes for a body never emitted.
+      structuralWarnings.set(r.typeName, upgradedBody === undefined ? r.warnings : [])
+    }
+    const candidates: PruneCandidate[] = []
+    for (const target of targets) {
+      const body = byTypeName.get(target.typeName)
+      if (body !== undefined) {
+        candidates.push({
+          typeName: target.typeName,
+          body,
+          structural: structuralNames.has(target.typeName),
+        })
       }
     }
-    const resolved: ResolvedSchema[] = []
-    for (const target of targets) {
-      const typeString = byTypeName.get(target.typeName)
-      if (typeString !== undefined) {
-        resolved.push({ typeName: target.typeName, typeString })
-      }
+
+    // Fail-closed backstop: drop (cascade) any structural body referencing a
+    // declared sibling alias that did not make it into the emitted set.
+    const declared = new Set(targets.map((t) => t.typeName))
+    const pruned = pruneDanglingAliases(candidates, declared)
+    const resolved: ResolvedSchema[] = pruned.kept.map((c) => ({
+      typeName: c.typeName,
+      typeString: c.body,
+    }))
+    const skeletonWarnings: string[] = []
+    for (const c of pruned.kept) {
+      skeletonWarnings.push(...(structuralWarnings.get(c.typeName) ?? []))
     }
 
     const allDiagnostics = [
@@ -176,6 +195,7 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       ...structuralResult.diagnostics,
       ...skeletonWarnings,
       ...tier1.diagnostics,
+      ...pruned.diagnostics,
     ]
     if (resolved.length === 0) {
       return { file: null, diagnostics: allDiagnostics }

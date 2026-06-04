@@ -86,7 +86,8 @@ describe.skipIf(!bun)("Tier-1 sentinel splice (real tsgo + real worker)", () => 
     // Monomorphic build: the unroll cannot instantiate; Tier-2 floor, never `{}`.
     const mono = readFileSync(src("mono.schema.gen.ts"), "utf8")
     expect(mono).toContain("tag: unknown")
-    expect(mono).toContain("next?: Mono | undefined")
+    expect(mono).toContain("next: Mono | undefined")
+    expect(mono).not.toContain("next?:")
     expect(result.diagnostics.some((d) => d.includes("Mono") || d.includes("monoSchema"))).toBe(
       true,
     )

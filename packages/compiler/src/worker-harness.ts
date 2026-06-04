@@ -136,6 +136,30 @@ export function buildExportNames(
   return map
 }
 
+/**
+ * Builds the identity map from DECLARED TARGETS only: ordered `[exportName,
+ * typeName]` pairs sent by the parent from discovery. Unlike `buildExportNames`
+ * (which walks every module export and is right for self-contained JSON Schema
+ * `$defs`), this map can only ever name an alias the sidecar actually declares —
+ * re-exported or helper schemas never enter it, so the structural walker cannot
+ * emit a dangling alias reference. The first pair wins on object identity
+ * (canonical-first), so a duplicate declared alias can never make a body
+ * self-reference a different alias.
+ */
+export function buildTargetIdentityMap(
+  mod: Record<string, unknown>,
+  pairs: ReadonlyArray<readonly [string, string]>,
+): ReadonlyMap<object, string> {
+  const map = new Map<object, string>()
+  for (const [exportName, typeName] of pairs) {
+    const value = mod[exportName]
+    if (isSchema(value) && !map.has(value)) {
+      map.set(value, typeName)
+    }
+  }
+  return map
+}
+
 function emit(outFile: string, payload: unknown): void {
   writeFileSync(outFile, JSON.stringify(payload))
 }

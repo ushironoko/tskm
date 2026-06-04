@@ -71,9 +71,16 @@ describe("schemaToTypeString — per-type TS bodies", () => {
     ["nullable", s.nullable(s.string()), "string | null"],
     ["nullish", s.nullish(s.string()), "string | null | undefined"],
     [
-      "object with optional key",
+      // Keys stay REQUIRED: object()'s parser writes every entry key and
+      // InferObjectOutput has no `?` modifier — optionality lives in the value union.
+      "object with optional key keeps the key required",
       s.object({ id: s.string(), nick: s.optional(s.string()) }),
-      "{ id: string; nick?: string | undefined }",
+      "{ id: string; nick: string | undefined }",
+    ],
+    [
+      "object with nullish key keeps the key required",
+      s.object({ id: s.string(), alt: s.nullish(s.string()) }),
+      "{ id: string; alt: string | null | undefined }",
     ],
     ["empty object", s.object({}), "{}"],
     ["validation-only pipe keeps the base type", pipe(s.string(), minLength(3)), "string"],
@@ -127,7 +134,7 @@ describe("schemaToTypeString — recursion", () => {
     }
     root.getter = () => body
     const result = walk(root, "Node", new Map<object, string>([[root, "Node"]]))
-    expect(result.typeString).toBe("{ next?: Node | undefined }")
+    expect(result.typeString).toBe("{ next: Node | undefined }")
     expect(result.unsupported).toBe(false)
   })
 
@@ -165,9 +172,34 @@ describe("schemaToTypeString — recursion", () => {
     ])
     const resultA = schemaToTypeString(a, { rootName: "A", typeNames })
     const resultB = schemaToTypeString(b, { rootName: "B", typeNames })
-    expect(resultA.typeString).toBe("{ b?: B | undefined }")
-    expect(resultB.typeString).toBe("{ a?: A | undefined }")
+    expect(resultA.typeString).toBe("{ b: B | undefined }")
+    expect(resultB.typeString).toBe("{ a: A | undefined }")
     expect(resultA.unsupported).toBe(false)
+  })
+
+  it("fails closed on a recursive() root with no declared alias (imported/re-exported)", () => {
+    // Simulates `treeSchema` referencing an IMPORTED (or re-exported) recursive
+    // schema: the foreign root is not a declared target, so it must not be inlined
+    // (docs say skip) and must never be emitted as an undeclared alias name.
+    const foreign: Record<string, unknown> = { kind: "schema", type: "recursive" }
+    foreign.getter = () => s.object({ name: s.string(), next: s.optional(foreign) })
+    const root: Record<string, unknown> = { kind: "schema", type: "recursive" }
+    root.getter = () => s.object({ leaf: foreign, kids: s.array(root) })
+    const result = walk(root, "Tree", new Map<object, string>([[root, "Tree"]]))
+    expect(result.unsupported).toBe(true)
+    expect(result.warnings.some((w) => w.includes("no declared alias"))).toBe(true)
+    expect(result.warnings.some((w) => w.includes(".entries[leaf]"))).toBe(true)
+  })
+
+  it("inlines a non-target helper schema that is not a recursive() root", () => {
+    // Plain (acyclic) helper objects keep inlining — only deferred recursive()
+    // roots without a declared alias are rejected.
+    const helper = s.object({ tag: s.string() })
+    const root: Record<string, unknown> = { kind: "schema", type: "recursive" }
+    root.getter = () => s.object({ meta: helper, kids: s.array(root) })
+    const result = walk(root, "Tree", new Map<object, string>([[root, "Tree"]]))
+    expect(result.typeString).toBe("{ meta: { tag: string }; kids: Tree[] }")
+    expect(result.unsupported).toBe(false)
   })
 
   it("flags a cycle through a node with no exported name as unsupported", () => {
@@ -182,16 +214,32 @@ describe("schemaToTypeString — recursion", () => {
   })
 
   it("survives a pathological getter that returns a fresh body per call (maxDepth)", () => {
-    // The identity guard cannot see this cycle (fresh objects every level); the depth
-    // fallback must stop the walk instead of hanging.
+    // Fresh LAZY wrappers defeat the identity guard WITHOUT tripping the non-target
+    // recursive() check; the depth fallback must stop the walk instead of hanging.
+    const make = (): Record<string, unknown> => ({
+      kind: "schema",
+      type: "lazy",
+      getter: () => s.object({ next: make() }),
+    })
+    const root: Record<string, unknown> = { kind: "schema", type: "recursive" }
+    root.getter = () => s.object({ next: make() })
+    const result = walk(root, "Evil", new Map<object, string>([[root, "Evil"]]))
+    expect(result.unsupported).toBe(true)
+    expect(result.warnings.some((w) => w.includes("depth"))).toBe(true)
+  })
+
+  it("fails closed (no hang) on fresh recursive() roots minted per getter call", () => {
+    // The same pathology built from recursive() roots trips the no-declared-alias
+    // guard at depth 1 — earlier and with a more precise message than maxDepth.
     const make = (): Record<string, unknown> => {
       const root: Record<string, unknown> = { kind: "schema", type: "recursive" }
       root.getter = () => s.object({ next: make() })
       return root
     }
-    const result = walk(make(), "Evil")
+    const root = make()
+    const result = walk(root, "Evil", new Map<object, string>([[root, "Evil"]]))
     expect(result.unsupported).toBe(true)
-    expect(result.warnings.some((w) => w.includes("depth"))).toBe(true)
+    expect(result.warnings.some((w) => w.includes("no declared alias"))).toBe(true)
   })
 })
 
@@ -222,7 +270,7 @@ describe("schemaToTypeString — Tier-2 transform floor", () => {
     root.getter = () => body
     const result = walk(root, "Node", new Map<object, string>([[root, "Node"]]))
     expect(result.typeString).toBe(
-      '{ id: string; parent?: Node | undefined } & { readonly "~brand": "Node" }',
+      '{ id: string; parent: Node | undefined } & { readonly "~brand": "Node" }',
     )
     expect(result.bearsOpaque).toBe(false)
     expect(result.dataKeys).toEqual(["id", "parent"])

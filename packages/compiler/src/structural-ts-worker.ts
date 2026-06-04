@@ -1,6 +1,6 @@
 import { deriveTypeName } from "./naming.ts"
 import { type StructuralWorkerEntry, schemaToTypeString } from "./structural-ts.ts"
-import { buildExportNames, runSchemaWorker } from "./worker-harness.ts"
+import { buildTargetIdentityMap, runSchemaWorker } from "./worker-harness.ts"
 
 /**
  * Isolated worker for structural recursive-type extraction.
@@ -15,15 +15,19 @@ import { buildExportNames, runSchemaWorker } from "./worker-harness.ts"
  * parent can distinguish "not recursive at runtime" from "export not found".
  */
 
-// argv[4] (optional): JSON map of export name -> alias typeName, sent by the parent
-// from DISCOVERY — the single naming source. An explicit `export type TreeNode =
-// Infer<typeof nodeSchema>` alias would otherwise diverge from the derived name and
-// the back-edge would reference an undeclared type.
-const overridesRaw = process.argv[4]
-const overrides: Record<string, string> = overridesRaw
-  ? (JSON.parse(overridesRaw) as Record<string, string>)
-  : {}
-const nameFor = (exportName: string): string => overrides[exportName] ?? deriveTypeName(exportName)
+// argv[4]: ordered JSON `[exportName, typeName]` pairs for the file's DECLARED
+// structural targets — discovery's typeName is the single naming source, so an
+// alias-renamed target (`export type TreeNode = Infer<typeof nodeSchema>`) emits
+// back-edges that exactly match the declared alias. The identity map is seeded from
+// these pairs ONLY (target-driven): re-exported or helper schemas never enter it,
+// so the walker can never emit an alias name this sidecar does not declare.
+const pairsRaw = process.argv[4]
+const pairs: ReadonlyArray<readonly [string, string]> = pairsRaw
+  ? (JSON.parse(pairsRaw) as ReadonlyArray<readonly [string, string]>)
+  : []
+const overrides = new Map(pairs)
+const nameFor = (exportName: string): string =>
+  overrides.get(exportName) ?? deriveTypeName(exportName)
 
 // Built once per module on first extraction: schema object identity -> the exact
 // alias string the sidecar declares, so back-edges and cross-references always
@@ -31,13 +35,17 @@ const nameFor = (exportName: string): string => overrides[exportName] ?? deriveT
 let typeNames: ReadonlyMap<object, string> | undefined
 
 await runSchemaWorker<StructuralWorkerEntry>((name, value, mod) => {
-  typeNames ??= buildExportNames(mod, nameFor)
+  typeNames ??= buildTargetIdentityMap(mod, pairs)
   const typeName = nameFor(name)
-  if ((value as { type?: unknown }).type !== "recursive") {
+  const recursive = (value as { type?: unknown }).type === "recursive"
+  // Only declared targets are walked: the parent never consumes non-target entries,
+  // and the walk contract requires the root to be IN the identity map (which only
+  // targets are). A re-exported import gets a stub here, never a body.
+  if (!recursive || !overrides.has(name)) {
     return {
       name,
       typeName,
-      recursive: false,
+      recursive,
       typeString: "",
       bearsOpaque: false,
       opaquePaths: [],
