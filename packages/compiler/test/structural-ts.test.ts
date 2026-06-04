@@ -283,3 +283,62 @@ describe("schemaToTypeString — Tier-2 transform floor", () => {
     expect(result.dataKeys).toEqual(["id", "name"])
   })
 })
+
+describe("schemaToTypeString — fail-closed guards", () => {
+  it("emits 'unknown' with a warning for an unrecognized schema.type", () => {
+    // The default arm of walkSchema is the catch-all for a runtime schema kind the
+    // walker has no rule for (here a hypothetical set()): typing it as anything other
+    // than 'unknown' would be a silent mistype, so it must fail closed and name the kind.
+    const result = walk({ kind: "schema", type: "set" })
+    expect(result.typeString).toBe("unknown")
+    expect(result.warnings.some((w) => /unknown schema type "set"/.test(w))).toBe(true)
+  })
+
+  it("emits 'unknown' for a lazy schema whose getter is not a function", () => {
+    // A lazy/recursive node defers its body behind a getter; if the getter is missing
+    // (or not callable) there is no body to walk, so the walk must stop at 'unknown'
+    // rather than invoking a non-function and throwing mid-walk.
+    const result = walk({ kind: "schema", type: "lazy", getter: undefined })
+    expect(result.typeString).toBe("unknown")
+    expect(result.warnings.some((w) => /has no getter/.test(w))).toBe(true)
+  })
+
+  it("emits 'unknown' for a non-object schema node (number)", () => {
+    // walkNode's isObject guard is the floor for a malformed graph: a bare value where
+    // a schema object is expected (e.g. an entry that is the number 42) cannot be typed,
+    // so it degrades to 'unknown' instead of dereferencing a non-object.
+    const result = walk(s.object({ bad: 42 }))
+    expect(result.typeString).toBe("{ bad: unknown }")
+    expect(result.warnings.some((w) => /non-object schema/.test(w))).toBe(true)
+  })
+
+  it("emits 'unknown' for a null schema node", () => {
+    // null is typeof 'object' but isObject rejects it explicitly; without that guard a
+    // null entry would crash the walk, so the fail-closed path must catch it too.
+    const result = walk(s.object({ bad: null }))
+    expect(result.typeString).toBe("{ bad: unknown }")
+    expect(result.warnings.some((w) => /non-object schema/.test(w))).toBe(true)
+  })
+
+  it("renders a non-string brand name as an opaque 'unknown' (no nominal intersection)", () => {
+    // brand()'s nominal tag must be a string literal type; a non-string name (brand(42))
+    // cannot be emitted as a valid `readonly "~brand"` member, so that pipe position
+    // fails closed to 'unknown' and flips bearsOpaque to route to the Tier-1 query.
+    const result = walk(pipe(s.string(), brand(42)))
+    expect(result.typeString).toBe("unknown")
+    expect(result.bearsOpaque).toBe(true)
+    expect(result.opaquePaths.some((p) => p.includes(".pipe[1]"))).toBe(true)
+    expect(result.warnings.some((w) => /non-string brand name/.test(w))).toBe(true)
+  })
+})
+
+describe("schemaToTypeString — parenthesizeIfCompound quote handling", () => {
+  it("does not parenthesize an array of a literal containing a pipe character", () => {
+    // The `|` lives INSIDE the string literal "a|b", not at the type's top level, so the
+    // brace/quote-aware scanner must skip it — emitting `"a|b"[]`, not `("a|b")[]`.
+    // (The contrasting array-of-union case that DOES get parens is covered above.)
+    const result = walk(s.array(s.literal("a|b")))
+    expect(result.typeString).toBe('"a|b"[]')
+    expect(result.unsupported).toBe(false)
+  })
+})

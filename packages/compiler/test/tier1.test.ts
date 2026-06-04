@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { buildSentinelQuery, substituteSentinel } from "../src/tier1.ts"
+import { buildSentinelQuery, resolveSentinelUnroll, substituteSentinel } from "../src/tier1.ts"
 
 describe("buildSentinelQuery — the verified unroll query form", () => {
   it("emits one unique-symbol sentinel + one marker per target", () => {
@@ -86,5 +86,41 @@ describe("substituteSentinel — token substitution + integrity guards", () => {
     )
     expect(out.typeString).toBeUndefined()
     expect(out.failure).toContain("artifact")
+  })
+})
+
+describe("substituteSentinel — string-literal escape handling", () => {
+  it("treats escaped quotes inside a literal as opaque (no false artifact)", () => {
+    // The artifact scanner must skip the WHOLE literal span even when it contains
+    // escaped quotes — a sentinel-looking token inside a string is data, not residue.
+    const out = substituteSentinel('{ tag: "a\\"Sentinel_9\\""; next: Sentinel_0 }', 0, "X", true)
+    expect(out.failure).toBeUndefined()
+    expect(out.typeString).toBe('{ tag: "a\\"Sentinel_9\\""; next: X }')
+  })
+})
+
+describe("resolveSentinelUnroll — empty targets", () => {
+  it("returns an empty result without touching the client", () => {
+    // The zero-target guard keeps the no-Tier-1 path completely free of query-file
+    // writes and client calls.
+    let touched = 0
+    const client = {
+      updateFile: () => {
+        touched++
+      },
+      resolveTypeAt: () => {
+        touched++
+        return null
+      },
+      getDiagnostics: () => {
+        touched++
+        return []
+      },
+      close: () => {},
+    }
+    const out = resolveSentinelUnroll(client, "/tmp/none.schema.ts", [])
+    expect(out.unrolled.size).toBe(0)
+    expect(out.diagnostics).toHaveLength(0)
+    expect(touched).toBe(0)
   })
 })

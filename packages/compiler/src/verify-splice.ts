@@ -2,6 +2,7 @@ import { rmSync, writeFileSync } from "node:fs"
 import { basename, dirname, extname, join } from "node:path"
 import type { StructuralResolution } from "./structural-resolve.ts"
 import { resolveSentinelUnroll, substituteSentinel } from "./tier1.ts"
+import { containsTokenOutsideQuotes } from "./token-scan.ts"
 import type { TsgoClient } from "./tsgo-client.ts"
 
 /**
@@ -132,36 +133,6 @@ export interface Tier1Outcome {
   readonly diagnostics: ReadonlyArray<string>
 }
 
-/** True when `token` appears as a whole word outside string literals. */
-function containsToken(text: string, token: string): boolean {
-  const isWord = (ch: string | undefined): boolean => ch !== undefined && /[A-Za-z0-9_$]/.test(ch)
-  let i = 0
-  while (i < text.length) {
-    const ch = text[i] as string
-    if (ch === '"' || ch === "'" || ch === "`") {
-      const quote = ch
-      i++
-      while (i < text.length) {
-        const c = text[i] as string
-        i++
-        if (c === "\\" && i < text.length) {
-          i++
-          continue
-        }
-        if (c === quote) {
-          break
-        }
-      }
-      continue
-    }
-    if (text.startsWith(token, i) && !isWord(text[i - 1]) && !isWord(text[i + token.length])) {
-      return true
-    }
-    i++
-  }
-  return false
-}
-
 /**
  * Attempts the Tier-1 upgrade for every transform-bearing structural resolution:
  * sentinel unroll -> substitution guards -> data-key cross-check -> fixpoint
@@ -194,7 +165,7 @@ export function applyTier1(
     }
     // The skeleton references its own alias exactly when the root self-cycles; the
     // unroll must then carry the sentinel at those positions.
-    const selfReferential = containsToken(target.skeleton, target.typeName)
+    const selfReferential = containsTokenOutsideQuotes(target.skeleton, target.typeName)
     const substituted = substituteSentinel(raw, i, target.typeName, selfReferential)
     if (substituted.failure !== undefined || substituted.typeString === undefined) {
       diagnostics.push(
