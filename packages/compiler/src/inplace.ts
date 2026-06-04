@@ -222,7 +222,15 @@ export function collectInplaceTargets(
       continue
     }
     seen.add(region.typeName)
-    targets.push({ name: region.schemaName, typeName: region.typeName, origin: "alias" })
+    // A sentinel region carries only names, not the schema's shape, so `recursive`
+    // starts false here; the session upgrades it from the file's full discovery
+    // before partitioning targets between the checker and structural paths.
+    targets.push({
+      name: region.schemaName,
+      typeName: region.typeName,
+      origin: "alias",
+      recursive: false,
+    })
   }
 
   return { targets, diagnostics: scan.diagnostics }

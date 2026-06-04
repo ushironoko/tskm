@@ -5,12 +5,14 @@ import { dts } from "rolldown-plugin-dts"
 // dynamically-resolved @typescript/native-preview tsgo binary) must stay external — unlike
 // tsdown, rolldown bundles node_modules by default, so they are listed explicitly here.
 export default defineConfig({
-  // jsonschema-worker is a separate entry: generateJsonSchema spawns it as its own
-  // process (resolved on disk), never imports it, so it must ship as a standalone file.
+  // The workers are separate entries: the compiler spawns them as their own
+  // processes (resolved on disk), never imports them, so they must ship as
+  // standalone files.
   input: {
     index: "src/index.ts",
     cli: "src/cli.ts",
     "jsonschema-worker": "src/jsonschema-worker.ts",
+    "structural-ts-worker": "src/structural-ts-worker.ts",
   },
   platform: "node",
   external: [/^@corsa-bind\/napi/, /^oxc-parser/, /^@typescript\/native-preview/],

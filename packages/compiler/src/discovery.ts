@@ -1,4 +1,5 @@
 import { parseSync } from "oxc-parser"
+import { deriveTypeName } from "./naming.ts"
 
 /** The runtime package whose exports mark a value as a tskm schema. */
 const RUNTIME_MODULE = "@tskm/core"
@@ -17,19 +18,19 @@ export interface DiscoveredSchema {
    * emits both; inplace mode only rewrites `alias` markers.
    */
   readonly origin: "const" | "alias"
+  /**
+   * True when the const is built by the runtime's `recursive(...)` combinator
+   * (tracked through import aliasing). Recursive schemas are routed to the
+   * structural/eval path instead of the plain tsgo `InferOutput` query, which would
+   * collapse their self positions. Aliases inherit the flag from the referenced
+   * same-file const (resolved in a post-pass, so order does not matter). Namespace
+   * calls (`t.recursive(...)`) are not detected.
+   */
+  readonly recursive: boolean
 }
 
-/**
- * Converts a schema const name to a PascalCase type name, stripping a trailing
- * "Schema" suffix: `userSchema` -> `User`, `address` -> `Address`.
- */
-export function deriveTypeName(constName: string): string {
-  const stripped = constName.endsWith("Schema") ? constName.slice(0, -"Schema".length) : constName
-  if (stripped.length === 0) {
-    return constName.charAt(0).toUpperCase() + constName.slice(1)
-  }
-  return stripped.charAt(0).toUpperCase() + stripped.slice(1)
-}
+// Single naming source, shared with the schema workers (see naming.ts).
+export { deriveTypeName } from "./naming.ts"
 
 interface OxcNode {
   readonly type: string
@@ -41,8 +42,16 @@ function importsFromRuntime(node: OxcNode): boolean {
   return source?.value === RUNTIME_MODULE
 }
 
-function collectRuntimeNames(body: ReadonlyArray<OxcNode>): Set<string> {
+interface RuntimeImports {
+  /** Local names bound to any runtime export (schema factories, actions, …). */
+  readonly names: Set<string>
+  /** Local names bound specifically to the runtime's `recursive` export. */
+  readonly recursiveLocals: Set<string>
+}
+
+function collectRuntimeImports(body: ReadonlyArray<OxcNode>): RuntimeImports {
   const names = new Set<string>()
+  const recursiveLocals = new Set<string>()
   for (const node of body) {
     if (node.type !== "ImportDeclaration" || !importsFromRuntime(node)) {
       continue
@@ -51,13 +60,17 @@ function collectRuntimeNames(body: ReadonlyArray<OxcNode>): Set<string> {
     for (const spec of specifiers) {
       if (spec.type === "ImportSpecifier") {
         const local = spec.local as { name?: string } | undefined
+        const imported = spec.imported as { name?: string } | undefined
         if (local?.name) {
           names.add(local.name)
+          if (imported?.name === "recursive") {
+            recursiveLocals.add(local.name)
+          }
         }
       }
     }
   }
-  return names
+  return { names, recursiveLocals }
 }
 
 function calleeName(init: OxcNode | undefined): string | undefined {
@@ -74,7 +87,8 @@ function calleeName(init: OxcNode | undefined): string | undefined {
 /**
  * Reads an `export type T = Infer<typeof X>` (or `InferOutput<...>`, or
  * `import("@tskm/core").InferOutput<typeof X>`) alias and returns the referenced
- * schema name plus the declared alias name.
+ * schema name plus the declared alias name. The `recursive` flag is a placeholder
+ * here; `discoverSchemas` resolves it from the referenced const in a post-pass.
  */
 function readInferAlias(decl: OxcNode | undefined): DiscoveredSchema | undefined {
   if (decl?.type !== "TSTypeAliasDeclaration") {
@@ -112,7 +126,7 @@ function readInferAlias(decl: OxcNode | undefined): DiscoveredSchema | undefined
   if (!exprName?.name) {
     return undefined
   }
-  return { name: exprName.name, typeName: id.name, origin: "alias" }
+  return { name: exprName.name, typeName: id.name, origin: "alias", recursive: false }
 }
 
 export interface DiscoveryResult {
@@ -124,6 +138,11 @@ export interface DiscoveryResult {
  * Purely syntactic discovery: finds exported `const <name> = <tskmCallee>(...)`
  * schema declarations and explicit `export type T = Infer<typeof X>` aliases.
  * Returns identifier names only; tsgo offsets are computed later in resolve.
+ *
+ * Recursiveness is recorded for EVERY top-level const initialized by a runtime
+ * call — exported or not — so an alias can inherit the flag from a non-exported
+ * const. Aliases are patched in a post-pass (not a second AST walk) to keep the
+ * emitted order identical to the single-pass discovery.
  */
 export function discoverSchemas(fileName: string, sourceText: string): DiscoveryResult {
   const parsed = parseSync(fileName, sourceText)
@@ -131,10 +150,20 @@ export function discoverSchemas(fileName: string, sourceText: string): Discovery
     typeof e === "string" ? e : ((e as { message?: string }).message ?? String(e)),
   )
   const body = (parsed.program?.body ?? []) as unknown as ReadonlyArray<OxcNode>
-  const runtimeNames = collectRuntimeNames(body)
+  const { names: runtimeNames, recursiveLocals } = collectRuntimeImports(body)
 
   const schemas: DiscoveredSchema[] = []
   const seenNames = new Set<string>()
+  /** Const name -> built by `recursive(...)`, for alias inheritance (post-pass). */
+  const constRecursive = new Map<string, boolean>()
+
+  const recordConst = (declarator: OxcNode): void => {
+    const id = declarator.id as { name?: string } | undefined
+    const callee = calleeName(declarator.init as OxcNode | undefined)
+    if (id?.name && callee && runtimeNames.has(callee)) {
+      constRecursive.set(id.name, recursiveLocals.has(callee))
+    }
+  }
 
   const pushConst = (declarator: OxcNode): void => {
     const id = declarator.id as { name?: string } | undefined
@@ -145,7 +174,12 @@ export function discoverSchemas(fileName: string, sourceText: string): Discovery
     const callee = calleeName(init)
     if (callee && runtimeNames.has(callee)) {
       seenNames.add(id.name)
-      schemas.push({ name: id.name, typeName: deriveTypeName(id.name), origin: "const" })
+      schemas.push({
+        name: id.name,
+        typeName: deriveTypeName(id.name),
+        origin: "const",
+        recursive: recursiveLocals.has(callee),
+      })
     }
   }
 
@@ -155,6 +189,7 @@ export function discoverSchemas(fileName: string, sourceText: string): Discovery
       if (decl?.type === "VariableDeclaration") {
         const declarators = (decl.declarations ?? []) as ReadonlyArray<OxcNode>
         for (const d of declarators) {
+          recordConst(d)
           pushConst(d)
         }
       } else {
@@ -164,8 +199,18 @@ export function discoverSchemas(fileName: string, sourceText: string): Discovery
           schemas.push(alias)
         }
       }
+    } else if (node.type === "VariableDeclaration") {
+      // Non-exported consts are not schemas themselves, but an alias may point at one.
+      const declarators = (node.declarations ?? []) as ReadonlyArray<OxcNode>
+      for (const d of declarators) {
+        recordConst(d)
+      }
     }
   }
 
-  return { schemas, diagnostics }
+  const resolved = schemas.map((s) =>
+    s.origin === "alias" ? { ...s, recursive: constRecursive.get(s.name) ?? false } : s,
+  )
+
+  return { schemas: resolved, diagnostics }
 }

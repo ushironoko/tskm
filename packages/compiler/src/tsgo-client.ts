@@ -22,11 +22,24 @@ export interface ResolvedType {
   readonly text: string
 }
 
+export interface FileDiagnostic {
+  readonly code: number
+  readonly fileName: string
+}
+
 export interface TsgoClient {
   /** Registers a freshly written file with the open project. */
   readonly updateFile: (absPath: string, kind: "created" | "changed" | "deleted") => void
   /** Resolves the checker type at a position, then renders it fully expanded. */
   readonly resolveTypeAt: (queryFileAbs: string, position: number) => ResolvedType | null
+  /**
+   * Semantic diagnostics scoped to one file — the fixpoint oracle's measuring
+   * instrument. Goes through the untyped `callJson("getSemanticDiagnostics")` hatch
+   * (not on Corsa's typed surface); if a future Corsa drops the method this returns
+   * a synthetic diagnostic so the caller fails CLOSED (skeleton kept), and the
+   * documented fallback is spawning `tsgo --noEmit` on the probe file.
+   */
+  readonly getDiagnostics: (probeFileAbs: string) => ReadonlyArray<FileDiagnostic>
   readonly close: () => void
 }
 
@@ -135,6 +148,32 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
     }
   }
 
+  const getDiagnostics: TsgoClient["getDiagnostics"] = (probeFileAbs) => {
+    const snap = client.updateSnapshot({ fileChanges: {} }) as SnapshotRecord
+    const first = snap.projects[0]
+    if (first) {
+      project = first.id
+    }
+    try {
+      const raw = client.callJson("getSemanticDiagnostics", {
+        snapshot: snap.snapshot,
+        project,
+      }) as ReadonlyArray<{ code?: number; fileName?: string }> | null | undefined
+      if (!Array.isArray(raw)) {
+        // Method missing/renamed in this Corsa build: fail CLOSED with a synthetic
+        // diagnostic so an oracle caller never treats silence as soundness.
+        return [{ code: -1, fileName: probeFileAbs }]
+      }
+      return raw
+        .filter((d) => d.fileName === probeFileAbs)
+        .map((d) => ({ code: d.code ?? 0, fileName: d.fileName ?? "" }))
+    } catch {
+      return [{ code: -1, fileName: probeFileAbs }]
+    } finally {
+      client.releaseHandle(snap.snapshot)
+    }
+  }
+
   const close: TsgoClient["close"] = () => {
     client.close()
   }
@@ -165,5 +204,5 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
   }
   probe()
 
-  return { updateFile, resolveTypeAt, close }
+  return { updateFile, resolveTypeAt, getDiagnostics, close }
 }

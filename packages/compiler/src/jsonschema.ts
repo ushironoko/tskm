@@ -1,9 +1,8 @@
-import { spawnSync } from "node:child_process"
-import { existsSync, globSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { basename, dirname, isAbsolute, join, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
+import { globSync, writeFileSync } from "node:fs"
+import { basename, isAbsolute, join, resolve } from "node:path"
 import { loadConfig, type ResolvedTskmConfig, resolveConfig, type TskmConfig } from "./config.ts"
+import { type CycleGuardState, createCycleGuard, walkWithCycleGuard } from "./cycle-guard.ts"
+import { resolveWorker, runWorker, type SchemaWorkerEnvelope } from "./worker-harness.ts"
 
 /**
  * Experimental JSON Schema output.
@@ -30,27 +29,39 @@ export interface SchemaToJsonResult {
 /** A duck-typed view of a runtime tskm schema object. */
 type SchemaLike = { readonly type?: unknown; readonly pipe?: unknown; [key: string]: unknown }
 
-/** Mutable walk context threaded through the recursion (closes over warnings + recursion guard). */
+/** Mutable walk context threaded through the recursion (closes over warnings + cycle guard). */
 interface WalkContext {
   readonly warnings: string[]
-  /** Schema object -> its `$defs` name; an entry means the object was hoisted as a definition. */
-  readonly names: Map<object, string>
   readonly defs: Record<string, JsonSchema>
-  /** Objects currently on the recursion stack; a re-entry is a cycle and gets hoisted to a `$ref`. */
-  readonly visiting: Set<object>
+  readonly guard: CycleGuardState
+  /** Schema object identity -> export-derived def name (for `recursive()` roots). */
+  readonly exportNames?: ReadonlyMap<object, string> | undefined
 }
 
 function isObject(value: unknown): value is SchemaLike {
   return value !== null && typeof value === "object"
 }
 
+export interface SchemaToJsonOptions {
+  /**
+   * Identity map from exported schema objects to their export-derived names. A
+   * hoisted cycle target found in this map is named after its export (`Category`)
+   * instead of its schema kind (`object_2`). Acyclic schemas never hoist, so
+   * non-recursive output is unaffected.
+   */
+  readonly exportNames?: ReadonlyMap<object, string>
+}
+
 /** Pure walker: a runtime tskm schema object -> JSON Schema (draft 2020-12). */
-export function schemaToJsonSchema(schema: unknown): SchemaToJsonResult {
+export function schemaToJsonSchema(
+  schema: unknown,
+  options: SchemaToJsonOptions = {},
+): SchemaToJsonResult {
   const ctx: WalkContext = {
     warnings: [],
-    names: new Map(),
     defs: {},
-    visiting: new Set(),
+    guard: createCycleGuard(),
+    exportNames: options.exportNames,
   }
   const out = walk(schema, ctx)
   if (Object.keys(ctx.defs).length > 0) {
@@ -60,9 +71,9 @@ export function schemaToJsonSchema(schema: unknown): SchemaToJsonResult {
 }
 
 /**
- * Walks one schema, terminating any containment cycle (lazy or hand-built) by hoisting
- * a re-encountered object into `$defs` and emitting a `$ref` to it. A node is only
- * hoisted if it is actually revisited, so acyclic schemas stay fully inlined.
+ * Walks one schema through the shared cycle guard, terminating any containment cycle
+ * (lazy, recursive, or hand-built) by hoisting a re-encountered object into `$defs`
+ * and emitting a `$ref` to it (see `cycle-guard.ts`).
  */
 function walk(schema: unknown, ctx: WalkContext): JsonSchema {
   if (!isObject(schema)) {
@@ -70,34 +81,29 @@ function walk(schema: unknown, ctx: WalkContext): JsonSchema {
     return {}
   }
 
-  const hoisted = ctx.names.get(schema)
-  if (hoisted !== undefined) {
-    return { $ref: `#/$defs/${hoisted}` }
-  }
-  // Back-edge to an ancestor still being built: assign it a name now and reference it;
-  // the in-progress walk below will deposit the body into `ctx.defs` on the way out.
-  if (ctx.visiting.has(schema)) {
-    const name = assignDefName(schema, ctx)
-    ctx.names.set(schema, name)
-    return { $ref: `#/$defs/${name}` }
-  }
-
-  ctx.visiting.add(schema)
-  // A piped schema carries the base plus a `pipe: [base, ...items]`. Walk the base and
-  // fold each item's constraints onto it; non-representable items warn + skip.
-  const body = Array.isArray(schema.pipe)
-    ? walkPipe(schema as SchemaLike & { pipe: unknown[] }, ctx)
-    : walkSchema(schema, ctx)
-  ctx.visiting.delete(schema)
-
-  // If a descendant referenced this node mid-walk, it became a definition: store the
-  // body under its name and return a `$ref` instead of inlining a duplicate.
-  const assigned = ctx.names.get(schema)
-  if (assigned !== undefined) {
-    ctx.defs[assigned] = body
-    return { $ref: `#/$defs/${assigned}` }
-  }
-  return body
+  return walkWithCycleGuard<JsonSchema>(schema, ctx.guard, {
+    emitRef: (name) => ({ $ref: `#/$defs/${name}` }),
+    storeDef: (name, body) => {
+      ctx.defs[name] = body
+    },
+    hasDef: (name) => name in ctx.defs,
+    baseName: (target) => {
+      const fromExport = ctx.exportNames?.get(target)
+      if (fromExport !== undefined) {
+        return fromExport
+      }
+      const type = (target as SchemaLike).type
+      return typeof type === "string" ? type : "schema"
+    },
+    // A piped schema carries the base plus a `pipe: [base, ...items]`. Walk the base
+    // and fold each item's constraints onto it; non-representable items warn + skip.
+    walkBody: (target) => {
+      const t = target as SchemaLike
+      return Array.isArray(t.pipe)
+        ? walkPipe(t as SchemaLike & { pipe: unknown[] }, ctx)
+        : walkSchema(t, ctx)
+    },
+  })
 }
 
 function walkSchema(schema: SchemaLike, ctx: WalkContext): JsonSchema {
@@ -157,7 +163,8 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): JsonSchema {
       ctx.warnings.push("tskm: nullish drops `undefined` in JSON Schema (only null is expressed).")
       return { anyOf: [walk(schema.wrapped, ctx), { type: "null" }] }
     case "lazy":
-      return walkLazy(schema, ctx)
+    case "recursive":
+      return walkDeferred(schema, ctx)
     default:
       ctx.warnings.push(`tskm: unknown schema type "${String(type)}"; emitting {}.`)
       return {}
@@ -185,34 +192,20 @@ function walkObject(schema: SchemaLike, ctx: WalkContext): JsonSchema {
   }
 }
 
-function walkLazy(schema: SchemaLike, ctx: WalkContext): JsonSchema {
+/**
+ * `lazy` and `recursive` both defer their body behind a memoized `getter`. The cycle
+ * guard lives in `walk` and keys on object identity — for `recursive` the schema
+ * object itself IS the `self` placeholder the builder received — so any back-edge
+ * through the getter terminates via a hoisted `$ref` rather than recursing forever.
+ */
+function walkDeferred(schema: SchemaLike, ctx: WalkContext): JsonSchema {
   const getter = schema.getter
   if (typeof getter !== "function") {
-    ctx.warnings.push("tskm: lazy schema has no getter; emitting {}.")
+    ctx.warnings.push(`tskm: ${String(schema.type)} schema has no getter; emitting {}.`)
     return {}
   }
-  // The cycle guard lives in `walk`, so a `lazy(() => self)` (or any back-edge through
-  // the getter) terminates via a hoisted `$ref` rather than recursing forever.
   const inner = (getter as () => unknown)()
   return walk(inner, ctx)
-}
-
-function assignDefName(target: SchemaLike, ctx: WalkContext): string {
-  const base = typeof target.type === "string" ? target.type : "schema"
-  let candidate = base
-  let n = 1
-  while (candidate in ctx.defs || hasName(ctx, candidate)) {
-    n += 1
-    candidate = `${base}_${n}`
-  }
-  return candidate
-}
-
-function hasName(ctx: WalkContext, name: string): boolean {
-  for (const value of ctx.names.values()) {
-    if (value === name) return true
-  }
-  return false
 }
 
 function walkPipe(schema: SchemaLike & { pipe: unknown[] }, ctx: WalkContext): JsonSchema {
@@ -337,25 +330,10 @@ function collectSources(config: ResolvedTskmConfig): string[] {
   return [...matches].sort()
 }
 
-/**
- * Resolves the sibling worker entry. In source it is `jsonschema-worker.ts`; in the
- * published package it is bundled to `jsonschema-worker.mjs`. Picking whichever exists
- * lets the same code path work from `src` (Bun/vitest) and from `dist`.
- */
-function resolveWorker(): string {
-  const here = dirname(fileURLToPath(import.meta.url))
-  const tsEntry = join(here, "jsonschema-worker.ts")
-  const mjsEntry = join(here, "jsonschema-worker.mjs")
-  return existsSync(mjsEntry) ? mjsEntry : tsEntry
-}
-
-interface WorkerEnvelope {
-  readonly schemas?: ReadonlyArray<{
-    readonly name: string
-    readonly schema: JsonSchema
-    readonly warnings: ReadonlyArray<string>
-  }>
-  readonly error?: string
+interface JsonWorkerEntry {
+  readonly name: string
+  readonly schema: JsonSchema
+  readonly warnings: ReadonlyArray<string>
 }
 
 export async function generateJsonSchema(
@@ -363,58 +341,29 @@ export async function generateJsonSchema(
 ): Promise<JsonSchemaResult> {
   const root = resolve(options.root ?? process.cwd())
   const config = options.config ? resolveConfig(options.config, root) : await loadConfig(root)
-  const workerAbs = resolveWorker()
-  const timeout = options.timeoutMs ?? 5000
+  const workerAbs = resolveWorker("jsonschema-worker")
+  const timeoutMs = options.timeoutMs ?? 5000
   const execPath = options.execPath ?? process.execPath
 
   const sources = collectSources(config)
   const files: JsonSchemaFile[] = []
   const diagnostics: string[] = []
 
-  let index = 0
   for (const sourceAbs of sources) {
-    // The worker writes its envelope to this file rather than stdout, which the imported
-    // module is free to pollute (and some runtimes' console.log bypasses stdout patching).
-    const envelopeFile = join(tmpdir(), `tskm-jsonschema-${process.pid}-${index++}.json`)
-    // Each source imports the user's module — possibly with side effects (DB/network)
-    // or an infinite hang — so it runs in a throwaway child the parent can SIGKILL.
-    // `spawnSync` is intentional: it gives the timeout/kill semantics we need with the
-    // simplest control flow; per-file serialization is acceptable for this experimental path.
-    const child = spawnSync(execPath, [workerAbs, sourceAbs, envelopeFile], {
-      cwd: root,
-      timeout,
-      killSignal: "SIGKILL",
-      encoding: "utf8",
-      env: { ...process.env },
+    // Each source imports the user's module in an isolated, SIGKILL-guarded child;
+    // per-file serialization is acceptable for this experimental path.
+    const result = runWorker<SchemaWorkerEnvelope<JsonWorkerEntry>>(workerAbs, sourceAbs, {
+      root,
+      execPath,
+      timeoutMs,
+      tag: "jsonschema",
     })
-
-    if (child.error) {
-      rmSync(envelopeFile, { force: true })
-      diagnostics.push(`tskm: ${sourceAbs}: worker failed (${child.error.message}); skipped.`)
-      continue
-    }
-    if (child.status !== 0) {
-      rmSync(envelopeFile, { force: true })
-      diagnostics.push(`tskm: ${sourceAbs}: worker exited with code ${child.status}; skipped.`)
+    if (result.diagnostic !== undefined) {
+      diagnostics.push(result.diagnostic)
       continue
     }
 
-    let envelope: WorkerEnvelope
-    try {
-      envelope = JSON.parse(readFileSync(envelopeFile, "utf8")) as WorkerEnvelope
-    } catch {
-      diagnostics.push(`tskm: ${sourceAbs}: could not read worker output; skipped.`)
-      continue
-    } finally {
-      rmSync(envelopeFile, { force: true })
-    }
-
-    if (envelope.error) {
-      diagnostics.push(`tskm: ${sourceAbs}: ${envelope.error}; skipped.`)
-      continue
-    }
-
-    const schemas = envelope.schemas ?? []
+    const schemas = result.envelope.schemas ?? []
     if (schemas.length === 0) {
       continue
     }

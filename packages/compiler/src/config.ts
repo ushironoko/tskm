@@ -20,6 +20,22 @@ export interface TskmWatchOptions {
   readonly debounceMs?: number
 }
 
+/**
+ * Options for the isolated schema workers (structural recursive types; also the
+ * defaults for `tskm json-schema`). Recursive schemas are the only type-gen path
+ * that EVALUATES the user module, so it runs in a SIGKILL-guarded subprocess.
+ */
+export interface TskmWorkerOptions {
+  /**
+   * Runtime used to execute the worker (defaults to `process.execPath`). Point it
+   * at a TS-capable binary (bun/tsx) when the schema modules are TypeScript and the
+   * host runtime cannot import `.ts`.
+   */
+  readonly execPath?: string
+  /** Hard timeout (ms) per worker run. */
+  readonly timeoutMs?: number
+}
+
 export interface TskmConfig {
   /** Output strategy: `sidecar` (default) writes `*.gen.ts`; `inplace` rewrites markers in place. */
   readonly mode?: TskmMode
@@ -33,6 +49,8 @@ export interface TskmConfig {
   readonly jsonSchema?: TskmJsonSchemaOptions
   /** Watch-mode options. */
   readonly watch?: TskmWatchOptions
+  /** Isolated schema-worker options (recursive structural types). */
+  readonly worker?: TskmWorkerOptions
 }
 
 export interface ResolvedJsonSchemaOptions {
@@ -43,6 +61,11 @@ export interface ResolvedWatchOptions {
   readonly debounceMs: number
 }
 
+export interface ResolvedWorkerOptions {
+  readonly execPath: string | undefined
+  readonly timeoutMs: number
+}
+
 export interface ResolvedTskmConfig {
   readonly mode: TskmMode
   readonly include: ReadonlyArray<string>
@@ -50,12 +73,14 @@ export interface ResolvedTskmConfig {
   readonly executable: string | undefined
   readonly jsonSchema: ResolvedJsonSchemaOptions
   readonly watch: ResolvedWatchOptions
+  readonly worker: ResolvedWorkerOptions
   /** The directory the config was resolved against (the checker cwd). */
   readonly root: string
 }
 
 const DEFAULT_INCLUDE = ["src/**/*.ts"] as const
 const DEFAULT_DEBOUNCE_MS = 50
+const DEFAULT_WORKER_TIMEOUT_MS = 5000
 
 /** Identity helper for authoring `tskm.config.ts` with full type inference. */
 export function defineConfig(config: TskmConfig): TskmConfig {
@@ -79,6 +104,10 @@ export function resolveConfig(config: TskmConfig, root: string): ResolvedTskmCon
     executable: config.executable,
     jsonSchema: { outDir: config.jsonSchema?.outDir },
     watch: { debounceMs: config.watch?.debounceMs ?? DEFAULT_DEBOUNCE_MS },
+    worker: {
+      execPath: config.worker?.execPath,
+      timeoutMs: config.worker?.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS,
+    },
     root: absRoot,
   }
 }

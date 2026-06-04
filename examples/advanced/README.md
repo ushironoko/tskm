@@ -1,7 +1,7 @@
 # @tskm/example-advanced
 
 Three patterns past the [basic loop](../basic): **discriminated unions, recursive (cyclic)
-schemas, and the explicit `Infer` marker.** Each schema is materialized into a concrete
+schemas written data-first with `recursive()`, and the explicit `Infer` marker.** Each schema is materialized into a concrete
 `.gen.ts` type by `tskm gen`, so consuming it ([`src/main.ts`](src/main.ts)) costs the type
 system nothing.
 
@@ -34,43 +34,38 @@ export type Shape = {
 }
 ```
 
-## 2. Recursive / cyclic schema — the special notation
+## 2. Recursive / cyclic schema — data-first with `recursive()`
 
 [`src/json.schema.ts`](src/json.schema.ts) models a JSON value, which is both a **union** and
 **recursive** (a JSON value contains JSON values). TypeScript cannot *infer* a self-referential
-type, so a recursive schema needs three things that a normal schema does not:
-
-1. **Hand-write the recursive type** — `Json` mentions `Json`.
-2. **Annotate the const** with `GenericSchema<Json>` — this breaks the inference cycle.
-3. **Wrap each self-reference in `lazy(() => …)`** — so the schema object can be built before
-   it finishes referring to itself (the getter runs on first parse).
+type — but you don't have to write one either. `recursive` passes the self-reference INTO the
+builder, so the declaring const never appears in its own initializer:
 
 ```ts
-export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
-
-export const jsonSchema: GenericSchema<Json> = union([
-  string(),
-  number(),
-  boolean(),
-  null_(),
-  array(lazy(() => jsonSchema)),
-  record(lazy(() => jsonSchema)),
-])
+export const jsonSchema = recursive((self) =>
+  union([string(), number(), boolean(), null_(), array(self), record(self)]),
+)
 ```
 
-`tskm gen` materializes a correct **self-referential** type ([`json.schema.gen.ts`](src/json.schema.gen.ts)):
+No hand-written `type Json`, no `GenericSchema<Json>` annotation, no `lazy(() => …)` wrappers —
+the three pieces of ceremony recursion used to require. `tskm gen` cannot ask the checker for
+this type (inference always collapses a value-level self-reference), so it walks the runtime
+schema graph instead and materializes the named self-referential alias
+([`json.schema.gen.ts`](src/json.schema.gen.ts)):
 
 ```ts
-export type Json = string | number | boolean | Json[] | {
-  [x: string]: Json;
-} | null
+export type Json = string | number | boolean | null | Json[] | {
+  [key: string]: Json
+}
 ```
 
-> **The annotation is required, not optional.** Without `GenericSchema<Json>` the recursive
-> position silently degrades to `any` — tskm's fail-closed guard only inspects the top-level
-> type, not nested `any`, so codegen would emit a wrong type with no diagnostic. (At runtime
-> `lazy` follows the input's depth and is not cycle-guarded, so a pathologically deep value can
-> overflow the stack.)
+> The record position is an index-signature literal on purpose: `Record<string, Json>` inside a
+> self-referential alias is a circularity error (TS2456) — type arguments to another alias are
+> resolved eagerly. The literal form is the deferred, legal spelling.
+
+> `lazy` still exists as the non-recursive defer / escape hatch; lazy-based recursion keeps the
+> old hand-annotation requirement. At runtime both `lazy` and `recursive` follow the input's
+> depth and are not cycle-guarded, so a pathologically deep value can overflow the stack.
 
 ## 3. The explicit `Infer` marker — opt-in discovery
 
@@ -100,9 +95,13 @@ writing a sidecar — see the root README.)
 From the repository root (after `bun install` + `bun run build`):
 
 ```bash
-node packages/compiler/dist/cli.mjs gen --root examples/advanced
-# in a published project this is simply:  npx tskm gen   (or  bunx tskm gen)
+bun packages/compiler/dist/cli.mjs gen --root examples/advanced
+# in a published project this is simply:  bunx tskm gen
 ```
+
+Recursive schemas are resolved by an isolated worker that **imports your schema module**, so the
+worker runtime must be able to import `.ts` — run the CLI with bun (as above), or set
+`worker.execPath` in `tskm.config.ts`. Everything else stays on the static checker path.
 
 `tsconfig.json` maps `@tskm/core` to the workspace source via `paths` so the checker can resolve
 the inferred output type. In a real project `@tskm/core` is a normal dependency and no `paths`

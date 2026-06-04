@@ -81,7 +81,7 @@ export type User = {
 import type { User } from "./user.schema.gen"
 ```
 
-Schemas: `string number boolean bigint date literal null_ undefined_ any unknown never_ picklist object array record tuple union optional nullable nullish lazy` (+ async `objectAsync` `arrayAsync` `unionAsync`).
+Schemas: `string number boolean bigint date literal null_ undefined_ any unknown never_ picklist object array record tuple union optional nullable nullish lazy recursive` (+ async `objectAsync` `arrayAsync` `unionAsync`).
 Actions (via `pipe`): `minLength maxLength length minValue maxValue integer multipleOf email url regex nonEmpty check transform brand readonly` (+ `checkAsync` `transformAsync`).
 Methods: `pipe parse safeParse is assert fallback` (+ `parseAsync safeParseAsync pipeAsync`).
 
@@ -115,6 +115,16 @@ The compiler never reads your schema at runtime — the inferred type only exist
    It then asks the **tsgo (Corsa) checker** — Microsoft's native TypeScript port, driven over its IPC API via [`@corsa-bind/napi`](https://github.com/ubugeeei-prod/corsa-bind) and the `@typescript/native-preview` binary — for the type at that marker (`getTypeAtPosition`), and renders it fully expanded with `typeToString` (no truncation, anonymous structural form). Because the answer comes from the type system, types produced by `transform`, generics, or conditional types all resolve correctly.
 3. **Emit** — the resolved type is pretty-printed deterministically and written to a sidecar `*.gen.ts`. The temporary query files are deleted; your source is never modified. If a schema fails to type-check (resolves to `any`/`unknown`/`never`), the previous output is kept and a diagnostic is reported instead of overwriting good types.
 
+4. **Recursive schemas** take a structural route instead — the plain query would collapse their self
+   positions to `any` before the checker ever saw them. Discovery flags `recursive(...)` roots
+   syntactically and routes them to an isolated, SIGKILL-guarded worker that imports the module and
+   walks the runtime schema graph through the same identity-keyed cycle guard the JSON Schema emitter
+   uses, rendering a named self-referential alias directly (`type Category = { …; children: Category[] }`).
+   Transform outputs inside the cycle are recovered with one extra checker query — a one-level unroll of
+   the schema's builder with a sentinel type at the self positions — and spliced in only after BOTH a
+   structural data-key cross-check and a bidirectional fixpoint oracle pass; otherwise the position
+   stays an honest `unknown` with a path-precise diagnostic.
+
 The checker runs as a long-lived process: it opens the project once and is fed incremental file changes, so generating many schemas stays fast. No `tsc` plugin, no `ts-patch`, no transformer in your build.
 
 ## Type support
@@ -144,7 +154,8 @@ a documented mapping (and warns on anything it cannot represent).
 | `optional(T)` | `T \| undefined` | inside `object`: `T`, key dropped from `required`; standalone: `T` ⚠ (drops `undefined`) |
 | `nullable(T)` | `T \| null` | `{ "anyOf": [T, { "type": "null" }] }` |
 | `nullish(T)` | `T \| null \| undefined` | `{ "anyOf": [T, { "type": "null" }] }` ⚠ (drops `undefined`) |
-| `lazy(() => T)` | recursive `T` | `$ref` / `$defs` |
+| `lazy(() => T)` | recursive `T` (needs a hand-written annotation) | `$ref` / `$defs` |
+| `recursive((self) => …)` | **named self-referential alias, materialized** | `$ref` / `$defs` (export-named) |
 | pipe `minLength`/`maxLength`/`length`/`nonEmpty` | unchanged | `minLength`/`maxLength` (or `minItems`/`maxItems`) |
 | pipe `minValue`/`maxValue`/`integer`/`multipleOf` | unchanged | `minimum`/`maximum`/`"type":"integer"`/`multipleOf` (numeric bases only) |
 | pipe `email`/`url`/`regex` | unchanged | `format: "email"`/`format: "uri"`/`pattern` |
@@ -155,10 +166,12 @@ a documented mapping (and warns on anything it cannot represent).
 ## Limitations
 
 - **Schema discovery is syntactic and conservative.** Sidecar auto-discovery only matches a direct `export const x = <tskm factory>(…)`. Schemas built through a local helper (`export const x = make()`), a `satisfies` clause, a re-export, or a namespace import are **not** found — add an explicit `export type T = Infer<typeof x>` marker for those.
-- **Recursive schemas need an explicit type annotation.** Annotate the schema and hand-write its type (`type Category = …; const categorySchema: GenericSchema<Category> = object({ …, children: array(lazy(() => categorySchema)) })`). With the annotation the generated `.ts` is a correct self-referential type and JSON Schema uses `$ref`/`$defs`. **Without it the recursive position silently degrades to `any`** — the failure guard only inspects the top-level type, not nested `any`, so no diagnostic is reported. At runtime `lazy` follows the input's depth and is not cycle-guarded, so a pathologically deep value can overflow the stack.
+- **Recursive schemas: use `recursive()`.** `export const categorySchema = recursive((self) => object({ name: string(), children: array(self) }))` materializes `type Category = { name: string; children: Category[] }` with **no hand-written annotation**: the self-reference is passed into the builder, so the implicit-any rule for self-referential initializers never fires. Recursive roots are the one place type generation EVALUATES your module — in an isolated, SIGKILL-guarded subprocess (set `worker.execPath` to a TS-capable runtime such as `bun` when your sources are `.ts` and the host runtime cannot import them). Same-file mutual recursion (A↔B) is supported; the pair forms a type-level cycle at authoring time, so give ONE member a loose `GenericSchema` annotation (still no structural type by hand). A specifier-form export (`const node = recursive(…); export { node }`) resolves through an explicit `export type Node = Infer<typeof node>` marker — auto-discovery without a marker still requires the inline `export const` form. Everything cross-file fails CLOSED — skip plus a diagnostic, never a wrong or dangling alias: a recursive schema **imported** (or re-exported) into another file is not inlined there, a cross-file `Infer<typeof imported>` alias is rejected by the checker guard, and a generated body that would reference a sibling alias which itself failed is pruned with it (cycles through non-exported values stay unsupported). Declare recursive aliases in the file that defines the schema.
+- **Transforms inside a recursive cycle** resolve when the builder is a GENERIC arrow (`recursive(<S extends GenericSchema>(self: S) => …)`): the compiler asks the checker for a one-level unroll of the builder with a sentinel at the self positions, then splices the result only after BOTH a structural data-key cross-check and a bidirectional fixpoint oracle pass (a wrong candidate is rejected, never emitted). Any rejection keeps the honest floor: `unknown` at the transform position with a path-precise diagnostic. A plain-arrow builder cannot be unrolled and always gets the floor.
+- **`lazy` stays as the non-recursive defer / escape hatch.** lazy-based recursion still needs the old hand-written `GenericSchema<T>` annotation and is not auto-materialized in v1. At runtime both `lazy` and `recursive` follow the input's depth and are not cycle-guarded, so a pathologically deep value can overflow the stack.
 - **`optional(x)`** renders as `k: T | undefined`, not `k?: T` (the value is the same; the key is still required in the object position). JSON Schema correctly drops it from `required`.
 - **In-place mode** only recognizes *single-line* `export type T = Infer<typeof X>` markers, and trailing content on that line is dropped on first conversion. It is experimental and opt-in.
-- **JSON Schema** runs your schema module in an isolated subprocess; it assumes the module is side-effect-free and imports cleanly under the chosen runtime (`--exec`/`execPath`). `transform`/refinements that JSON Schema can't express are warned and omitted. `minValue`/`maxValue` map to `minimum`/`maximum` and are only meaningful on a number base (on a `date` base they emit numeric bounds that don't apply to the string schema). Recursive (`lazy`) schemas become `$ref`/`$defs`, but the `$defs` names are derived from the schema kind (`object`, `object_2`, …), not your type names.
+- **JSON Schema** runs your schema module in an isolated subprocess; it assumes the module is side-effect-free and imports cleanly under the chosen runtime (`--exec`/`execPath`). `transform`/refinements that JSON Schema can't express are warned and omitted. `minValue`/`maxValue` map to `minimum`/`maximum` and are only meaningful on a number base (on a `date` base they emit numeric bounds that don't apply to the string schema). Recursive (`lazy`/`recursive`) schemas become `$ref`/`$defs`; `recursive()` roots are named after their exports (`Category`), while other hoisted cycles keep kind-derived names (`object`, `object_2`, …).
 - **`union`** emits a single schema-level issue on failure (no per-member aggregation yet).
 - **`pipe(schema, transform(fn))`** infers `fn`'s input from an explicit parameter annotation; annotate it (`transform((s: string) => …)`) when the input isn't otherwise constrained.
 

@@ -174,6 +174,62 @@ describe("schemaToJsonSchema — lazy recursion", () => {
   })
 })
 
+describe("schemaToJsonSchema — recursive combinator", () => {
+  /** A duck-typed recursive() schema: the root IS self; getter returns the body. */
+  function recursiveRoot(): Record<string, unknown> {
+    const root: Record<string, unknown> = { kind: "schema", type: "recursive" }
+    const body = {
+      kind: "schema",
+      type: "object",
+      entries: {
+        name: s.string(),
+        children: { kind: "schema", type: "array", item: root },
+      },
+    }
+    root.getter = () => body
+    return root
+  }
+
+  it("terminates the self-cycle via $ref/$defs without leaking self as a spurious def", () => {
+    const { schema: out, warnings } = schemaToJsonSchema(recursiveRoot())
+    expect(warnings).toHaveLength(0)
+    expect(out.$ref).toMatch(/^#\/\$defs\//)
+    const defs = out.$defs as Record<
+      string,
+      { properties?: Record<string, { items?: { $ref?: string } }> }
+    >
+    // Exactly ONE def: the recursive root. Its body is not duplicated and the self
+    // placeholder does not surface as a second definition.
+    expect(Object.keys(defs)).toHaveLength(1)
+    const rootRef = out.$ref as string
+    const rootName = rootRef.replace("#/$defs/", "")
+    expect(defs[rootName]?.properties?.children?.items?.$ref).toBe(rootRef)
+  })
+
+  it("names the hoisted def after the export-derived name when provided", () => {
+    const root = recursiveRoot()
+    const { schema: out } = schemaToJsonSchema(root, {
+      exportNames: new Map<object, string>([[root, "Category"]]),
+    })
+    expect(out.$ref).toBe("#/$defs/Category")
+    expect((out.$defs as Record<string, unknown>).Category).toBeDefined()
+  })
+
+  it("fully inlines a recursive() whose body never references self", () => {
+    const root: Record<string, unknown> = { kind: "schema", type: "recursive" }
+    root.getter = () => s.object({ name: s.string() })
+    const { schema: out, warnings } = schemaToJsonSchema(root)
+    expect(warnings).toHaveLength(0)
+    expect(out.$defs).toBeUndefined()
+    expect(out).toEqual({
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+      additionalProperties: false,
+    })
+  })
+})
+
 describe("schemaToJsonSchema — lossy primitives warn", () => {
   it("bigint, date, undefined, never each warn or fall back as specified", () => {
     expect(schemaToJsonSchema({ kind: "schema", type: "bigint" }).warnings).not.toHaveLength(0)

@@ -11,11 +11,12 @@ export interface LazySchema<TWrapped extends BaseSchema<unknown, unknown>>
 }
 
 /**
- * Defers schema resolution to the first `~run`, enabling recursive schemas. The
- * resolved schema is memoized in a CLOSURE variable (not a module map), so it is
- * collected together with this schema. Recursive use needs an explicit type
- * parameter, e.g. `lazy<NodeSchema>(() => node)`, because TypeScript cannot infer
- * a type that references itself.
+ * Defers schema resolution to the first `~run`. The resolved schema is memoized in
+ * a CLOSURE variable (not a module map), so it is collected together with this
+ * schema. For RECURSIVE schemas prefer `recursive((self) => ...)`, which needs no
+ * annotation and is materialized by the AOT compiler; recursive use of `lazy`
+ * still requires an explicit type parameter, e.g. `lazy<NodeSchema>(() => node)`,
+ * because TypeScript cannot infer a type that references itself.
  */
 // @__NO_SIDE_EFFECTS__
 export function lazy<TWrapped extends BaseSchema<unknown, unknown>>(

@@ -20,6 +20,7 @@ import {
   optional,
   picklist,
   record,
+  recursive,
   string,
   tuple,
   undefined_,
@@ -62,6 +63,16 @@ const syncCases: ReadonlyArray<SyncCase> = [
   { name: "object", schema: object({ a: string() }), valid: { a: "x" }, invalid: { a: 1 } },
   { name: "union", schema: union([string(), number()]), valid: "x", invalid: true },
   { name: "lazy", schema: lazy(() => string()), valid: "x", invalid: 1 },
+  // recursive() builds its body lazily and exposes `~standard` via the same getter
+  // (recursive.ts L64-65); driving it through Standard Schema forces that accessor
+  // and proves the self-referential body validates a nested cycle and rejects a
+  // non-object. `{ next: undefined }` is the base case; `1` is not an object.
+  {
+    name: "recursive",
+    schema: recursive((self) => object({ next: optional(self) })),
+    valid: { next: { next: undefined } },
+    invalid: 1,
+  },
 ]
 
 describe("Standard Schema interface — sync schemas", () => {

@@ -44,7 +44,12 @@ describe("discoverSchemas — const (alias-origin) factory declarations", () => 
     expect(diagnostics).toHaveLength(0)
     expect(schemas).toHaveLength(1)
     const found = find(schemas, "userSchema")
-    expect(found).toEqual({ name: "userSchema", typeName: "User", origin: "const" })
+    expect(found).toEqual({
+      name: "userSchema",
+      typeName: "User",
+      origin: "const",
+      recursive: false,
+    })
   })
 
   it("ignores consts whose callee is not a tskm runtime import", () => {
@@ -94,6 +99,7 @@ describe("discoverSchemas — const (alias-origin) factory declarations", () => 
       name: "petSchema",
       typeName: "Pet",
       origin: "const",
+      recursive: false,
     })
   })
 
@@ -117,7 +123,7 @@ describe("discoverSchemas — Infer alias markers", () => {
     `
     const { schemas } = discoverSchemas("a.ts", src)
     const alias = schemas.find((s) => s.origin === "alias")
-    expect(alias).toEqual({ name: "xSchema", typeName: "X", origin: "alias" })
+    expect(alias).toEqual({ name: "xSchema", typeName: "X", origin: "alias", recursive: false })
   })
 
   it("discovers an InferOutput alias marker", () => {
@@ -126,7 +132,7 @@ describe("discoverSchemas — Infer alias markers", () => {
       export type Y = InferOutput<typeof ySchema>
     `
     const { schemas } = discoverSchemas("a.ts", src)
-    expect(schemas).toEqual([{ name: "ySchema", typeName: "Y", origin: "alias" }])
+    expect(schemas).toEqual([{ name: "ySchema", typeName: "Y", origin: "alias", recursive: false }])
   })
 
   it('discovers the import("@tskm/core").InferOutput<...> qualified form', () => {
@@ -135,7 +141,7 @@ describe("discoverSchemas — Infer alias markers", () => {
       export type Z = import("@tskm/core").InferOutput<typeof zSchema>
     `
     const { schemas } = discoverSchemas("a.ts", src)
-    expect(schemas).toEqual([{ name: "zSchema", typeName: "Z", origin: "alias" }])
+    expect(schemas).toEqual([{ name: "zSchema", typeName: "Z", origin: "alias", recursive: false }])
   })
 
   it('discovers the import("@tskm/core").Infer<...> qualified form', () => {
@@ -144,7 +150,7 @@ describe("discoverSchemas — Infer alias markers", () => {
       export type W = import("@tskm/core").Infer<typeof wSchema>
     `
     const { schemas } = discoverSchemas("a.ts", src)
-    expect(schemas).toEqual([{ name: "wSchema", typeName: "W", origin: "alias" }])
+    expect(schemas).toEqual([{ name: "wSchema", typeName: "W", origin: "alias", recursive: false }])
   })
 
   it("ignores an import-type qualifier from a non-tskm module", () => {
@@ -214,7 +220,12 @@ describe("discoverSchemas — multiple schemas & dedup", () => {
     expect(find(schemas, "userSchema")?.origin).toBe("const")
     expect(find(schemas, "ageSchema")?.origin).toBe("const")
     const hidden = schemas.find((s) => s.typeName === "Hidden")
-    expect(hidden).toEqual({ name: "hiddenSchema", typeName: "Hidden", origin: "alias" })
+    expect(hidden).toEqual({
+      name: "hiddenSchema",
+      typeName: "Hidden",
+      origin: "alias",
+      recursive: false,
+    })
   })
 
   it("does not re-add a const name already seen", () => {
@@ -260,5 +271,88 @@ describe("discoverSchemas — empty & malformed inputs", () => {
     const { diagnostics } = discoverSchemas("a.ts", "export const = =")
     expect(diagnostics.length).toBeGreaterThanOrEqual(1)
     expect(diagnostics.every((d) => typeof d === "string")).toBe(true)
+  })
+})
+
+describe("discoverSchemas — recursive flag", () => {
+  it("flags an exported recursive(...) const", () => {
+    const src = `
+      import { object, recursive, string } from "@tskm/core"
+      export const categorySchema = recursive((self) => object({ name: string() }))
+    `
+    const { schemas } = discoverSchemas("a.ts", src)
+    expect(find(schemas, "categorySchema")).toEqual({
+      name: "categorySchema",
+      typeName: "Category",
+      origin: "const",
+      recursive: true,
+    })
+  })
+
+  it("keeps lazy- and object-built consts non-recursive", () => {
+    const src = `
+      import { lazy, object, string } from "@tskm/core"
+      export const aSchema = lazy(() => string())
+      export const bSchema = object({ name: string() })
+    `
+    const { schemas } = discoverSchemas("a.ts", src)
+    expect(find(schemas, "aSchema")?.recursive).toBe(false)
+    expect(find(schemas, "bSchema")?.recursive).toBe(false)
+  })
+
+  it("tracks the recursive import through a local alias (import { recursive as rec })", () => {
+    const src = `
+      import { recursive as rec, object } from "@tskm/core"
+      export const nodeSchema = rec((self) => object({}))
+    `
+    const { schemas } = discoverSchemas("a.ts", src)
+    expect(find(schemas, "nodeSchema")?.recursive).toBe(true)
+  })
+
+  it("does not flag recursive imported from a non-tskm module", () => {
+    const src = `
+      import { recursive } from "not-tskm"
+      export const xSchema = recursive((self) => self)
+    `
+    const { schemas } = discoverSchemas("a.ts", src)
+    // Not a runtime import at all, so it is not even discovered.
+    expect(schemas).toHaveLength(0)
+  })
+
+  it("inherits the flag onto an Infer alias of a recursive const", () => {
+    const src = `
+      import { object, recursive } from "@tskm/core"
+      import type { Infer } from "@tskm/core"
+      const categorySchema = recursive((self) => object({}))
+      export type Category = Infer<typeof categorySchema>
+    `
+    const { schemas } = discoverSchemas("a.ts", src)
+    expect(schemas).toEqual([
+      { name: "categorySchema", typeName: "Category", origin: "alias", recursive: true },
+    ])
+  })
+
+  it("inherits the flag even when the alias precedes the const (two-pass)", () => {
+    const src = `
+      import { object, recursive } from "@tskm/core"
+      import type { Infer } from "@tskm/core"
+      export type Category = Infer<typeof categorySchema>
+      const categorySchema = recursive((self) => object({}))
+    `
+    const { schemas } = discoverSchemas("a.ts", src)
+    expect(schemas).toEqual([
+      { name: "categorySchema", typeName: "Category", origin: "alias", recursive: true },
+    ])
+  })
+
+  it("keeps an alias of a non-recursive const non-recursive", () => {
+    const src = `
+      import { object } from "@tskm/core"
+      import type { Infer } from "@tskm/core"
+      const userSchema = object({})
+      export type User = Infer<typeof userSchema>
+    `
+    const { schemas } = discoverSchemas("a.ts", src)
+    expect(find(schemas, "userSchema")?.recursive).toBe(false)
   })
 })
