@@ -347,6 +347,8 @@ export interface JsonWorkerEntry {
   readonly schema: JsonSchema
   readonly warnings: ReadonlyArray<string>
   readonly skipped?: boolean
+  /** Set when the export's vendor is outside the allow-list (always skipped). */
+  readonly excludedVendor?: string
 }
 
 /** The worker's argv[4] protocol: adapter routing context (see jsonschema-adapter.ts). */
@@ -388,10 +390,26 @@ export async function generateJsonSchema(
     }
 
     const schemas = result.envelope.schemas ?? []
+    const excludedCounts = new Map<string, number>()
     for (const entry of schemas) {
+      if (entry.excludedVendor !== undefined) {
+        excludedCounts.set(
+          entry.excludedVendor,
+          (excludedCounts.get(entry.excludedVendor) ?? 0) + 1,
+        )
+      }
       for (const warning of entry.warnings) {
         diagnostics.push(`tskm: ${sourceAbs}: ${entry.name}: ${warning}`)
       }
+    }
+    // One line per (file, vendor), not per export: enough to surface both a
+    // deliberate opt-out and the vendor-string/package-root mismatch trap
+    // (a configured source whose runtime `~standard.vendor` differs from its
+    // package root lands here too), without per-schema noise.
+    for (const [vendor, count] of excludedCounts) {
+      diagnostics.push(
+        `tskm: ${sourceAbs}: ${count} Standard Schema export(s) with vendor "${vendor}" not converted: the vendor is not in the allow-list derived from schemaSources ([${workerContext.allowedVendors.join(", ")}]). Add the vendor's package to schemaSources to enable it — its "~standard" vendor string must match the package root.`,
+      )
     }
     const emittable = schemas.filter((entry) => !entry.skipped)
     if (emittable.length === 0) {

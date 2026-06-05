@@ -190,6 +190,8 @@ What you should know:
 - **Compile gate**: before an external-bearing sidecar is written it is verified against the real checker; a type that would not compile is skipped with a diagnostic and the previous output stays.
 - **External schemas are sidecar-only** (in-place markers stay tskm-only) and never enter the tskm structural walker or Tier-1 — those read tskm's internal conventions.
 - A JSON Schema conversion an external converter rejects (zod `bigint`/`date`/`transform`, valibot `transform`, …) is skipped per schema with the converter's reason; the rest of the file still emits.
+- **Other libraries are opt-in, not auto-detected**: only the configured `schemaSources` are scanned, so a Standard Schema library outside the default three produces nothing until you add its package to `schemaSources` — the pipeline itself is vendor-generic (the type query, recursion annotations, the compile gate and spec-1.1 JSON Schema converters all work unchanged for a never-seen vendor).
+- **Vendor identity is the package root**: tskm derives each source's vendor name from its package root (`zod/v4` → `zod`) and matches it against the runtime `~standard` vendor string for JSON Schema allow-listing and brand-marker imports — true for zod/valibot/arktype. A library whose vendor string differs from its package root is reported per file as not-allow-listed (never silently dropped) but cannot currently be enabled for JSON Schema delegation.
 
 See [`examples/standard-schema`](examples/standard-schema) for the end-to-end zod loop (transform, brand, recursion).
 

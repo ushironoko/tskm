@@ -25,6 +25,8 @@ export interface ResolvedType {
 export interface FileDiagnostic {
   readonly code: number
   readonly fileName: string
+  /** The checker's message text (absent on synthetic fail-closed entries). */
+  readonly text?: string
 }
 
 export interface TsgoClient {
@@ -158,7 +160,7 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
       const raw = client.callJson("getSemanticDiagnostics", {
         snapshot: snap.snapshot,
         project,
-      }) as ReadonlyArray<{ code?: number; fileName?: string }> | null | undefined
+      }) as ReadonlyArray<{ code?: number; fileName?: string; text?: string }> | null | undefined
       if (!Array.isArray(raw)) {
         // Method missing/renamed in this Corsa build: fail CLOSED with a synthetic
         // diagnostic so an oracle caller never treats silence as soundness.
@@ -166,7 +168,11 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
       }
       return raw
         .filter((d) => d.fileName === probeFileAbs)
-        .map((d) => ({ code: d.code ?? 0, fileName: d.fileName ?? "" }))
+        .map((d) => ({
+          code: d.code ?? 0,
+          fileName: d.fileName ?? "",
+          ...(typeof d.text === "string" ? { text: d.text } : {}),
+        }))
     } catch {
       return [{ code: -1, fileName: probeFileAbs }]
     } finally {

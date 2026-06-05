@@ -87,12 +87,14 @@ describe("schemaToJsonSchemaViaAdapter — skip and exclusion policies", () => {
     expect(outcome.reason).toContain("bun add")
   })
 
-  it("silently excludes a vendor outside the allow-list", async () => {
+  it("excludes a vendor outside the allow-list, naming the runtime vendor", async () => {
     const outcome = await schemaToJsonSchemaViaAdapter(
       z.object({ a: z.string() }),
       ctx({ allowedVendors: new Set(["tskm"]) }),
     )
-    expect(outcome.kind).toBe("excluded")
+    // The vendor travels with the outcome so the parent can aggregate a
+    // diagnostic instead of dropping the schema without feedback.
+    expect(outcome).toEqual({ kind: "excluded", vendor: "zod" })
   })
 
   it("skips a non-Standard-Schema value with a reason", async () => {

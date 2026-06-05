@@ -62,7 +62,7 @@ describe.skipIf(!bun)("generateJsonSchema — Standard Schema vendor dispatch (r
     expect(doc.bigSchema).toBeUndefined()
   }, 60_000)
 
-  it("excludes opted-out vendors from the document (schemaSources: [])", async () => {
+  it("excludes opted-out vendors from the document (schemaSources: []) with a per-vendor diagnostic", async () => {
     const result = await generateJsonSchema({
       root: fixtureRoot,
       config: { include: ["src/json-mixed.schema.ts"], schemaSources: [] },
@@ -73,5 +73,15 @@ describe.skipIf(!bun)("generateJsonSchema — Standard Schema vendor dispatch (r
     expect(result.files[0]?.schemaNames).toEqual(["coreSchema"])
     const doc = JSON.parse(readFileSync(output, "utf8")) as Record<string, unknown>
     expect(Object.keys(doc)).toEqual(["coreSchema"])
+    // exclusion is no longer silent: one aggregated diagnostic per (file, vendor),
+    // naming the runtime vendor and the allow-list — this is what surfaces a
+    // vendor-string/package-root mismatch instead of swallowing it
+    const text = result.diagnostics.join("\n")
+    for (const vendor of ["zod", "valibot", "arktype"]) {
+      expect(text).toContain(`vendor "${vendor}"`)
+    }
+    expect(text).toContain("schemaSources")
+    // aggregated, not one line per export: exactly one diagnostic per vendor
+    expect(result.diagnostics.filter((d) => d.includes('vendor "zod"'))).toHaveLength(1)
   }, 60_000)
 })

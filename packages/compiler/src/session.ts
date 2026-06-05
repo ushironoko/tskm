@@ -307,11 +307,26 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       )
       if (verifyDiags.length > 0) {
         const codes = [...new Set(verifyDiags.map((d) => `TS${d.code}`))].join(", ")
+        // Name the unresolvable identifiers (from the checker's message text) so
+        // the user learns WHAT leaked, not just that something did.
+        const missing = [
+          ...new Set(
+            verifyDiags.flatMap((d) => {
+              const match = d.text ? /Cannot find name '([^']+)'/.exec(d.text) : null
+              return match?.[1] ? [match[1]] : []
+            }),
+          ),
+        ]
+        const namesPart = missing.length > 0 ? `; unresolved name(s): ${missing.join(", ")}` : ""
+        const leakHint =
+          missing.length > 0 && resolved.some((r) => r.vendorHint !== undefined)
+            ? ' The rendered type references names the generated file cannot import — a non-exported local type, or a library-internal marker without a built-in import mapping (zod "$brand" and valibot "Brand" are mapped).'
+            : ""
         return {
           file: null,
           diagnostics: [
             ...allDiagnostics,
-            `tskm: the generated types for ${sourceAbs} do not compile (${codes}); nothing written. Existing output left untouched.`,
+            `tskm: the generated types for ${sourceAbs} do not compile (${codes}${namesPart}); nothing written.${leakHint} Existing output left untouched.`,
           ],
         }
       }

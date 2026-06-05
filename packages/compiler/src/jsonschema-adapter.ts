@@ -45,8 +45,14 @@ export type AdapterOutcome =
     }
   /** Convertible in principle, but this schema failed — surface the reason. */
   | { readonly kind: "skipped"; readonly reason: string }
-  /** Vendor disabled by config — omit silently (mirrors type-gen discovery). */
-  | { readonly kind: "excluded" }
+  /**
+   * Vendor not in the config-derived allow-list — omitted from the document,
+   * but the runtime vendor travels along so the parent can aggregate one
+   * diagnostic per (file, vendor) instead of dropping the schema without
+   * feedback (the silence would also swallow a vendor-string/package-root
+   * mismatch, where the user DID configure the source).
+   */
+  | { readonly kind: "excluded"; readonly vendor: string }
 
 /** The spec 1.1 converter surface: io-keyed methods taking a target option. */
 interface NativeJsonSchemaConverter {
@@ -70,7 +76,7 @@ export async function schemaToJsonSchemaViaAdapter(
     return { kind: "skipped", reason: "not a Standard Schema value" }
   }
   if (!ctx.allowedVendors.has(std.vendor)) {
-    return { kind: "excluded" }
+    return { kind: "excluded", vendor: std.vendor }
   }
 
   // Spec 1.1 native converter (`~standard.jsonSchema.output({ target })`,

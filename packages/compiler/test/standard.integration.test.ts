@@ -94,8 +94,10 @@ describe("standard schema interop (real tsgo) — post-resolution compile gate",
       config: { mode: "sidecar", include: ["src/zod-leak.schema.ts"], tsconfig: "tsconfig.json" },
     })
 
-    // (iii) diagnostics: the gate names the failure and the fail-closed outcome
+    // (iii) diagnostics: the gate names the failure, the unresolved identifier
+    // (extracted from the checker's message text), and the fail-closed outcome
     expect(result.diagnostics.join("\n")).toContain("do not compile")
+    expect(result.diagnostics.join("\n")).toContain("unresolved name(s): LocalThing")
     expect(result.diagnostics.join("\n")).toContain("Existing output left untouched")
     // (i) resolution outcome: no file emitted for this source
     expect(result.files).toHaveLength(0)

@@ -36,7 +36,9 @@ await runSchemaWorker<JsonWorkerEntry>(async (name, value, mod) => {
     exportNames,
   })
   if (outcome.kind === "excluded") {
-    return null
+    // Marked, not dropped: the parent aggregates excluded vendors into one
+    // diagnostic per (file, vendor). `skipped` keeps it out of the document.
+    return { name, schema: {}, warnings: [], skipped: true, excludedVendor: outcome.vendor }
   }
   if (outcome.kind === "skipped") {
     return { name, schema: {}, warnings: [outcome.reason], skipped: true }
