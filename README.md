@@ -104,21 +104,23 @@ it runs the compiler on `buildStart` and watches during `vite dev`.
 
 The compiler never reads your schema at runtime — the inferred type only exists in the type system, so it asks the type checker directly:
 
-1. **Discover** — [`oxc-parser`](https://oxc.rs) scans each source file (syntactically) for exported `const`s whose factory is imported from `@tskm/core`, and for explicit `type T = Infer<typeof X>` markers.
-2. **Query** — for each schema, the compiler writes a tiny sibling file (`<base>.tskm-query.ts`, deleted afterward) next to the source that declares a marker against the schema's output type:
+1. **Discover** — [`oxc-parser`](https://oxc.rs) scans each source file (syntactically) for exported `const` factory calls rooted in a configured schema source (`schemaSources` — `@tskm/core` always, plus `zod`/`valibot`/`arktype` by default), and for explicit `type T = Infer<typeof X>` markers. tskm imports are confirmed schemas; external-source consts stay **candidates** until step 2 proves them.
+2. **Query** — for each schema, the compiler writes a tiny sibling file (`<base>.tskm-query.ts`, deleted afterward) next to the source that declares markers against the schema's output type — one structural expression for every vendor, tskm included, with no type import (every Standard Schema carries its inferred types on `~standard.types`):
 
    ```ts
    import { userSchema } from "./user.schema"
-   import type { InferOutput } from "@tskm/core"
    type __P<T> = { [K in keyof T]: T[K] } & {}
-   declare const __tskm_0: __P<InferOutput<typeof userSchema>>
+   declare const __tskm_raw_0: NonNullable<(typeof userSchema)["~standard"]["types"]>["output"]
+   declare const __tskm_pp_0: __P<NonNullable<(typeof userSchema)["~standard"]["types"]>["output"]>
    ```
 
-   It then asks the **tsgo (Corsa) checker** — Microsoft's native TypeScript port, driven over its IPC API via [`@corsa-bind/napi`](https://github.com/ubugeeei-prod/corsa-bind) and the `@typescript/native-preview` binary — for the type at that marker (`getTypeAtPosition`), and renders it fully expanded with `typeToString` (no truncation, anonymous structural form). Because the answer comes from the type system, types produced by `transform`, generics, or conditional types all resolve correctly.
-3. **Emit** — the resolved type is pretty-printed deterministically and written to a sidecar `*.gen.ts`. The temporary query files are deleted; your source is never modified. If a schema fails to type-check (resolves to `any`/`unknown`/`never`), the previous output is kept and a diagnostic is reported instead of overwriting good types.
+   It then asks the **tsgo (Corsa) checker** — Microsoft's native TypeScript port, driven over its IPC API via [`@corsa-bind/napi`](https://github.com/ubugeeei-prod/corsa-bind) and the `@typescript/native-preview` binary — for the type at each marker (`getTypeAtPosition`), and renders it fully expanded with `typeToString` (no truncation, anonymous structural form). The prettified (`__P`) rendering is chosen for top-level objects; everything else keeps the raw form (`__P` applied to a top-level `Date`/`Map`/`Set` or branded primitive would expand the entire prototype). An external candidate gets one extra any-guarded probe marker first — a const that is not actually a Standard Schema is dropped silently. Because the answer comes from the type system, types produced by `transform`, generics, or conditional types all resolve correctly.
+3. **Emit** — the resolved type is pretty-printed deterministically and written to a sidecar `*.gen.ts`, together with any imports the rendered type needs: vendor brand markers (zod's `$brand`, valibot's `Brand`) and exported self-annotation types of recursive external schemas (an aliased re-export is rebound on import). The temporary query files are deleted; your source is never modified. Failure is always closed: a schema that resolves to `any`/`unknown`/`never` keeps the previous output with a diagnostic, and a file carrying external schemas is verified against the real checker **before** it is written — a render that would not compile is reported (naming the unresolved identifiers) and nothing is overwritten.
 
-4. **Recursive schemas** take a structural route instead — the plain query would collapse their self
-   positions to `any` before the checker ever saw them. Discovery flags `recursive(...)` roots
+4. **Recursive tskm schemas** (`recursive(...)`) take a structural route instead — the plain query
+   would collapse their self positions to `any` before the checker ever saw them. (External recursive
+   schemas ride the plain query through the library's own exported self annotation — see
+   [Standard Schema interop](#standard-schema-interop).) Discovery flags `recursive(...)` roots
    syntactically and routes them to an isolated, SIGKILL-guarded worker that imports the module and
    walks the runtime schema graph through the same identity-keyed cycle guard the JSON Schema emitter
    uses, rendering a named self-referential alias directly (`type Category = { …; children: Category[] }`).
