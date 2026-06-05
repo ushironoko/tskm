@@ -165,6 +165,36 @@ a documented mapping (and warns on anything it cannot represent).
 
 ⚠ = lossy or unrepresentable in JSON Schema; the emitter records a warning.
 
+## Standard Schema interop
+
+The compiler is not tskm-specific: any **[Standard Schema](https://standardschema.dev)** library is a type source. Discovery is hybrid — syntactic candidates (imports from `schemaSources`, default `["zod", "valibot", "arktype"]`, opt out with `schemaSources: []`) confirmed by an any-guarded checker probe — and the query itself is pure structure (`NonNullable<(typeof x)["~standard"]["types"]>["output"]`), so the same expression resolves every vendor:
+
+```ts
+// tskm.config.ts — optional; zod/valibot/arktype are on by default
+export default { schemaSources: ["zod"] }
+```
+
+| library | minimum version | `.ts` types | JSON Schema |
+| --- | --- | --- | --- |
+| tskm | — | full | built-in walker |
+| zod | ≥ 3.24 (verified on 4.4.3) | full | native (`~standard.jsonSchema`, spec 1.1) or `z.toJSONSchema` |
+| valibot | ≥ 1.0 (verified on 1.4.1) | full | [`@valibot/to-json-schema`](https://www.npmjs.com/package/@valibot/to-json-schema) (add it to your project) |
+| arktype | ≥ 2.0 (verified on 2.2.0) | full | native (`~standard.jsonSchema`, spec 1.1) |
+| anything else with `~standard` types | spec 1.0+ | best effort (same query) | native converter if it ships one |
+
+What you should know:
+
+- **Output side only**: the generated type is the schema's `output` (post-`transform`/`default`); JSON Schema follows `jsonSchema.io` in the config (default `"output"`).
+- **Brands keep their marker**: a branded type IS `base & Marker<…>`, so the sidecar imports it (`import type { $brand } from "zod"`, `import type { Brand } from "valibot"`).
+- **External recursion needs the library's own self annotation** (`z.ZodType<T>` / `v.GenericSchema<T>`), and that annotation type must be **exported** (the sidecar imports it; an aliased re-export — `export type { CatT as PublicCat }` — is rebound on import, while a local-only name is skipped with a diagnostic). Annotation-free recursion emits exactly what the library itself infers — self-truncated, with `any`/`unknown` at the cut — same as your editor shows.
+- **Compile gate**: before an external-bearing sidecar is written it is verified against the real checker; a type that would not compile is skipped with a diagnostic and the previous output stays.
+- **External schemas are sidecar-only** (in-place markers stay tskm-only) and never enter the tskm structural walker or Tier-1 — those read tskm's internal conventions.
+- A JSON Schema conversion an external converter rejects (zod `bigint`/`date`/`transform`, valibot `transform`, …) is skipped per schema with the converter's reason; the rest of the file still emits.
+- **Other libraries are opt-in, not auto-detected**: only the configured `schemaSources` are scanned, so a Standard Schema library outside the default three produces nothing until you add its package to `schemaSources` — the pipeline itself is vendor-generic (the type query, recursion annotations, the compile gate and spec-1.1 JSON Schema converters all work unchanged for a never-seen vendor).
+- **Vendor identity is the package root**: tskm derives each source's vendor name from its package root (`zod/v4` → `zod`) and matches it against the runtime `~standard` vendor string for JSON Schema allow-listing and brand-marker imports — true for zod/valibot/arktype. A library whose vendor string differs from its package root is reported per file as not-allow-listed (never silently dropped) but cannot currently be enabled for JSON Schema delegation.
+
+See [`examples/standard-schema`](examples/standard-schema) for the end-to-end loop over all three vendors (transforms, brands, annotated recursion, an arktype morph).
+
 ## Limitations
 
 - **Schema discovery is syntactic and conservative.** Sidecar auto-discovery only matches a direct `export const x = <tskm factory>(…)`. Schemas built through a local helper (`export const x = make()`), a `satisfies` clause, a re-export, or a namespace import are **not** found — add an explicit `export type T = Infer<typeof x>` marker for those. For **recursive** schemas the marker must live in the schema's defining file; cross-file markers fail closed (see below).
@@ -182,6 +212,7 @@ a documented mapping (and warns on anything it cannot represent).
 
 - [`examples/basic`](examples/basic) — the smallest end-to-end loop: schema → generated type → validate.
 - [`examples/advanced`](examples/advanced) — discriminated unions, a recursive JSON schema materialized by `recursive()`, and the explicit `export type T = Infer<typeof schema>` marker.
+- [`examples/standard-schema`](examples/standard-schema) — **zod, valibot and arktype** schemas compiled by one tskm pipeline: transform/morph output types, branded ids (`$brand`/`Brand` imports), annotated recursion.
 
 ## Development
 

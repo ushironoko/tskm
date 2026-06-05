@@ -1,10 +1,18 @@
 import { describe, expect, it } from "bun:test"
-import { type DiscoveredSchema, deriveTypeName, discoverSchemas } from "../src/discovery.ts"
+import {
+  type DiscoveredSchema,
+  deriveTypeName,
+  discoverSchemas,
+  tskmCapability,
+} from "../src/discovery.ts"
 
 const find = (
   schemas: ReadonlyArray<DiscoveredSchema>,
   name: string,
 ): DiscoveredSchema | undefined => schemas.find((s) => s.name === name)
+
+/** Expected capability of a tskm-discovered schema (the only kind in this suite). */
+const tskmCap = (recursive = false) => tskmCapability(recursive)
 
 describe("deriveTypeName", () => {
   it("strips a trailing Schema suffix and capitalizes", () => {
@@ -49,6 +57,7 @@ describe("discoverSchemas — const (alias-origin) factory declarations", () => 
       typeName: "User",
       origin: "const",
       recursive: false,
+      capability: tskmCap(),
     })
   })
 
@@ -100,6 +109,7 @@ describe("discoverSchemas — const (alias-origin) factory declarations", () => 
       typeName: "Pet",
       origin: "const",
       recursive: false,
+      capability: tskmCap(),
     })
   })
 
@@ -123,7 +133,13 @@ describe("discoverSchemas — Infer alias markers", () => {
     `
     const { schemas } = discoverSchemas("a.ts", src)
     const alias = schemas.find((s) => s.origin === "alias")
-    expect(alias).toEqual({ name: "xSchema", typeName: "X", origin: "alias", recursive: false })
+    expect(alias).toEqual({
+      name: "xSchema",
+      typeName: "X",
+      origin: "alias",
+      recursive: false,
+      capability: tskmCap(),
+    })
   })
 
   it("discovers an InferOutput alias marker", () => {
@@ -132,7 +148,9 @@ describe("discoverSchemas — Infer alias markers", () => {
       export type Y = InferOutput<typeof ySchema>
     `
     const { schemas } = discoverSchemas("a.ts", src)
-    expect(schemas).toEqual([{ name: "ySchema", typeName: "Y", origin: "alias", recursive: false }])
+    expect(schemas).toEqual([
+      { name: "ySchema", typeName: "Y", origin: "alias", recursive: false, capability: tskmCap() },
+    ])
   })
 
   it('discovers the import("@tskm/core").InferOutput<...> qualified form', () => {
@@ -141,7 +159,9 @@ describe("discoverSchemas — Infer alias markers", () => {
       export type Z = import("@tskm/core").InferOutput<typeof zSchema>
     `
     const { schemas } = discoverSchemas("a.ts", src)
-    expect(schemas).toEqual([{ name: "zSchema", typeName: "Z", origin: "alias", recursive: false }])
+    expect(schemas).toEqual([
+      { name: "zSchema", typeName: "Z", origin: "alias", recursive: false, capability: tskmCap() },
+    ])
   })
 
   it('discovers the import("@tskm/core").Infer<...> qualified form', () => {
@@ -150,7 +170,9 @@ describe("discoverSchemas — Infer alias markers", () => {
       export type W = import("@tskm/core").Infer<typeof wSchema>
     `
     const { schemas } = discoverSchemas("a.ts", src)
-    expect(schemas).toEqual([{ name: "wSchema", typeName: "W", origin: "alias", recursive: false }])
+    expect(schemas).toEqual([
+      { name: "wSchema", typeName: "W", origin: "alias", recursive: false, capability: tskmCap() },
+    ])
   })
 
   it("ignores an import-type qualifier from a non-tskm module", () => {
@@ -225,6 +247,7 @@ describe("discoverSchemas — multiple schemas & dedup", () => {
       typeName: "Hidden",
       origin: "alias",
       recursive: false,
+      capability: tskmCap(),
     })
   })
 
@@ -286,6 +309,7 @@ describe("discoverSchemas — recursive flag", () => {
       typeName: "Category",
       origin: "const",
       recursive: true,
+      capability: tskmCap(true),
     })
   })
 
@@ -328,7 +352,13 @@ describe("discoverSchemas — recursive flag", () => {
     `
     const { schemas } = discoverSchemas("a.ts", src)
     expect(schemas).toEqual([
-      { name: "categorySchema", typeName: "Category", origin: "alias", recursive: true },
+      {
+        name: "categorySchema",
+        typeName: "Category",
+        origin: "alias",
+        recursive: true,
+        capability: tskmCap(true),
+      },
     ])
   })
 
@@ -341,7 +371,13 @@ describe("discoverSchemas — recursive flag", () => {
     `
     const { schemas } = discoverSchemas("a.ts", src)
     expect(schemas).toEqual([
-      { name: "categorySchema", typeName: "Category", origin: "alias", recursive: true },
+      {
+        name: "categorySchema",
+        typeName: "Category",
+        origin: "alias",
+        recursive: true,
+        capability: tskmCap(true),
+      },
     ])
   })
 
@@ -354,5 +390,294 @@ describe("discoverSchemas — recursive flag", () => {
     `
     const { schemas } = discoverSchemas("a.ts", src)
     expect(find(schemas, "userSchema")?.recursive).toBe(false)
+  })
+})
+
+describe("discoverSchemas — capability invariant", () => {
+  // The load-bearing routing contract: `recursive` and `capability.typeResolver`
+  // must never drift apart, across const/alias origins and both flag values.
+  it("keeps recursive ⟺ typeResolver === core-recursive on every discovered schema", () => {
+    const src = `
+      import { object, recursive, string } from "@tskm/core"
+      import type { Infer } from "@tskm/core"
+      export const categorySchema = recursive((self) => object({}))
+      export const userSchema = object({ name: string() })
+      const hiddenSchema = recursive((self) => object({}))
+      export type Hidden = Infer<typeof hiddenSchema>
+      const plainSchema = string()
+      export type Plain = Infer<typeof plainSchema>
+    `
+    const { schemas } = discoverSchemas("a.ts", src)
+    expect(schemas.length).toBeGreaterThan(0)
+    for (const s of schemas) {
+      expect(s.recursive).toBe(s.capability.typeResolver === "core-recursive")
+      expect(s.capability.tier1Supported).toBe(s.recursive)
+    }
+  })
+})
+
+const EXTERNAL_SOURCES = ["@tskm/core", "zod", "valibot", "arktype"]
+const opts = { schemaSources: EXTERNAL_SOURCES }
+
+/** Expected capability of an external Standard Schema candidate. */
+const candidateCap = (vendorHint: string) =>
+  ({
+    sourceKind: "standard",
+    vendorHint,
+    confidence: "candidate",
+    typeResolver: "standard-checker",
+    tier1Supported: false,
+    inplaceSupported: false,
+  }) as const
+
+describe("discoverSchemas — external schema sources (hybrid candidates)", () => {
+  it("discovers a valibot namespace call (import * as v) as a candidate", () => {
+    const src = `
+      import * as v from "valibot"
+      export const userSchema = v.object({ name: v.string() })
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "userSchema")).toEqual({
+      name: "userSchema",
+      typeName: "User",
+      origin: "const",
+      recursive: false,
+      capability: candidateCap("valibot"),
+    })
+  })
+
+  it("discovers a zod named-import member call (import { z }) as a candidate", () => {
+    const src = `
+      import { z } from "zod"
+      export const userSchema = z.object({ name: z.string() })
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "userSchema")?.capability).toEqual(candidateCap("zod"))
+  })
+
+  it("discovers a chained builder call (z.string().brand()) through the root identifier", () => {
+    const src = `
+      import { z } from "zod"
+      export const idSchema = z.string().brand()
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "idSchema")?.capability.vendorHint).toBe("zod")
+  })
+
+  it("discovers an arktype identifier call (import { type }) as a candidate", () => {
+    const src = `
+      import { type } from "arktype"
+      export const user = type({ name: "string" })
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "user")?.capability).toEqual(candidateCap("arktype"))
+  })
+
+  it("matches a subpath import (zod/v4) to its source and normalizes the vendor hint", () => {
+    const src = `
+      import { z } from "zod/v4"
+      export const userSchema = z.object({})
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "userSchema")?.capability.vendorHint).toBe("zod")
+  })
+
+  it("normalizes an explicit subpath SOURCE entry (schemaSources: [zod/v4]) to its vendor root", () => {
+    // The matched source string is "zod/v4", but the vendor identity — what
+    // brand-import gating and the JSON Schema allow-list compare against — is
+    // the package root "zod".
+    const src = `
+      import { z } from "zod/v4"
+      export const userSchema = z.object({})
+    `
+    const { schemas } = discoverSchemas("a.ts", src, {
+      schemaSources: ["@tskm/core", "zod/v4"],
+    })
+    expect(find(schemas, "userSchema")?.capability.vendorHint).toBe("zod")
+  })
+
+  it("discovers a default-import call as a candidate", () => {
+    const src = `
+      import v from "valibot"
+      export const xSchema = v.object({})
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "xSchema")?.capability.vendorHint).toBe("valibot")
+  })
+
+  it("ignores calls from modules outside schemaSources", () => {
+    const src = `
+      import * as yup from "yup"
+      export const ySchema = yup.object({})
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(schemas).toHaveLength(0)
+  })
+
+  it("ignores packages whose name merely starts with a source (zod-extra)", () => {
+    const src = `
+      import { z } from "zod-extra"
+      export const zSchema = z.object({})
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(schemas).toHaveLength(0)
+  })
+
+  it("never marks an external `recursive` import as core-recursive", () => {
+    const src = `
+      import { recursive } from "zod"
+      export const xSchema = recursive(() => 1)
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    const found = find(schemas, "xSchema")
+    expect(found?.recursive).toBe(false)
+    expect(found?.capability.typeResolver).toBe("standard-checker")
+  })
+
+  it("defaults to tskm-only discovery when no schemaSources are passed", () => {
+    const src = `
+      import { z } from "zod"
+      export const userSchema = z.object({})
+    `
+    const { schemas } = discoverSchemas("a.ts", src)
+    expect(schemas).toHaveLength(0)
+  })
+
+  it("still ignores a tskm member-expression call (member path is external-only)", () => {
+    const src = `
+      import { v } from "@tskm/core"
+      export const x = v.object({ a: 1 })
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(schemas).toHaveLength(0)
+  })
+
+  it("inherits the external capability onto an Infer alias (both declaration orders)", () => {
+    const after = `
+      import { z } from "zod"
+      const catSchema = z.object({})
+      export type Cat = Infer<typeof catSchema>
+    `
+    const before = `
+      import { z } from "zod"
+      export type Cat = Infer<typeof catSchema>
+      const catSchema = z.object({})
+    `
+    for (const src of [after, before]) {
+      const { schemas } = discoverSchemas("a.ts", src, opts)
+      expect(schemas).toEqual([
+        {
+          name: "catSchema",
+          typeName: "Cat",
+          origin: "alias",
+          recursive: false,
+          capability: candidateCap("zod"),
+        },
+      ])
+    }
+  })
+})
+
+describe("discoverSchemas — recursive self-annotation capture", () => {
+  it("captures an exported zod self-annotation type (z.ZodType<CatT>)", () => {
+    const src = `
+      import { z } from "zod"
+      export type CatT = { name: string; kitten?: CatT }
+      export const catSchema: z.ZodType<CatT> = z.lazy(() => z.object({}))
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "catSchema")?.recursiveAnnotation).toEqual({
+      name: "CatT",
+      exported: true,
+    })
+  })
+
+  it("captures a LOCAL (non-exported) annotation type as exported: false", () => {
+    const src = `
+      import { z } from "zod"
+      type CatT = { name: string }
+      export const catSchema: z.ZodType<CatT> = z.lazy(() => z.object({}))
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "catSchema")?.recursiveAnnotation).toEqual({
+      name: "CatT",
+      exported: false,
+    })
+  })
+
+  it("captures a valibot GenericSchema annotation (plain identifier reference)", () => {
+    const src = `
+      import * as v from "valibot"
+      export interface VNode { value: number; children: VNode[] }
+      export const nodeSchema: v.GenericSchema<VNode> = v.object({})
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "nodeSchema")?.recursiveAnnotation).toEqual({
+      name: "VNode",
+      exported: true,
+    })
+  })
+
+  it("treats a re-exported local type (export { CatT }) as exported", () => {
+    const src = `
+      import { z } from "zod"
+      type CatT = { name: string }
+      export { type CatT }
+      export const catSchema: z.ZodType<CatT> = z.lazy(() => z.object({}))
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "catSchema")?.recursiveAnnotation?.exported).toBe(true)
+  })
+
+  it("records the importable name of an ALIASED re-export (export { CatT as PublicCat })", () => {
+    // `CatT` is what the rendered type references, but importers only see
+    // `PublicCat` — emit must rebind (`import type { PublicCat as CatT }`).
+    const src = `
+      import { z } from "zod"
+      type CatT = { name: string }
+      export { type CatT as PublicCat }
+      export const catSchema: z.ZodType<CatT> = z.lazy(() => z.object({}))
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "catSchema")?.recursiveAnnotation).toEqual({
+      name: "CatT",
+      exported: true,
+      exportedAs: "PublicCat",
+    })
+  })
+
+  it("prefers the identity export when a type is exported both plainly and aliased", () => {
+    const src = `
+      import { z } from "zod"
+      type CatT = { name: string }
+      export { type CatT as PublicCat, type CatT }
+      export const catSchema: z.ZodType<CatT> = z.lazy(() => z.object({}))
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "catSchema")?.recursiveAnnotation).toEqual({
+      name: "CatT",
+      exported: true,
+    })
+  })
+
+  it("leaves recursiveAnnotation undefined for unannotated consts", () => {
+    const src = `
+      import { z } from "zod"
+      export const plainSchema = z.object({})
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    expect(find(schemas, "plainSchema")?.recursiveAnnotation).toBeUndefined()
+  })
+
+  it("inherits the annotation onto an Infer alias of the annotated const", () => {
+    const src = `
+      import { z } from "zod"
+      type CatT = { name: string }
+      const catSchema: z.ZodType<CatT> = z.lazy(() => z.object({}))
+      export type Cat = Infer<typeof catSchema>
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    const alias = schemas.find((s) => s.origin === "alias")
+    expect(alias?.recursiveAnnotation).toEqual({ name: "CatT", exported: false })
   })
 })

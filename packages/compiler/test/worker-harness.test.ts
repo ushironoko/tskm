@@ -3,7 +3,14 @@ import { spawnSync } from "node:child_process"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { buildExportNames, runSchemaWorker, runWorker } from "../src/worker-harness.ts"
+import {
+  buildExportNames,
+  isExtractableSchema,
+  isTskmWalkable,
+  readStandard,
+  runSchemaWorker,
+  runWorker,
+} from "../src/worker-harness.ts"
 
 // Resolve a real `bun` on PATH the same way the integration tests do: the runWorker
 // failure cases spawn throwaway worker scripts, so they need a TS-capable runtime as
@@ -220,5 +227,64 @@ describe("runSchemaWorker — guard branches (in-process)", () => {
     }
     const parsed = JSON.parse(readFileSync(envelope, "utf8")) as { error?: string }
     expect(parsed.error).toContain("boom-import")
+  })
+})
+
+describe("readStandard / isExtractableSchema / isTskmWalkable — two-stage detection", () => {
+  const std = (vendor: string) => ({
+    "~standard": { version: 1, vendor, validate: () => ({ value: 1 }) },
+  })
+  // tskm follows the valibot architecture, so BOTH carry kind:"schema" — only the
+  // ~standard vendor can tell them apart. That is exactly why extraction and
+  // walkability must be separate predicates.
+  const tskmLike = { kind: "schema", ...std("tskm") }
+  const legacyTskmLike = { kind: "schema" }
+  const valibotLike = { kind: "schema", ...std("valibot") }
+  const zodLike = std("zod")
+  const arktypeLike = std("arktype")
+
+  it("readStandard reads vendor/version from a conforming object", () => {
+    expect(readStandard(zodLike)).toEqual({ vendor: "zod", version: 1 })
+    expect(readStandard(tskmLike)).toEqual({ vendor: "tskm", version: 1 })
+  })
+
+  it("readStandard rejects null, primitives, and malformed markers", () => {
+    expect(readStandard(null)).toBeUndefined()
+    expect(readStandard(42)).toBeUndefined()
+    expect(readStandard({})).toBeUndefined()
+    expect(readStandard({ "~standard": {} })).toBeUndefined()
+    expect(readStandard({ "~standard": { version: "1", vendor: "zod" } })).toBeUndefined()
+    expect(readStandard({ "~standard": { version: 1, vendor: 7 } })).toBeUndefined()
+  })
+
+  it("isExtractableSchema accepts every Standard Schema vendor plus legacy tskm", () => {
+    expect(isExtractableSchema(zodLike)).toBe(true)
+    expect(isExtractableSchema(valibotLike)).toBe(true)
+    expect(isExtractableSchema(arktypeLike)).toBe(true)
+    expect(isExtractableSchema(tskmLike)).toBe(true)
+    expect(isExtractableSchema(legacyTskmLike)).toBe(true)
+  })
+
+  it("isExtractableSchema rejects non-schemas", () => {
+    expect(isExtractableSchema({ kind: "config" })).toBe(false)
+    expect(isExtractableSchema({})).toBe(false)
+    expect(isExtractableSchema(null)).toBe(false)
+    expect(isExtractableSchema(42)).toBe(false)
+  })
+
+  it("isTskmWalkable REJECTS a valibot schema despite its kind:'schema'", () => {
+    // The accident this prevents: valibot objects satisfy the legacy kind check, so
+    // without the vendor gate the tskm structural/JSON walkers would walk them.
+    expect(isTskmWalkable(valibotLike)).toBe(false)
+  })
+
+  it("isTskmWalkable rejects other external vendors", () => {
+    expect(isTskmWalkable(zodLike)).toBe(false)
+    expect(isTskmWalkable(arktypeLike)).toBe(false)
+  })
+
+  it("isTskmWalkable accepts tskm schemas (with and without ~standard)", () => {
+    expect(isTskmWalkable(tskmLike)).toBe(true)
+    expect(isTskmWalkable(legacyTskmLike)).toBe(true)
   })
 })

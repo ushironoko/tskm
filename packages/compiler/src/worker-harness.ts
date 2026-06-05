@@ -109,11 +109,67 @@ export function resolveWorker(baseName: string): string {
   return existsSync(mjsEntry) ? mjsEntry : tsEntry
 }
 
+/** The `~standard` marker of a Standard Schema value (spec-mandated fields only). */
+export interface StandardMarker {
+  readonly vendor: string
+  readonly version: number
+}
+
+/**
+ * The single `~standard` duck-type reader (never `instanceof`): extraction,
+ * walkability, and the JSON Schema adapter's vendor dispatch all read the marker
+ * through here, so a vendor can never be classified two different ways. The
+ * version/vendor type checks keep a property that merely happens to be named
+ * `~standard` from passing.
+ */
+export function readStandard(value: unknown): StandardMarker | undefined {
+  // Functions count: arktype's `type({...})` returns a CALLABLE carrying its
+  // `~standard` marker on the function object.
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+    return undefined
+  }
+  const std = (value as Record<string, unknown>)["~standard"]
+  if (std === null || typeof std !== "object") {
+    return undefined
+  }
+  const { vendor, version } = std as { vendor?: unknown; version?: unknown }
+  if (typeof vendor !== "string" || typeof version !== "number") {
+    return undefined
+  }
+  return { vendor, version }
+}
+
 /** A duck-typed view of a runtime tskm schema object (never `instanceof`). */
-function isSchema(value: unknown): value is { readonly kind: "schema" } {
+function isTskmKind(value: unknown): value is { readonly kind: "schema" } {
   return (
     value !== null && typeof value === "object" && (value as { kind?: unknown }).kind === "schema"
   )
+}
+
+/**
+ * EXTRACTION predicate: is this export worth handing to a vendor dispatcher?
+ * Accepts any Standard Schema (zod/valibot/arktype/tskm/…) plus the legacy
+ * `kind === "schema"` tskm form. Deliberately broader than {@link isTskmWalkable}:
+ * extraction feeds the adapter, which routes per vendor — walking is a separate
+ * decision.
+ */
+export function isExtractableSchema(value: unknown): value is object {
+  return readStandard(value) !== undefined || isTskmKind(value)
+}
+
+/**
+ * WALKABILITY predicate: may the tskm structural/JSON walkers read this object's
+ * internal fields? Strictly tskm. The trap this guards: valibot schemas ALSO
+ * carry `kind: "schema"` (tskm follows the valibot architecture), so the legacy
+ * kind check alone would send external library internals into walkers that only
+ * understand tskm's conventions — the `~standard.vendor` is the tiebreaker.
+ */
+export function isTskmWalkable(value: unknown): value is { readonly kind: "schema" } {
+  const std = readStandard(value)
+  if (std) {
+    return std.vendor === "tskm" && isTskmKind(value)
+  }
+  return isTskmKind(value)
 }
 
 /**
@@ -129,7 +185,7 @@ export function buildExportNames(
 ): ReadonlyMap<object, string> {
   const map = new Map<object, string>()
   for (const [name, value] of Object.entries(mod)) {
-    if (isSchema(value) && !map.has(value)) {
+    if (isExtractableSchema(value) && !map.has(value)) {
       map.set(value, rename(name))
     }
   }
@@ -153,7 +209,9 @@ export function buildTargetIdentityMap(
   const map = new Map<object, string>()
   for (const [exportName, typeName] of pairs) {
     const value = mod[exportName]
-    if (isSchema(value) && !map.has(value)) {
+    // Walkability, not just extraction: this map names the walkers' back-edges,
+    // so an external (non-walkable) schema must never enter it.
+    if (isTskmWalkable(value) && !map.has(value)) {
       map.set(value, typeName)
     }
   }
@@ -173,7 +231,11 @@ function emit(outFile: string, payload: unknown): void {
  * workers cannot drift apart.
  */
 export async function runSchemaWorker<TEntry>(
-  extract: (name: string, value: unknown, mod: Record<string, unknown>) => TEntry,
+  extract: (
+    name: string,
+    value: unknown,
+    mod: Record<string, unknown>,
+  ) => TEntry | null | Promise<TEntry | null>,
 ): Promise<void> {
   const outFile = process.argv[3]
   try {
@@ -192,10 +254,16 @@ export async function runSchemaWorker<TEntry>(
     const mod = (await import(pathToFileURL(sourceAbs).href)) as Record<string, unknown>
     const schemas: TEntry[] = []
     for (const [name, value] of Object.entries(mod)) {
-      if (!isSchema(value)) {
+      if (!isExtractableSchema(value)) {
         continue
       }
-      schemas.push(extract(name, value, mod))
+      // Awaited per entry: an async extract (the JSON Schema adapter dynamically
+      // imports vendor converters) must never serialize a pending Promise as `{}`.
+      const entry = await extract(name, value, mod)
+      // null = the extractor excluded this export (e.g. vendor not allowed).
+      if (entry !== null) {
+        schemas.push(entry)
+      }
     }
     emit(outFile, { schemas })
   } catch (err) {

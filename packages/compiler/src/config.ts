@@ -12,6 +12,12 @@ export interface TskmJsonSchemaOptions {
    * `<base>.schema.json`.
    */
   readonly outDir?: string
+  /**
+   * Which side of the schema to render: `output` (default, the post-transform
+   * type, matching the type generator's `InferOutput` semantics) or `input`.
+   * Honored where the delegated converter supports it (zod); ignored otherwise.
+   */
+  readonly io?: "input" | "output"
 }
 
 /** Options for `tskm watch`. */
@@ -51,10 +57,19 @@ export interface TskmConfig {
   readonly watch?: TskmWatchOptions
   /** Isolated schema-worker options (recursive structural types). */
   readonly worker?: TskmWorkerOptions
+  /**
+   * Module names whose exports are treated as Standard Schema sources: values
+   * built from these imports become discovery candidates, confirmed by the
+   * checker (`~standard` conditional probe). `@tskm/core` is always included
+   * implicitly; an empty array means tskm schemas only (external opt-out).
+   * A source also matches its subpaths (`zod` covers `zod/v4`, `zod/mini`).
+   */
+  readonly schemaSources?: ReadonlyArray<string>
 }
 
 export interface ResolvedJsonSchemaOptions {
   readonly outDir: string | undefined
+  readonly io: "input" | "output"
 }
 
 export interface ResolvedWatchOptions {
@@ -74,6 +89,8 @@ export interface ResolvedTskmConfig {
   readonly jsonSchema: ResolvedJsonSchemaOptions
   readonly watch: ResolvedWatchOptions
   readonly worker: ResolvedWorkerOptions
+  /** Schema source modules, `@tskm/core` always first (see {@link TskmConfig}). */
+  readonly schemaSources: ReadonlyArray<string>
   /** The directory the config was resolved against (the checker cwd). */
   readonly root: string
 }
@@ -81,6 +98,42 @@ export interface ResolvedTskmConfig {
 const DEFAULT_INCLUDE = ["src/**/*.ts"] as const
 const DEFAULT_DEBOUNCE_MS = 50
 const DEFAULT_WORKER_TIMEOUT_MS = 5000
+
+/** The runtime package that is always an implicit (and non-removable) schema source. */
+export const RUNTIME_SCHEMA_SOURCE = "@tskm/core"
+const DEFAULT_SCHEMA_SOURCES = ["zod", "valibot", "arktype"] as const
+
+/**
+ * True when `module` (an import specifier) belongs to schema source `source`:
+ * an exact match or a subpath of it (`zod` matches `zod/v4`, not `zod-extra`).
+ */
+export function matchesSchemaSource(module: string, source: string): boolean {
+  return module === source || module.startsWith(`${source}/`)
+}
+
+/**
+ * The Standard Schema vendor identity of a configured source: its package
+ * root (`zod/v4` -> `zod`, `@scope/name/sub` -> `@scope/name`). The root —
+ * never the verbatim source string — is what runtime vendor checks compare
+ * against: zod/valibot/arktype all publish `~standard.vendor` strings equal
+ * to their package root.
+ */
+export function vendorName(source: string): string {
+  const parts = source.split("/")
+  return parts.slice(0, source.startsWith("@") ? 2 : 1).join("/")
+}
+
+/**
+ * The JSON Schema vendor allow-list a resolved `schemaSources` implies: each
+ * source maps to its vendor root via {@link vendorName} (deduped — `zod` and
+ * `zod/v4` are one vendor); `@tskm/core` maps to "tskm".
+ */
+export function vendorAllowList(schemaSources: ReadonlyArray<string>): ReadonlyArray<string> {
+  return [
+    "tskm",
+    ...new Set(schemaSources.filter((s) => s !== RUNTIME_SCHEMA_SOURCE).map(vendorName)),
+  ]
+}
 
 /** Identity helper for authoring `tskm.config.ts` with full type inference. */
 export function defineConfig(config: TskmConfig): TskmConfig {
@@ -102,12 +155,18 @@ export function resolveConfig(config: TskmConfig, root: string): ResolvedTskmCon
     include: config.include ?? DEFAULT_INCLUDE,
     tsconfig,
     executable: config.executable,
-    jsonSchema: { outDir: config.jsonSchema?.outDir },
+    jsonSchema: { outDir: config.jsonSchema?.outDir, io: config.jsonSchema?.io ?? "output" },
     watch: { debounceMs: config.watch?.debounceMs ?? DEFAULT_DEBOUNCE_MS },
     worker: {
       execPath: config.worker?.execPath,
       timeoutMs: config.worker?.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS,
     },
+    schemaSources: [
+      RUNTIME_SCHEMA_SOURCE,
+      ...new Set(
+        (config.schemaSources ?? DEFAULT_SCHEMA_SOURCES).filter((s) => s !== RUNTIME_SCHEMA_SOURCE),
+      ),
+    ],
     root: absRoot,
   }
 }

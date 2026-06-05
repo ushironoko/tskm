@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import type { DiscoveredSchema } from "../src/discovery.ts"
+import { type DiscoveredSchema, tskmCapability } from "../src/discovery.ts"
 import { resolveRecursiveSchemas } from "../src/structural-resolve.ts"
 
 // Parent-side driver tests over the REAL worker subprocess (resolveWorker picks
@@ -63,6 +63,7 @@ const target = (
 ): DiscoveredSchema => ({
   origin: "const",
   recursive: true,
+  capability: tskmCapability(true),
   ...over,
 })
 

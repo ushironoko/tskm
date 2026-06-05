@@ -1,16 +1,24 @@
 import { globSync, readFileSync } from "node:fs"
-import { isAbsolute, resolve } from "node:path"
+import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path"
 import type { ResolvedTskmConfig, TskmMode } from "./config.ts"
 import type { DiscoveredSchema } from "./discovery.ts"
 import { discoverSchemas } from "./discovery.ts"
-import { emitSidecar } from "./emit.ts"
+import { emitSidecar, renderSidecar } from "./emit.ts"
 import { collectInplaceTargets, emitInplace } from "./inplace.ts"
 import { type PruneCandidate, pruneDanglingAliases } from "./prune.ts"
+import { sourceImportSpecifier, withQueryFile } from "./query-core.ts"
 import type { ResolvedSchema } from "./resolve.ts"
 import { resolveSchemas } from "./resolve.ts"
 import { resolveRecursiveSchemas } from "./structural-resolve.ts"
 import { createTsgoClient, type TsgoClient } from "./tsgo-client.ts"
 import { applyTier1 } from "./verify-splice.ts"
+
+/** The compile-gate probe file: a sibling with the excluded `.tskm-query.ts` suffix. */
+function verifyFilePath(sourceFileAbs: string): string {
+  const dir = dirname(sourceFileAbs)
+  const base = basename(sourceFileAbs, extname(sourceFileAbs))
+  return join(dir, `${base}.verify.tskm-query.ts`)
+}
 
 /** Version stamp folded into inplace content hashes (invalidates on generator change). */
 export const GENERATOR_VERSION = "tskm-compiler@0.0.0"
@@ -52,23 +60,25 @@ function isGeneratedArtifact(absPath: string): boolean {
 }
 
 export interface TargetSplit {
-  /** Non-recursive targets: resolved statically by the tsgo `InferOutput` query. */
+  /** Checker-route targets: resolved statically by the tsgo `~standard` query. */
   readonly checkerTargets: ReadonlyArray<DiscoveredSchema>
-  /** Recursive targets: resolved by the structural worker (the only eval path). */
+  /** tskm-recursive targets: resolved by the structural worker (the only eval path). */
   readonly structuralTargets: ReadonlyArray<DiscoveredSchema>
 }
 
 /**
- * Pure routing between the two resolution paths. Recursive schemas must not reach
- * the plain checker query (their self positions collapse and `FAILURE_TYPE_FLAGS`
- * would mask the cause); everything else stays on the static path. An empty
+ * Pure routing between the two resolution paths, keyed on the capability's
+ * `typeResolver` (not the raw `recursive` bit): tskm `recursive(...)` schemas must
+ * not reach the plain checker query (their self positions collapse and
+ * `FAILURE_TYPE_FLAGS` would mask the cause), and only they may enter the
+ * structural worker — external schemas never do, whatever their shape. An empty
  * `structuralTargets` guarantees the structural worker is never spawned for the
  * file — the zero-cost property for non-recursive projects.
  */
 export function splitTargets(targets: ReadonlyArray<DiscoveredSchema>): TargetSplit {
   return {
-    checkerTargets: targets.filter((t) => !t.recursive),
-    structuralTargets: targets.filter((t) => t.recursive),
+    checkerTargets: targets.filter((t) => t.capability.typeResolver === "standard-checker"),
+    structuralTargets: targets.filter((t) => t.capability.typeResolver === "core-recursive"),
   }
 }
 
@@ -106,7 +116,9 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
 
   const generateFile: TskmSession["generateFile"] = (sourceAbs, pretty = true) => {
     const sourceText = readFileSync(sourceAbs, "utf8")
-    const discovery = discoverSchemas(sourceAbs, sourceText)
+    const discovery = discoverSchemas(sourceAbs, sourceText, {
+      schemaSources: config.schemaSources,
+    })
 
     // In inplace mode only explicit `Infer` aliases (and existing sentinels) are
     // targets; auto-discovered `const` schemas have no marker to rewrite.
@@ -115,12 +127,30 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     if (config.mode === "inplace") {
       const aliases = discovery.schemas.filter((s) => s.origin === "alias")
       const collected = collectInplaceTargets(sourceText, aliases)
-      // Sentinel-region targets carry only names; re-attach recursiveness from the
+      // Sentinel-region targets carry only names; re-attach the capability from the
       // file's full discovery so a recursive region routes to the structural path.
-      const recursiveByName = new Map(discovery.schemas.map((s) => [s.name, s.recursive]))
-      targets = collected.targets.map((t) =>
-        t.recursive ? t : { ...t, recursive: recursiveByName.get(t.name) ?? false },
-      )
+      const capabilityByName = new Map(discovery.schemas.map((s) => [s.name, s.capability]))
+      targets = collected.targets.map((t) => {
+        if (t.recursive) {
+          return t
+        }
+        const capability = capabilityByName.get(t.name)
+        if (!capability) {
+          return t
+        }
+        return { ...t, recursive: capability.typeResolver === "core-recursive", capability }
+      })
+      // External schemas have no inplace contract (their markers are vendor
+      // idioms, not tskm's `Infer`): say so EXPLICITLY — silent staleness in a
+      // mixed file would read as "up to date".
+      const unsupported = targets.filter((t) => !t.capability.inplaceSupported)
+      for (const t of unsupported) {
+        const vendor = t.capability.vendorHint ? ` (${t.capability.vendorHint})` : ""
+        extraDiagnostics.push(
+          `tskm: inplace mode supports only tskm schemas; "${t.name}" is an external Standard Schema${vendor}; skipped. Use sidecar mode for external schemas.`,
+        )
+      }
+      targets = targets.filter((t) => t.capability.inplaceSupported)
       extraDiagnostics.push(...collected.diagnostics)
     }
 
@@ -207,10 +237,19 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     // declared sibling alias that did not make it into the emitted set.
     const declared = new Set(targets.map((t) => t.typeName))
     const pruned = pruneDanglingAliases(candidates, declared)
-    const resolved: ResolvedSchema[] = pruned.kept.map((c) => ({
-      typeName: c.typeName,
-      typeString: c.body,
-    }))
+    // Re-attach per-target metadata (vendor, annotation) lost through the
+    // body-string merge — emit derives its import lines from it.
+    const targetByTypeName = new Map(targets.map((t) => [t.typeName, t]))
+    const resolved: ResolvedSchema[] = pruned.kept.map((c) => {
+      const target = targetByTypeName.get(c.typeName)
+      return {
+        typeName: c.typeName,
+        typeString: c.body,
+        sourceName: target?.name,
+        vendorHint: target?.capability.vendorHint,
+        ...(target?.recursiveAnnotation ? { recursiveAnnotation: target.recursiveAnnotation } : {}),
+      }
+    })
     const skeletonWarnings: string[] = []
     for (const c of pruned.kept) {
       skeletonWarnings.push(...(structuralWarnings.get(c.typeName) ?? []))
@@ -243,6 +282,53 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
           changed: emitted.changed,
         },
         diagnostics: [...allDiagnostics, ...emitted.diagnostics],
+      }
+    }
+
+    // POST-RESOLUTION COMPILE GATE (external schemas only — tskm-only files skip
+    // it, keeping their zero-cost path): "the type resolved" and "the sidecar
+    // compiles" are separate guarantees. Leaked vendor internals or annotation
+    // types the import slot cannot satisfy fail HERE, before anything is
+    // written. Verify-then-write (not write-then-rollback): rewriting the
+    // sidecar on failure would look like a foreign change to watch's self-write
+    // tracking and risk a rebuild loop; a `.tskm-query.ts` sibling is excluded
+    // from watch and always cleaned up by withQueryFile.
+    const needsVerify = resolved.some(
+      (r) => r.vendorHint !== undefined || r.recursiveAnnotation !== undefined,
+    )
+    if (needsVerify) {
+      const content = renderSidecar(resolved, {
+        pretty,
+        sourceImportPath: sourceImportSpecifier(sourceAbs),
+      })
+      const verifyFile = verifyFilePath(sourceAbs)
+      const verifyDiags = withQueryFile(client, verifyFile, content, () =>
+        client.getDiagnostics(verifyFile),
+      )
+      if (verifyDiags.length > 0) {
+        const codes = [...new Set(verifyDiags.map((d) => `TS${d.code}`))].join(", ")
+        // Name the unresolvable identifiers (from the checker's message text) so
+        // the user learns WHAT leaked, not just that something did.
+        const missing = [
+          ...new Set(
+            verifyDiags.flatMap((d) => {
+              const match = d.text ? /Cannot find name '([^']+)'/.exec(d.text) : null
+              return match?.[1] ? [match[1]] : []
+            }),
+          ),
+        ]
+        const namesPart = missing.length > 0 ? `; unresolved name(s): ${missing.join(", ")}` : ""
+        const leakHint =
+          missing.length > 0 && resolved.some((r) => r.vendorHint !== undefined)
+            ? ' The rendered type references names the generated file cannot import — a non-exported local type, or a library-internal marker without a built-in import mapping (zod "$brand" and valibot "Brand" are mapped).'
+            : ""
+        return {
+          file: null,
+          diagnostics: [
+            ...allDiagnostics,
+            `tskm: the generated types for ${sourceAbs} do not compile (${codes}${namesPart}); nothing written.${leakHint} Existing output left untouched.`,
+          ],
+        }
       }
     }
 
