@@ -193,7 +193,7 @@ What you should know:
 - **Other libraries are opt-in, not auto-detected**: only the configured `schemaSources` are scanned, so a Standard Schema library outside the default three produces nothing until you add its package to `schemaSources` — the pipeline itself is vendor-generic (the type query, recursion annotations, the compile gate and spec-1.1 JSON Schema converters all work unchanged for a never-seen vendor).
 - **Vendor identity is the package root**: tskm derives each source's vendor name from its package root (`zod/v4` → `zod`) and matches it against the runtime `~standard` vendor string for JSON Schema allow-listing and brand-marker imports — true for zod/valibot/arktype. A library whose vendor string differs from its package root is reported per file as not-allow-listed (never silently dropped) but cannot currently be enabled for JSON Schema delegation.
 
-See [`examples/standard-schema`](examples/standard-schema) for the end-to-end zod loop (transform, brand, recursion).
+See [`examples/standard-schema`](examples/standard-schema) for the end-to-end loop over all three vendors (transforms, brands, annotated recursion, an arktype morph).
 
 ## Limitations
 
@@ -212,7 +212,7 @@ See [`examples/standard-schema`](examples/standard-schema) for the end-to-end zo
 
 - [`examples/basic`](examples/basic) — the smallest end-to-end loop: schema → generated type → validate.
 - [`examples/advanced`](examples/advanced) — discriminated unions, a recursive JSON schema materialized by `recursive()`, and the explicit `export type T = Infer<typeof schema>` marker.
-- [`examples/standard-schema`](examples/standard-schema) — a **zod** schema compiled by tskm: transform output, branded ids, annotated recursion (works the same for valibot/arktype).
+- [`examples/standard-schema`](examples/standard-schema) — **zod, valibot and arktype** schemas compiled by one tskm pipeline: transform/morph output types, branded ids (`$brand`/`Brand` imports), annotated recursion.
 
 ## Development
 
