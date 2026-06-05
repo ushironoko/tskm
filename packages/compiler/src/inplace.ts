@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { writeFileSync } from "node:fs"
-import type { DiscoveredSchema } from "./discovery.ts"
+import { type DiscoveredSchema, tskmCapability } from "./discovery.ts"
 import { reindentType } from "./emit.ts"
 import type { ResolvedSchema } from "./resolve.ts"
 
@@ -223,13 +223,15 @@ export function collectInplaceTargets(
     }
     seen.add(region.typeName)
     // A sentinel region carries only names, not the schema's shape, so `recursive`
-    // starts false here; the session upgrades it from the file's full discovery
-    // before partitioning targets between the checker and structural paths.
+    // (and the capability) starts as a non-recursive tskm placeholder; the session
+    // upgrades it from the file's full discovery before partitioning targets
+    // between the checker and structural paths.
     targets.push({
       name: region.schemaName,
       typeName: region.typeName,
       origin: "alias",
       recursive: false,
+      capability: tskmCapability(false),
     })
   }
 

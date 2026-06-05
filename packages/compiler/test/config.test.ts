@@ -4,7 +4,14 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { TskmConfig } from "../src/config.ts"
-import { defineConfig, loadConfig, resolveConfig } from "../src/config.ts"
+import {
+  defineConfig,
+  loadConfig,
+  matchesSchemaSource,
+  resolveConfig,
+  vendorAllowList,
+  vendorName,
+} from "../src/config.ts"
 
 // Absolute file URL of the real source, used so a temp config can import
 // `defineConfig` without depending on node_modules resolution from a tmp dir.
@@ -47,6 +54,76 @@ describe("defineConfig", () => {
   })
 })
 
+describe("matchesSchemaSource", () => {
+  it("matches an exact module name", () => {
+    expect(matchesSchemaSource("zod", "zod")).toBe(true)
+    expect(matchesSchemaSource("@tskm/core", "@tskm/core")).toBe(true)
+  })
+
+  it("matches a subpath import of the source", () => {
+    expect(matchesSchemaSource("zod/v4", "zod")).toBe(true)
+    expect(matchesSchemaSource("zod/mini", "zod")).toBe(true)
+    expect(matchesSchemaSource("@valibot/to-json-schema/extra", "@valibot/to-json-schema")).toBe(
+      true,
+    )
+  })
+
+  it("does not match a package whose name merely starts with the source", () => {
+    expect(matchesSchemaSource("zod-extra", "zod")).toBe(false)
+    expect(matchesSchemaSource("zodiac", "zod")).toBe(false)
+  })
+
+  it("does not match an unrelated module", () => {
+    expect(matchesSchemaSource("valibot", "zod")).toBe(false)
+  })
+})
+
+describe("vendorName", () => {
+  it("returns a bare package name unchanged", () => {
+    expect(vendorName("zod")).toBe("zod")
+    expect(vendorName("arktype")).toBe("arktype")
+  })
+
+  it("strips a subpath to the package root", () => {
+    expect(vendorName("zod/v4")).toBe("zod")
+    expect(vendorName("zod/mini")).toBe("zod")
+  })
+
+  it("keeps the scope segment of a scoped package", () => {
+    expect(vendorName("@valibot/to-json-schema")).toBe("@valibot/to-json-schema")
+    expect(vendorName("@scope/name/sub/deep")).toBe("@scope/name")
+  })
+})
+
+describe("vendorAllowList", () => {
+  it("normalizes a subpath source to its vendor root", () => {
+    // An explicit `zod/v4` source must allow-list vendor `zod` — the runtime
+    // `~standard.vendor` string — or JSON Schema silently excludes the schema.
+    expect(vendorAllowList(["@tskm/core", "zod/v4"])).toEqual(["tskm", "zod"])
+  })
+
+  it("dedupes sources that share a vendor root", () => {
+    expect(vendorAllowList(["@tskm/core", "zod", "zod/v4"])).toEqual(["tskm", "zod"])
+  })
+})
+
+describe("resolveConfig — schemaSources", () => {
+  it("defaults to @tskm/core plus zod/valibot/arktype", () => {
+    const resolved = resolveConfig({}, "/proj")
+    expect(resolved.schemaSources).toEqual(["@tskm/core", "zod", "valibot", "arktype"])
+  })
+
+  it("always prepends @tskm/core to an explicit list and dedupes it", () => {
+    const resolved = resolveConfig({ schemaSources: ["zod", "@tskm/core", "zod"] }, "/proj")
+    expect(resolved.schemaSources).toEqual(["@tskm/core", "zod"])
+  })
+
+  it("treats an empty array as @tskm/core only (external opt-out)", () => {
+    const resolved = resolveConfig({ schemaSources: [] }, "/proj")
+    expect(resolved.schemaSources).toEqual(["@tskm/core"])
+  })
+})
+
 describe("resolveConfig — defaults", () => {
   it("applies every default for an empty config", () => {
     const resolved = resolveConfig({}, "/proj")
@@ -54,7 +131,7 @@ describe("resolveConfig — defaults", () => {
     expect(resolved.include).toEqual(["src/**/*.ts"])
     expect(resolved.tsconfig).toBe("/proj/tsconfig.json")
     expect(resolved.executable).toBeUndefined()
-    expect(resolved.jsonSchema).toEqual({ outDir: undefined })
+    expect(resolved.jsonSchema).toEqual({ outDir: undefined, io: "output" })
     expect(resolved.watch).toEqual({ debounceMs: 50 })
     expect(resolved.root).toBe("/proj")
   })
@@ -81,8 +158,13 @@ describe("resolveConfig — overrides", () => {
     expect(resolved.mode).toBe("inplace")
     expect(resolved.include).toEqual(["a/**/*.ts", "b/**/*.ts"])
     expect(resolved.executable).toBe("/usr/bin/tsgo")
-    expect(resolved.jsonSchema).toEqual({ outDir: "schemas" })
+    expect(resolved.jsonSchema).toEqual({ outDir: "schemas", io: "output" })
     expect(resolved.watch).toEqual({ debounceMs: 250 })
+  })
+
+  it("honors an explicit jsonSchema io of input", () => {
+    const resolved = resolveConfig({ jsonSchema: { io: "input" } }, "/proj")
+    expect(resolved.jsonSchema.io).toBe("input")
   })
 
   it("joins a relative tsconfig against the resolved root", () => {
@@ -141,7 +223,7 @@ describe("loadConfig — tskm.config.ts via default export", () => {
     expect(resolved.mode).toBe("inplace")
     expect(resolved.include).toEqual(["app/**/*.ts"])
     expect(resolved.tsconfig).toBe(join(resolve(dir), "tsconfig.app.json"))
-    expect(resolved.jsonSchema).toEqual({ outDir: "gen" })
+    expect(resolved.jsonSchema).toEqual({ outDir: "gen", io: "output" })
     expect(resolved.watch).toEqual({ debounceMs: 123 })
     expect(resolved.root).toBe(resolve(dir))
   })

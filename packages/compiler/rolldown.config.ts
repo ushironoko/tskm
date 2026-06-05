@@ -15,7 +15,19 @@ export default defineConfig({
     "structural-ts-worker": "src/structural-ts-worker.ts",
   },
   platform: "node",
-  external: [/^@corsa-bind\/napi/, /^oxc-parser/, /^@typescript\/native-preview/],
+  // zod/valibot/@valibot-to-json-schema are referenced ONLY through the JSON
+  // Schema adapter's dynamic imports, resolved from the USER's node_modules at
+  // runtime — they must never be bundled (they are not even dependencies).
+  external: [
+    /^@corsa-bind\/napi/,
+    /^oxc-parser/,
+    /^@typescript\/native-preview/,
+    /^zod$/,
+    /^zod\//,
+    /^valibot$/,
+    /^@valibot\/to-json-schema$/,
+    /^arktype$/,
+  ],
   plugins: [dts({ tsconfig: "tsconfig.json" })],
   output: {
     dir: "dist",

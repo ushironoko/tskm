@@ -1,5 +1,11 @@
-import { rmSync, writeFileSync } from "node:fs"
 import { basename, dirname, extname, join } from "node:path"
+import {
+  MARKER_PREFIX,
+  markerPosition,
+  PRETTIFY_DECL,
+  sourceImportSpecifier,
+  withQueryFile,
+} from "./query-core.ts"
 import { replaceTokenOutsideQuotes } from "./token-scan.ts"
 import { FAILURE_TYPE_FLAGS, type TsgoClient } from "./tsgo-client.ts"
 
@@ -44,13 +50,13 @@ export function buildSentinelQuery(
   targets: ReadonlyArray<SentinelTarget>,
 ): { body: string; markers: ReadonlyArray<string> } {
   const names = targets.map((t) => t.exportName)
-  const markers = targets.map((_, i) => `__tskm_${i}`)
+  const markers = targets.map((_, i) => `${MARKER_PREFIX}${i}`)
   const lines: string[] = []
   if (names.length > 0) {
     lines.push(`import { ${names.join(", ")} } from "${sourceImportPath}"`)
   }
   lines.push(`import type { BaseSchema, InferOutput } from "@tskm/core"`)
-  lines.push("type __P<T> = { [K in keyof T]: T[K] } & {}")
+  lines.push(PRETTIFY_DECL)
   targets.forEach((target, i) => {
     lines.push(`declare const SENTINEL_${i}: unique symbol`)
     lines.push(`type Sentinel_${i} = { readonly [SENTINEL_${i}]: "__TskmSentinel_${i}__" }`)
@@ -141,11 +147,6 @@ export function sentinelQueryPath(sourceFileAbs: string): string {
   return join(dir, `${base}.tier1.tskm-query.ts`)
 }
 
-function sourceImportSpecifier(sourceFileAbs: string): string {
-  const base = basename(sourceFileAbs, extname(sourceFileAbs))
-  return `./${base}`
-}
-
 export interface SentinelUnrollResult {
   /** Raw unrolled type text per target index (present only on success). */
   readonly unrolled: ReadonlyMap<number, string>
@@ -170,18 +171,13 @@ export function resolveSentinelUnroll(
 
   const unrolled = new Map<number, string>()
   const diagnostics: string[] = []
-  try {
-    writeFileSync(queryFile, body)
-    client.updateFile(queryFile, "created")
-
+  withQueryFile(client, queryFile, body, () => {
     targets.forEach((target, i) => {
       const marker = markers[i]
       if (!marker) {
         return
       }
-      const anchor = `declare const ${marker}`
-      const position = body.indexOf(anchor) + "declare const ".length
-      const result = client.resolveTypeAt(queryFile, position)
+      const result = client.resolveTypeAt(queryFile, markerPosition(body, marker))
       if (!result || result.flags & FAILURE_TYPE_FLAGS) {
         const flags = result ? `flags=${result.flags}` : "no type"
         diagnostics.push(
@@ -191,9 +187,6 @@ export function resolveSentinelUnroll(
       }
       unrolled.set(i, result.text)
     })
-  } finally {
-    rmSync(queryFile, { force: true })
-    client.updateFile(queryFile, "deleted")
-  }
+  })
   return { unrolled, diagnostics }
 }

@@ -1,5 +1,5 @@
-import { rmSync, writeFileSync } from "node:fs"
 import { basename, dirname, extname, join } from "node:path"
+import { PRETTIFY_DECL, sourceImportSpecifier, withQueryFile } from "./query-core.ts"
 import type { StructuralResolution } from "./structural-resolve.ts"
 import { resolveSentinelUnroll, substituteSentinel } from "./tier1.ts"
 import { containsTokenOutsideQuotes } from "./token-scan.ts"
@@ -171,7 +171,7 @@ export function buildFixpointProbe(
   return [
     `import { ${exportName} } from "${sourceImportPath}"`,
     `import type { BaseSchema, InferOutput } from "@tskm/core"`,
-    "type __P<T> = { [K in keyof T]: T[K] } & {}",
+    PRETTIFY_DECL,
     `type ${typeName} = ${candidateBody}`,
     `type __Unroll = __P<InferOutput<ReturnType<typeof ${exportName}.build<BaseSchema<${typeName}, ${typeName}>>>>>`,
     `declare const __c: ${typeName}`,
@@ -180,11 +180,6 @@ export function buildFixpointProbe(
     `export const __d2: ${typeName} = __u`,
     "",
   ].join("\n")
-}
-
-function sourceImportSpecifier(sourceFileAbs: string): string {
-  const base = basename(sourceFileAbs, extname(sourceFileAbs))
-  return `./${base}`
 }
 
 /**
@@ -207,19 +202,14 @@ export function verifyFixpoint(
     typeName,
     candidateBody,
   )
-  try {
-    writeFileSync(probeFile, body)
-    client.updateFile(probeFile, "created")
+  return withQueryFile(client, probeFile, body, () => {
     const diagnostics = client.getDiagnostics(probeFile)
     if (diagnostics.length === 0) {
       return { sound: true }
     }
     const codes = diagnostics.map((d) => `TS${d.code}`).join(", ")
     return { sound: false, reason: `fixpoint oracle rejected the candidate (${codes})` }
-  } finally {
-    rmSync(probeFile, { force: true })
-    client.updateFile(probeFile, "deleted")
-  }
+  })
 }
 
 export interface Tier1Outcome {

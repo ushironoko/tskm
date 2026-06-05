@@ -1,6 +1,12 @@
 import { globSync, writeFileSync } from "node:fs"
 import { basename, isAbsolute, join, resolve } from "node:path"
-import { loadConfig, type ResolvedTskmConfig, resolveConfig, type TskmConfig } from "./config.ts"
+import {
+  loadConfig,
+  type ResolvedTskmConfig,
+  resolveConfig,
+  type TskmConfig,
+  vendorAllowList,
+} from "./config.ts"
 import { type CycleGuardState, createCycleGuard, walkWithCycleGuard } from "./cycle-guard.ts"
 import { resolveWorker, runWorker, type SchemaWorkerEnvelope } from "./worker-harness.ts"
 
@@ -330,10 +336,23 @@ function collectSources(config: ResolvedTskmConfig): string[] {
   return [...matches].sort()
 }
 
-interface JsonWorkerEntry {
+/**
+ * The per-export envelope entry — the single declaration both ends of the
+ * worker protocol import (the structural worker's pattern). A `skipped` entry
+ * carries only its reason: its warnings surface, but nothing enters the
+ * document for it.
+ */
+export interface JsonWorkerEntry {
   readonly name: string
   readonly schema: JsonSchema
   readonly warnings: ReadonlyArray<string>
+  readonly skipped?: boolean
+}
+
+/** The worker's argv[4] protocol: adapter routing context (see jsonschema-adapter.ts). */
+export interface JsonWorkerContext {
+  readonly io: "input" | "output"
+  readonly allowedVendors: ReadonlyArray<string>
 }
 
 export async function generateJsonSchema(
@@ -344,6 +363,10 @@ export async function generateJsonSchema(
   const workerAbs = resolveWorker("jsonschema-worker")
   const timeoutMs = options.timeoutMs ?? 5000
   const execPath = options.execPath ?? process.execPath
+  const workerContext: JsonWorkerContext = {
+    io: config.jsonSchema.io,
+    allowedVendors: vendorAllowList(config.schemaSources),
+  }
 
   const sources = collectSources(config)
   const files: JsonSchemaFile[] = []
@@ -357,6 +380,7 @@ export async function generateJsonSchema(
       execPath,
       timeoutMs,
       tag: "jsonschema",
+      extraArgs: [JSON.stringify(workerContext)],
     })
     if (result.diagnostic !== undefined) {
       diagnostics.push(result.diagnostic)
@@ -364,20 +388,23 @@ export async function generateJsonSchema(
     }
 
     const schemas = result.envelope.schemas ?? []
-    if (schemas.length === 0) {
+    for (const entry of schemas) {
+      for (const warning of entry.warnings) {
+        diagnostics.push(`tskm: ${sourceAbs}: ${entry.name}: ${warning}`)
+      }
+    }
+    const emittable = schemas.filter((entry) => !entry.skipped)
+    if (emittable.length === 0) {
       continue
     }
 
     const output = jsonSchemaOutputPath(sourceAbs, config)
     const document: Record<string, JsonSchema> = {}
-    for (const entry of schemas) {
+    for (const entry of emittable) {
       document[entry.name] = entry.schema
-      for (const warning of entry.warnings) {
-        diagnostics.push(`tskm: ${sourceAbs}: ${entry.name}: ${warning}`)
-      }
     }
     writeFileSync(output, `${JSON.stringify(document, null, 2)}\n`)
-    files.push({ source: sourceAbs, output, schemaNames: schemas.map((s) => s.name) })
+    files.push({ source: sourceAbs, output, schemaNames: emittable.map((s) => s.name) })
   }
 
   return { files, diagnostics }

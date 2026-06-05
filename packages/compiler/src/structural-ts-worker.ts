@@ -1,6 +1,6 @@
 import { deriveTypeName } from "./naming.ts"
 import { type StructuralWorkerEntry, schemaToTypeString } from "./structural-ts.ts"
-import { buildTargetIdentityMap, runSchemaWorker } from "./worker-harness.ts"
+import { buildTargetIdentityMap, isTskmWalkable, runSchemaWorker } from "./worker-harness.ts"
 
 /**
  * Isolated worker for structural recursive-type extraction.
@@ -40,8 +40,10 @@ await runSchemaWorker<StructuralWorkerEntry>((name, value, mod) => {
   const recursive = (value as { type?: unknown }).type === "recursive"
   // Only declared targets are walked: the parent never consumes non-target entries,
   // and the walk contract requires the root to be IN the identity map (which only
-  // targets are). A re-exported import gets a stub here, never a body.
-  if (!recursive || !overrides.has(name)) {
+  // targets are). A re-exported import gets a stub here, never a body. The
+  // walkability gate is belt-and-braces: even a declared external schema that
+  // happens to carry `type: "recursive"` must never enter the tskm walker.
+  if (!recursive || !overrides.has(name) || !isTskmWalkable(value)) {
     return {
       name,
       typeName,

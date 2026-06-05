@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import type { DiscoveredSchema } from "../src/discovery.ts"
+import { type DiscoveredSchema, tskmCapability } from "../src/discovery.ts"
 import { splitTargets } from "../src/session.ts"
 
 const target = (name: string, recursive: boolean): DiscoveredSchema => ({
@@ -7,6 +7,7 @@ const target = (name: string, recursive: boolean): DiscoveredSchema => ({
   typeName: name.charAt(0).toUpperCase() + name.slice(1),
   origin: "const",
   recursive,
+  capability: tskmCapability(recursive),
 })
 
 describe("splitTargets — pure resolution routing", () => {

@@ -1,0 +1,12 @@
+{
+  "name": "@tskm/example-standard-schema",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@tskm/compiler": "workspace:*"
+  }
+}

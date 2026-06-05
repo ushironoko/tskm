@@ -210,3 +210,53 @@ describe("compiler watch (real tsgo) — runtime", () => {
     expect(true).toBe(true)
   }, 60_000)
 })
+
+// External (zod) schemas through the SAME watch runtime: the initial generate
+// must produce the sidecar, and — the loop guard — the sidecar write must not
+// echo back into another generation (self-write tracking + the verify gate
+// never rewriting on failure).
+const stdRoot = fileURLToPath(new URL("./fixtures/standard", import.meta.url))
+const stdTarget = fileURLToPath(
+  new URL("./fixtures/standard/src/watchext.schema.ts", import.meta.url),
+)
+const stdSidecar = fileURLToPath(
+  new URL("./fixtures/standard/src/watchext.schema.gen.ts", import.meta.url),
+)
+const stdQuery = fileURLToPath(
+  new URL("./fixtures/standard/src/watchext.schema.tskm-query.ts", import.meta.url),
+)
+
+describe("compiler watch (real tsgo) — external schema smoke", () => {
+  afterEach(() => {
+    for (const f of [stdTarget, stdSidecar, stdQuery]) {
+      if (existsSync(f)) rmSync(f)
+    }
+  })
+
+  it("generates an external sidecar once and does not self-rebuild", async () => {
+    writeFileSync(
+      stdTarget,
+      'import { z } from "zod"\n\nexport const watchExtSchema = z.object({ id: z.string() })\n',
+    )
+    const calls: GenerateResult[] = []
+    const controller = await track(
+      await watch({
+        root: stdRoot,
+        mode: "sidecar",
+        config: { include: ["src/watchext.schema.ts"], tsconfig: "tsconfig.json" },
+        debounceMs: 30,
+        onGenerate: (r) => calls.push(r),
+      }),
+    )
+
+    expect(calls.length).toBeGreaterThanOrEqual(1)
+    expect(existsSync(stdSidecar)).toBe(true)
+    const initial = calls.length
+
+    // Give the fs watcher ample time to (wrongly) echo the sidecar write back.
+    await new Promise((r) => setTimeout(r, 600))
+    expect(calls.length).toBe(initial)
+
+    await controller.close()
+  }, 60_000)
+})

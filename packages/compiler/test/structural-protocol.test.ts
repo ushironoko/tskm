@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { tskmCapability } from "../src/discovery.ts"
 import { splitCanonicalTargets } from "../src/structural-resolve.ts"
 import { buildTargetIdentityMap } from "../src/worker-harness.ts"
 
@@ -45,7 +46,13 @@ describe("buildTargetIdentityMap", () => {
 
 describe("splitCanonicalTargets", () => {
   const target = (name: string, typeName: string) =>
-    ({ name, typeName, origin: "const", recursive: true }) as const
+    ({
+      name,
+      typeName,
+      origin: "const",
+      recursive: true,
+      capability: tskmCapability(true),
+    }) as const
 
   it("keeps distinct export bindings as canonicals", () => {
     const { canonical, duplicates } = splitCanonicalTargets([target("a", "A"), target("b", "B")])
@@ -70,7 +77,7 @@ describe("splitCanonicalTargets", () => {
 
 describe("splitCanonicalTargets — same alias name on the same binding", () => {
   const target = (name: string, typeName: string, origin: "const" | "alias") =>
-    ({ name, typeName, origin, recursive: true }) as const
+    ({ name, typeName, origin, recursive: true, capability: tskmCapability(true) }) as const
 
   it("classifies the const+Infer-alias pair as a duplicate of itself", () => {
     // `export const bookSchema = recursive(...)` + `export type Book =

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { DiscoveredSchema } from "../src/discovery.ts"
+import { type DiscoveredSchema, tskmCapability } from "../src/discovery.ts"
 import { collectInplaceTargets, emitInplace } from "../src/inplace.ts"
 import type { ResolvedSchema } from "../src/resolve.ts"
 
@@ -143,6 +143,7 @@ describe("collectInplaceTargets", () => {
       typeName: "Post",
       origin: "alias",
       recursive: false,
+      capability: tskmCapability(false),
     }
 
     const { targets, diagnostics } = collectInplaceTargets(sentinel, [fresh])
@@ -150,8 +151,20 @@ describe("collectInplaceTargets", () => {
     expect(diagnostics).toEqual([])
     expect(targets).toEqual(
       expect.arrayContaining([
-        { name: "postSchema", typeName: "Post", origin: "alias", recursive: false },
-        { name: "userSchema", typeName: "User", origin: "alias", recursive: false },
+        {
+          name: "postSchema",
+          typeName: "Post",
+          origin: "alias",
+          recursive: false,
+          capability: tskmCapability(false),
+        },
+        {
+          name: "userSchema",
+          typeName: "User",
+          origin: "alias",
+          recursive: false,
+          capability: tskmCapability(false),
+        },
       ]),
     )
     expect(targets.length).toBe(2)
@@ -169,6 +182,7 @@ describe("collectInplaceTargets", () => {
       typeName: "User",
       origin: "alias",
       recursive: false,
+      capability: tskmCapability(false),
     }
 
     const { targets } = collectInplaceTargets(sentinel, [fresh])
