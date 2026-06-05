@@ -30,6 +30,8 @@ tskm goes the **opposite direction — schema → type, not type → validator �
 | editor sees it?    | no                          | **yes** (plain generated `.ts`) |
 | runtime deps       | —                           | **zero** (runtime package)    |
 
+Underneath the mechanics sits the actual thesis: **data-oriented domain modeling**. In tskm the runtime schema — a plain, inspectable object — *is* the domain model; the static types are compiled artifacts derived from it, never the other way around. Inference-based libraries share that ambition but cannot hold it at the edges: the moment a model is self-referential (a category tree, an AST, a JSON document), the inferred type collapses, and the library hands the work back to you as a hand-written `type` plus a `GenericSchema<T>` annotation — type-first creep, exactly what data-first modeling set out to remove. Because tskm derives types with a compiler instead of inference, the data stays the SSoT even there: `recursive((self) => …)` materializes the self-referential alias with zero hand-written types. Validation, transformation, JSON Schema, and the static types all keep flowing from one place — the data. The AOT compiler is not an optimization bolted onto the library; it is what makes this concept hold end to end.
+
 ## Simple Usage
 
 **Validate at runtime** — schemas are values; `parse` / `safeParse` are standalone functions:
@@ -142,13 +144,13 @@ a documented mapping (and warns on anything it cannot represent).
 | `string` `number` `boolean` | `string` `number` `boolean` | `{ "type": … }` |
 | `bigint` | `bigint` | `{ "type": "string" }` ⚠ |
 | `date` | `Date` | `{ "type": "string", "format": "date-time" }` ⚠ |
-| `literal(x)` | `x` | `{ "const": x }` |
+| `literal(x)` | `x` (non-finite numbers widen to `number` ⚠) | `{ "const": x }` |
 | `picklist([…])` | union of literals | `{ "enum": […] }` |
 | `null_` `undefined_` | `null` `undefined` | `{ "type": "null" }` · `{}` ⚠ |
 | `any` `unknown` `never_` | `any` `unknown` `never` | `{}` · `{}` · `{ "not": {} }` |
 | `object({…})` | `{ k: T }` | `{ "type": "object", "properties", "required", "additionalProperties": false }` |
 | `array(T)` | `T[]` | `{ "type": "array", "items": T }` |
-| `record(V)` | `Record<string, V>` | `{ "type": "object", "additionalProperties": V }` |
+| `record(V)` | `{ [key: string]: V }` (index signature — also legal inside recursive aliases) | `{ "type": "object", "additionalProperties": V }` |
 | `tuple([A, B])` | `[A, B]` | `{ "type": "array", "prefixItems": [A, B], "items": false }` |
 | `union([A, B])` | `A \| B` | `{ "anyOf": [A, B] }` |
 | `optional(T)` | `T \| undefined` | inside `object`: `T`, key dropped from `required`; standalone: `T` ⚠ (drops `undefined`) |
@@ -165,9 +167,10 @@ a documented mapping (and warns on anything it cannot represent).
 
 ## Limitations
 
-- **Schema discovery is syntactic and conservative.** Sidecar auto-discovery only matches a direct `export const x = <tskm factory>(…)`. Schemas built through a local helper (`export const x = make()`), a `satisfies` clause, a re-export, or a namespace import are **not** found — add an explicit `export type T = Infer<typeof x>` marker for those.
+- **Schema discovery is syntactic and conservative.** Sidecar auto-discovery only matches a direct `export const x = <tskm factory>(…)`. Schemas built through a local helper (`export const x = make()`), a `satisfies` clause, a re-export, or a namespace import are **not** found — add an explicit `export type T = Infer<typeof x>` marker for those. For **recursive** schemas the marker must live in the schema's defining file; cross-file markers fail closed (see below).
+- **One alias per derived name.** Two exports that derive the same type name (`user` and `userSchema` both → `User`) keep the FIRST declaration (discovery order); the later one is skipped with a diagnostic. The canonical `export const aSchema = …` + `export type A = Infer<typeof aSchema>` pair emits exactly one `A`.
 - **Recursive schemas: use `recursive()`.** `export const categorySchema = recursive((self) => object({ name: string(), children: array(self) }))` materializes `type Category = { name: string; children: Category[] }` with **no hand-written annotation**: the self-reference is passed into the builder, so the implicit-any rule for self-referential initializers never fires. Recursive roots are the one place type generation EVALUATES your module — in an isolated, SIGKILL-guarded subprocess (set `worker.execPath` to a TS-capable runtime such as `bun` when your sources are `.ts` and the host runtime cannot import them). Same-file mutual recursion (A↔B) is supported; the pair forms a type-level cycle at authoring time, so give ONE member a loose `GenericSchema` annotation (still no structural type by hand). A specifier-form export (`const node = recursive(…); export { node }`) resolves through an explicit `export type Node = Infer<typeof node>` marker — auto-discovery without a marker still requires the inline `export const` form. Everything cross-file fails CLOSED — skip plus a diagnostic, never a wrong or dangling alias: a recursive schema **imported** (or re-exported) into another file is not inlined there, a cross-file `Infer<typeof imported>` alias is rejected by the checker guard, and a generated body that would reference a sibling alias which itself failed is pruned with it (cycles through non-exported values stay unsupported). Declare recursive aliases in the file that defines the schema.
-- **Transforms inside a recursive cycle** resolve when the builder is a GENERIC arrow (`recursive(<S extends GenericSchema>(self: S) => …)`): the compiler asks the checker for a one-level unroll of the builder with a sentinel at the self positions, then splices the result only after BOTH a structural data-key cross-check and a bidirectional fixpoint oracle pass (a wrong candidate is rejected, never emitted). Any rejection keeps the honest floor: `unknown` at the transform position with a path-precise diagnostic. A plain-arrow builder cannot be unrolled and always gets the floor.
+- **Transforms inside a recursive cycle** resolve when the builder is a GENERIC arrow (`recursive(<S extends GenericSchema>(self: S) => …)`): the compiler asks the checker for a one-level unroll of the builder with a sentinel at the self positions, then splices the result only after BOTH a structural data-key cross-check and a bidirectional fixpoint oracle pass (a wrong candidate is rejected, never emitted). A `brand` directly under a union/tuple root is always rejected — with no data keys, both gates would be blind to brand absorption. Any rejection keeps the honest floor: `unknown` at the transform position with a path-precise diagnostic. A plain-arrow builder cannot be unrolled and always gets the floor.
 - **`lazy` stays as the non-recursive defer / escape hatch.** lazy-based recursion still needs the old hand-written `GenericSchema<T>` annotation and is not auto-materialized in v1. At runtime both `lazy` and `recursive` follow the input's depth and are not cycle-guarded, so a pathologically deep value can overflow the stack.
 - **`optional(x)`** renders as `k: T | undefined`, not `k?: T` (the value is the same; the key is still required in the object position). JSON Schema correctly drops it from `required`.
 - **In-place mode** only recognizes *single-line* `export type T = Infer<typeof X>` markers, and trailing content on that line is dropped on first conversion. It is experimental and opt-in.
@@ -178,7 +181,7 @@ a documented mapping (and warns on anything it cannot represent).
 ## Examples
 
 - [`examples/basic`](examples/basic) — the smallest end-to-end loop: schema → generated type → validate.
-- [`examples/advanced`](examples/advanced) — discriminated unions, recursive (cyclic) schemas (`lazy` + `GenericSchema`), and the explicit `export type T = Infer<typeof schema>` marker.
+- [`examples/advanced`](examples/advanced) — discriminated unions, a recursive JSON schema materialized by `recursive()`, and the explicit `export type T = Infer<typeof schema>` marker.
 
 ## Development
 
