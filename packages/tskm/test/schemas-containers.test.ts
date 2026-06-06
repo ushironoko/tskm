@@ -140,6 +140,17 @@ describe("record", () => {
       expect(r.issues).toHaveLength(1)
     }
   })
+
+  it("without abortEarly accumulates one issue per invalid value", () => {
+    // Two bad values: the first seeds dataset.issues, the second must be appended to the
+    // existing array (not replace it), so both keys are reported with their own path.
+    const r = safeParse(record(number()), { a: "x", b: "y" })
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.issues).toHaveLength(2)
+      expect(r.issues.map((i) => i.path?.[0])).toEqual([{ key: "a" }, { key: "b" }])
+    }
+  })
 })
 
 describe("tuple", () => {
@@ -209,6 +220,17 @@ describe("tuple", () => {
     if (!r.success) {
       expect(r.issues).toHaveLength(1)
       expect(r.issues[0]?.path).toEqual([{ key: 0 }])
+    }
+  })
+
+  it("without abortEarly accumulates one issue per invalid element", () => {
+    // Both elements fail: the second issue must be pushed onto the array seeded by the
+    // first, so every offending index is reported rather than just the earliest.
+    const r = safeParse(tuple([number(), number()]), ["a", "b"])
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.issues).toHaveLength(2)
+      expect(r.issues.map((i) => i.path?.[0])).toEqual([{ key: 0 }, { key: 1 }])
     }
   })
 })

@@ -90,6 +90,21 @@ describe("reindentType — nested objects", () => {
     expect(out).toBe("string | {\n  [x: string]: Json;\n} | null")
   })
 
+  it("keeps the index signature inline even when whitespace separates the ] and the :", () => {
+    // The `]`-then-`:` lookahead skips intervening spaces/tabs, so `[x: string] : T`
+    // is still recognized as a key (not a tuple) and the whole `[...]` stays inline on one
+    // line (rather than being broken open like a tuple).
+    expect(reindentType("{ [x: string] : number }")).toBe("{\n  [x: string] : number\n}")
+  })
+
+  it("does not treat a bracket whose contents are a string literal as a key (literal-skipping)", () => {
+    // The matching-bracket scan must skip string literals, so a `]` *inside* a literal
+    // does not prematurely close the `[`. Here the tuple element is the string "]"; the
+    // real closing `]` is the second one, and it is not followed by `:`, so the bracket
+    // breaks like a normal tuple rather than collapsing into an index-signature key.
+    expect(reindentType('[ "]" ]')).toBe('[\n  "]"\n]')
+  })
+
   it("indents parenthesized groups", () => {
     const out = reindentType("( string | number )")
     expect(out).toBe("(\n  string | number\n)")

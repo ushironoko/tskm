@@ -115,3 +115,80 @@ describe("schemaToJsonSchemaViaAdapter — skip and exclusion policies", () => {
     expect(outcome.reason).toContain("mystery")
   })
 })
+
+describe("schemaToJsonSchemaViaAdapter — zod vendor fallback (no native ~standard.jsonSchema)", () => {
+  // Modern zod schemas carry a spec-1.1 `~standard.jsonSchema` method and take the native
+  // path. These cases pin the SEPARATE `z.toJSONSchema` fallback used when that method is
+  // absent (older zod), via a fake zod-vendor value with no native converter plus the
+  // `importModule` DI seam standing in for the user's project `zod`.
+  const zodVendorValue = {
+    "~standard": { version: 1, vendor: "zod", validate: () => ({ value: {} }) },
+  }
+
+  it("converts via z.toJSONSchema, forwarding io and unrepresentable:'throw'", async () => {
+    let seenArgs: { io?: string; unrepresentable?: string } | undefined
+    const outcome = await schemaToJsonSchemaViaAdapter(
+      zodVendorValue,
+      ctx({
+        io: "input",
+        importModule: (specifier) =>
+          specifier === "zod"
+            ? Promise.resolve({
+                z: {
+                  toJSONSchema: (
+                    _value: unknown,
+                    opts: { io: string; unrepresentable: string },
+                  ) => {
+                    seenArgs = opts
+                    return { type: "string" }
+                  },
+                },
+              })
+            : import(specifier),
+      }),
+    )
+    expect(outcome.kind).toBe("converted")
+    if (outcome.kind !== "converted") return
+    expect(outcome.schema).toEqual({ type: "string" })
+    // The adapter must honor the requested io side and force unrepresentable types to
+    // throw (so they collapse to a `skipped`, never a silently-lossy schema).
+    expect(seenArgs).toEqual({ io: "input", unrepresentable: "throw" })
+  })
+
+  it("skips with a project-import message when zod cannot be imported", async () => {
+    const outcome = await schemaToJsonSchemaViaAdapter(
+      zodVendorValue,
+      ctx({
+        importModule: (specifier) =>
+          specifier === "zod"
+            ? Promise.reject(new Error("Cannot find package 'zod'"))
+            : import(specifier),
+      }),
+    )
+    expect(outcome.kind).toBe("skipped")
+    if (outcome.kind !== "skipped") return
+    expect(outcome.reason).toBe('could not import "zod" from the project')
+  })
+
+  it("skips with the converter's reason when z.toJSONSchema rejects the schema", async () => {
+    const outcome = await schemaToJsonSchemaViaAdapter(
+      zodVendorValue,
+      ctx({
+        importModule: (specifier) =>
+          specifier === "zod"
+            ? Promise.resolve({
+                z: {
+                  toJSONSchema: () => {
+                    throw new Error("unrepresentable type")
+                  },
+                },
+              })
+            : import(specifier),
+      }),
+    )
+    expect(outcome.kind).toBe("skipped")
+    if (outcome.kind !== "skipped") return
+    expect(outcome.reason).toContain("z.toJSONSchema rejected the schema")
+    expect(outcome.reason).toContain("unrepresentable type")
+  })
+})

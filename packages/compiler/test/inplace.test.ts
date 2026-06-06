@@ -191,6 +191,74 @@ describe("collectInplaceTargets", () => {
   })
 })
 
+describe("collectInplaceTargets — structural sentinel validation", () => {
+  // scanSentinels refuses to silently rewrite a malformed file; each broken shape below
+  // must surface a precise diagnostic. These run through the public collectInplaceTargets,
+  // which forwards scan diagnostics verbatim.
+  it("reports a nested @tskm-gen opened before the previous region closed", () => {
+    const source = [
+      "// @tskm-gen A from aSchema #00000000",
+      "// @tskm-gen B from bSchema #00000000",
+      "// @tskm-end A",
+    ].join("\n")
+    const { diagnostics } = collectInplaceTargets(source, [])
+    expect(diagnostics.some((d) => d.includes('nested @tskm-gen for "B" inside region "A"'))).toBe(
+      true,
+    )
+  })
+
+  it("reports an @tskm-end with no matching open region", () => {
+    const { diagnostics } = collectInplaceTargets("// @tskm-end Orphan\n", [])
+    expect(
+      diagnostics.some((d) => d.includes("@tskm-end Orphan without a matching @tskm-gen")),
+    ).toBe(true)
+  })
+
+  it("reports an @tskm-end whose name does not match the open region", () => {
+    const source = ["// @tskm-gen A from aSchema #00000000", "// @tskm-end B"].join("\n")
+    const { diagnostics } = collectInplaceTargets(source, [])
+    expect(diagnostics.some((d) => d.includes('@tskm-end B does not match open region "A"'))).toBe(
+      true,
+    )
+  })
+
+  it("reports a duplicate sentinel region for the same type name", () => {
+    const source = [
+      "// @tskm-gen A from aSchema #00000000",
+      "// @tskm-end A",
+      "// @tskm-gen A from aSchema #00000000",
+      "// @tskm-end A",
+    ].join("\n")
+    const { diagnostics } = collectInplaceTargets(source, [])
+    expect(diagnostics.some((d) => d.includes('duplicate sentinel region for type "A"'))).toBe(true)
+  })
+})
+
+describe("emitInplace — duplicate resolved type", () => {
+  it("emits one region for the first entry and diagnoses the duplicate, skipping the extra", () => {
+    const source = `export type User = Infer<typeof userSchema>\n`
+    const file = tmpFile("dup-resolved.ts", source)
+
+    const result = emitInplace(
+      file,
+      source,
+      [
+        { typeName: "User", typeString: "{ id: string }" },
+        { typeName: "User", typeString: "{ id: number }" },
+      ],
+      { version: VERSION },
+    )
+
+    expect(
+      result.diagnostics.some((d) => d.includes('duplicate resolved type "User" for inplace emit')),
+    ).toBe(true)
+    // The first entry wins; the duplicate's body never reaches the file.
+    expect(result.typeNames).toEqual(["User"])
+    expect(result.content).toContain("id: string")
+    expect(result.content).not.toContain("id: number")
+  })
+})
+
 describe("emitInplace — malformed sentinel", () => {
   it("emits a diagnostic and does not corrupt the file when @tskm-end is missing", () => {
     const hash = expectedHash("{ id: string }", "userSchema", "User")
