@@ -143,4 +143,23 @@ describe("referencesTypeOutsideQuotes", () => {
   it("ignores tokens inside string literals", () => {
     expect(referencesTypeOutsideQuotes('{ kind: "Broken" }', "Broken")).toBe(false)
   })
+
+  it("honors backslash escapes inside a literal so an escaped quote does not end it early", () => {
+    // The literal `"a\"Broken"` contains an escaped quote; if the scanner mistook that
+    // `\"` for the literal's end it would resume matching and (wrongly) see `Broken` as a
+    // live type reference. The `\` escape must be respected, keeping the span opaque.
+    expect(referencesTypeOutsideQuotes('{ k: "a\\"Broken" }', "Broken")).toBe(false)
+  })
+
+  it("does not count an optional key when whitespace separates the ? and the : (Token ? :)", () => {
+    // Rendered output can space out `?` and `:`; the optional-key discriminator skips the
+    // whitespace between them, so this is still a property KEY, not a reference.
+    expect(referencesTypeOutsideQuotes("{ Broken ? : string }", "Broken")).toBe(false)
+  })
+
+  it("counts a reference when a lone ? after the token is not part of an optional key", () => {
+    // A `?` not followed by `:` (here a conditional-type tail) is not an optional-key
+    // marker, so the token in value position is a genuine reference.
+    expect(referencesTypeOutsideQuotes("X extends Broken ? 1 : 2", "Broken")).toBe(true)
+  })
 })
