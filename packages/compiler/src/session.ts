@@ -74,11 +74,27 @@ export interface TargetSplit {
  * structural worker — external schemas never do, whatever their shape. An empty
  * `structuralTargets` guarantees the structural worker is never spawned for the
  * file — the zero-cost property for non-recursive projects.
+ *
+ * When `nameSharedSchemas` is on (issue #22), non-recursive tskm schemas are ADDED to
+ * the structural targets so the walker can emit them as named aliases and reference
+ * siblings by name. They stay on the checker path too: the checker is the authority for
+ * a target the walker cannot render losslessly (a non-schema value, or a transform whose
+ * output type only the checker knows), and the structural resolver skips such results so
+ * the checker type stands. External schemas never enter the worker (the
+ * `sourceKind === "tskm"` gate). With the flag off the partition is byte-identical to
+ * before, so the zero-cost checker path is preserved for non-recursive projects.
  */
-export function splitTargets(targets: ReadonlyArray<DiscoveredSchema>): TargetSplit {
+export function splitTargets(
+  targets: ReadonlyArray<DiscoveredSchema>,
+  nameSharedSchemas = false,
+): TargetSplit {
   return {
     checkerTargets: targets.filter((t) => t.capability.typeResolver === "standard-checker"),
-    structuralTargets: targets.filter((t) => t.capability.typeResolver === "core-recursive"),
+    structuralTargets: targets.filter(
+      (t) =>
+        t.capability.typeResolver === "core-recursive" ||
+        (nameSharedSchemas && t.capability.sourceKind === "tskm" && !t.recursive),
+    ),
   }
 }
 
@@ -181,7 +197,10 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
 
     // The split happens AFTER the inplace alias filter so recursive markers keep
     // their routing; recursive schemas never reach the plain checker query.
-    const { checkerTargets, structuralTargets } = splitTargets(targets)
+    const { checkerTargets, structuralTargets } = splitTargets(
+      targets,
+      config.codegen.nameSharedSchemas,
+    )
 
     // Inform the checker of the file's current content before querying it.
     client.updateFile(sourceAbs, "changed")

@@ -42,6 +42,18 @@ export interface TskmWorkerOptions {
   readonly timeoutMs?: number
 }
 
+/** Code-generation options. */
+export interface TskmCodegenOptions {
+  /**
+   * When `true`, a non-recursive named `export const` schema is emitted as its own
+   * `export type` alias and referenced by name from other generated types, instead of
+   * being inlined at every reference site. Default `false` (output is byte-identical to
+   * the inline form). Enabling it routes non-recursive tskm schemas through the structural
+   * worker, so a file that previously took the zero-cost checker path now spawns it.
+   */
+  readonly nameSharedSchemas?: boolean
+}
+
 export interface TskmConfig {
   /** Output strategy: `sidecar` (default) writes `*.gen.ts`; `inplace` rewrites markers in place. */
   readonly mode?: TskmMode
@@ -57,6 +69,8 @@ export interface TskmConfig {
   readonly watch?: TskmWatchOptions
   /** Isolated schema-worker options (recursive structural types). */
   readonly worker?: TskmWorkerOptions
+  /** Code-generation options (named sibling aliases). */
+  readonly codegen?: TskmCodegenOptions
   /**
    * Module names whose exports are treated as Standard Schema sources: values
    * built from these imports become discovery candidates, confirmed by the
@@ -81,6 +95,10 @@ export interface ResolvedWorkerOptions {
   readonly timeoutMs: number
 }
 
+export interface ResolvedCodegenOptions {
+  readonly nameSharedSchemas: boolean
+}
+
 export interface ResolvedTskmConfig {
   readonly mode: TskmMode
   readonly include: ReadonlyArray<string>
@@ -89,6 +107,7 @@ export interface ResolvedTskmConfig {
   readonly jsonSchema: ResolvedJsonSchemaOptions
   readonly watch: ResolvedWatchOptions
   readonly worker: ResolvedWorkerOptions
+  readonly codegen: ResolvedCodegenOptions
   /** Schema source modules, `@tskm/core` always first (see {@link TskmConfig}). */
   readonly schemaSources: ReadonlyArray<string>
   /** The directory the config was resolved against (the checker cwd). */
@@ -161,6 +180,7 @@ export function resolveConfig(config: TskmConfig, root: string): ResolvedTskmCon
       execPath: config.worker?.execPath,
       timeoutMs: config.worker?.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS,
     },
+    codegen: { nameSharedSchemas: config.codegen?.nameSharedSchemas ?? false },
     schemaSources: [
       RUNTIME_SCHEMA_SOURCE,
       ...new Set(

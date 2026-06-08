@@ -112,10 +112,12 @@ export function resolveRecursiveSchemas(
       )
       continue
     }
-    if (!entry.recursive) {
-      // Discovery flagged it syntactically but the runtime object is not a
-      // recursive() root (e.g. a wrapper hid it). Degrade-safe: skip with the
-      // checker path untouched for everything else.
+    if (!entry.recursive && target.recursive) {
+      // Discovery flagged it recursive but the runtime object is not a recursive()
+      // root (e.g. a wrapper hid it). Degrade-safe: skip with the checker path
+      // untouched for everything else. A target discovery already knows is
+      // non-recursive (routed here by `nameSharedSchemas`, issue #22) is NOT skipped:
+      // it is a sibling we asked to alias, and the worker walked it fully.
       diagnostics.push(
         `tskm: "${target.name}" was flagged recursive but its runtime object is not a recursive() schema; skipping ${target.typeName}. Existing output left untouched.`,
       )
@@ -123,6 +125,20 @@ export function resolveRecursiveSchemas(
     }
     if (entry.unsupported) {
       diagnostics.push(...entry.warnings)
+      continue
+    }
+    if (!target.recursive && (entry.typeString === "" || entry.bearsOpaque)) {
+      // A flag-routed non-recursive sibling (issue #22) the walker could not render
+      // losslessly: an empty body means the value is not a tskm-walkable schema (e.g.
+      // `const x = parse(...)`), and an opaque body means a transform whose output type
+      // only the checker knows. Skip the structural resolution so the CHECKER type stands
+      // for this target (it rides both paths under the flag); never emit an empty or
+      // `unknown` alias that would overwrite the correct checker output.
+      if (entry.typeString === "") {
+        diagnostics.push(
+          `tskm: "${target.name}" is not a structurally-aliasable schema; using the checker-resolved type for ${target.typeName}.`,
+        )
+      }
       continue
     }
     resolutions.push({
