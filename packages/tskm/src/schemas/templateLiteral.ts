@@ -2,6 +2,19 @@ import type { MutableDataset, OutputDataset } from "../types/dataset.ts"
 import type { BaseSchema } from "../types/schema.ts"
 import { _addIssue } from "../utils/_addIssue.ts"
 import { _getStandardProps } from "../utils/_getStandardProps.ts"
+import { bigint } from "./bigint.ts"
+import { boolean } from "./boolean.ts"
+import { literal } from "./literal.ts"
+import { never_ } from "./neverSchema.ts"
+import { nullable } from "./nullable.ts"
+import { nullish } from "./nullish.ts"
+import { null_ } from "./nullSchema.ts"
+import { number } from "./number.ts"
+import { optional } from "./optional.ts"
+import { picklist } from "./picklist.ts"
+import { string } from "./string.ts"
+import { undefined_ } from "./undefinedSchema.ts"
+import { union } from "./union.ts"
 
 /** The value types TypeScript allows to be interpolated into a template literal type. */
 type TemplatePrimitive = string | number | bigint | boolean | null | undefined
@@ -48,6 +61,33 @@ function escapeRegex(text: string): string {
 
 /** A char class that matches no character, so the placeholder can never be filled. */
 const NEVER_MATCH = "[^\\s\\S]"
+
+/**
+ * The tskm factory that legitimately produces each supported placeholder `type`. A schema's
+ * `reference` is its self-identity (see `BaseSchema.reference`); requiring it to match the
+ * factory for its claimed `type` closes the structural-trust gap where a forged or foreign
+ * object sets a known `type` string ("string", "number", …) it does not actually implement.
+ * Without the check that object would receive the type's permissive fragment and accept
+ * values outside the inferred template-literal type. A pipe spreads its base schema, so a
+ * validation-only pipe keeps the base `reference` and still matches. (A determined caller who
+ * copies a real factory onto a lying object is out of scope: they'd have to import the very
+ * factory they subvert.) This is a constant lookup table, never mutated.
+ */
+const REFERENCE_BY_TYPE = new Map<string, unknown>([
+  ["string", string],
+  ["number", number],
+  ["bigint", bigint],
+  ["boolean", boolean],
+  ["null", null_],
+  ["undefined", undefined_],
+  ["never", never_],
+  ["literal", literal],
+  ["picklist", picklist],
+  ["union", union],
+  ["optional", optional],
+  ["nullable", nullable],
+  ["nullish", nullish],
+])
 
 /**
  * The exact regex text for a `literal`/`picklist` option. A finite value's `String()` form is
@@ -106,6 +146,7 @@ function hasTransformation(node: { pipe?: unknown }): boolean {
 function placeholderFragment(schema: BaseSchema<unknown, unknown>): string {
   const node = schema as {
     type?: unknown
+    reference?: unknown
     literal?: unknown
     options?: unknown
     wrapped?: unknown
@@ -118,6 +159,16 @@ function placeholderFragment(schema: BaseSchema<unknown, unknown>): string {
   if (hasTransformation(node)) {
     throw new Error(
       "templateLiteral: a transforming placeholder cannot be bounded by a regex; its runtime match would diverge from the inferred template-literal type. Use the schema the transform produces (e.g. `picklist`/`literal`) as the placeholder instead.",
+    )
+  }
+  // Reject a forged/foreign placeholder that claims a supported `type` but is not tskm's own
+  // schema for it (its `reference` would not match). Without this the fragment is built from a
+  // `type` the object does not faithfully implement. Unknown types fall through to the switch's
+  // `default`, which throws anyway.
+  const expectedReference = REFERENCE_BY_TYPE.get(String(node.type))
+  if (expectedReference !== undefined && node.reference !== expectedReference) {
+    throw new Error(
+      `templateLiteral: placeholder claims type "${String(node.type)}" but is not tskm's own schema for it; a forged or foreign schema cannot be soundly bounded. Construct the placeholder with tskm's factory.`,
     )
   }
   switch (node.type) {

@@ -151,3 +151,21 @@ describe("templateLiteral rejects non-finite numeric placeholders (#18 review, f
     expect(() => templateLiteral([picklist([1, Number.NaN])])).toThrow()
   })
 })
+
+describe("templateLiteral rejects forged/foreign placeholders (#18 review, structural trust)", () => {
+  it("a schema that lies about its `type` is rejected by the reference check", () => {
+    // Take a real `number()` (output `number`, `reference` = the number factory) but lie that
+    // its `type` is "string". The duck-typed switch trusted `type` and would have emitted the
+    // permissive string fragment, accepting values outside the inferred `${number}` type. The
+    // reference check (a schema's `reference` must be tskm's factory for its claimed `type`)
+    // rejects it. The cast models a hand-forged schema the type system cannot vet.
+    const forged = { ...number(), type: "string" } as unknown as ReturnType<typeof string>
+    expect(() => templateLiteral(["v", forged])).toThrow()
+  })
+
+  it("a genuine tskm placeholder of the same type still passes the reference check", () => {
+    // Guard regression check: the real `string()` (correct `reference`) is unaffected.
+    const t = templateLiteral(["v", string()])
+    expect(safeParse(t, "vanything").success).toBe(true)
+  })
+})
