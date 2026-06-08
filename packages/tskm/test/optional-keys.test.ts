@@ -1,5 +1,15 @@
 import { describe, expect, it } from "bun:test"
-import { nullish, object, optional, parse, safeParse, string } from "../src/index.ts"
+import {
+  nullish,
+  object,
+  objectAsync,
+  optional,
+  parse,
+  parseAsync,
+  safeParse,
+  string,
+  unknown,
+} from "../src/index.ts"
 
 /**
  * Faithful optional-property mode (issue #17). `object(entries, { optionalKeys: true })`
@@ -62,5 +72,24 @@ describe("faithful optional-property runtime mode (#17)", () => {
     if (!r.success) {
       expect(r.issues[0]?.message).toBe("nope")
     }
+  })
+
+  it("objectAsync has optionalKeys parity: a missing optional key is omitted", async () => {
+    const schema = objectAsync({ a: string(), b: optional(string()) }, { optionalKeys: true })
+    const out = await parseAsync(schema, { a: "x" })
+    expect("b" in out).toBe(false)
+    expect(schema.optionalKeys).toBe(true)
+  })
+
+  it("objectAsync default keeps a missing optional as undefined", async () => {
+    const schema = objectAsync({ a: string(), b: optional(string()) })
+    const out = await parseAsync(schema, { a: "x" })
+    expect("b" in out).toBe(true)
+  })
+
+  it("objectAsync writes a declared __proto__ key safely", async () => {
+    const schema = objectAsync({ ["__proto__"]: unknown() })
+    const out = await parseAsync(schema, JSON.parse('{"__proto__":1}'))
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
   })
 })

@@ -8,7 +8,9 @@ import type { ObjectEntries, ObjectSchema } from "./object.ts"
 import type { ObjectEntriesAsync, ObjectSchemaAsync } from "./objectAsync.ts"
 
 /** A member of an async discriminated union: a sync or async object schema. */
-type AsyncMember = ObjectSchema<ObjectEntries, boolean> | ObjectSchemaAsync<ObjectEntriesAsync>
+type AsyncMember =
+  | ObjectSchema<ObjectEntries, boolean>
+  | ObjectSchemaAsync<ObjectEntriesAsync, boolean>
 
 /** Members of an async discriminated union: object schemas sharing a literal-tagged key. */
 export type DiscriminatedUnionMembersAsync = readonly AsyncMember[]

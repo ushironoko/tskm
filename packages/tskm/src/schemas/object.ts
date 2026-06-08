@@ -54,9 +54,13 @@ export type RestMode = "strip" | "exact" | "passthrough"
  * Options form of `object()`. Carries the optional trailing `message`, the opt-in
  * `optionalKeys` mode, and the unknown-key `rest` policy. Passed as a non-positional
  * object so it never collides with the trailing `message` string argument (primitive
- * contract, section 4). The `optionalKeys`-to-omittable-type inference requires the
- * options to be an inline literal; a value typed as the broad `ObjectOptions` falls back
- * to the legacy required-key type even when its runtime `optionalKeys` is `true`.
+ * contract, section 4).
+ *
+ * The omittable (`k?:`) output type is produced ONLY when `optionalKeys` is typed as the
+ * literal `true` (an inline `{ optionalKeys: true }`, an `as const`, or an explicitly
+ * `true`-typed variable). A widened `boolean` (e.g. a stored `ObjectOptions` value, or a
+ * `boolean`-typed flag) resolves to the legacy required-key type, so the static type
+ * never claims a key is omittable when the runtime value might be `false` and keep it.
  */
 export interface ObjectOptions {
   readonly message?: string | undefined
@@ -65,15 +69,16 @@ export interface ObjectOptions {
 }
 
 /**
- * Resolves the `optionalKeys` type flag from an options object. An ABSENT `optionalKeys`
- * is the legacy (required-keys) shape; any present non-false value (including a widened
- * `boolean` from a pre-stored options object) is the omittable shape, matching the runtime
- * `options.optionalKeys === true` read so the type never disagrees with what is dropped.
+ * Resolves the `optionalKeys` type flag from an options object. Only a LITERAL `true`
+ * yields the omittable shape; an absent, `false`, or widened `boolean` value yields the
+ * legacy required-key shape. The `[V] extends [true]` form (a non-distributive tuple
+ * check) is what rejects a widened `boolean`: `[boolean] extends [true]` is `false`, while
+ * `[true] extends [true]` is `true`.
  */
 type OptionalKeysOf<O extends ObjectOptions> = O extends { optionalKeys: infer V }
-  ? V extends false | undefined
-    ? false
-    : true
+  ? [V] extends [true]
+    ? true
+    : false
   : false
 
 export interface ObjectSchema<E extends ObjectEntries, TOptionalKeys extends boolean = false>
