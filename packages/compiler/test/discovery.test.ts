@@ -523,15 +523,55 @@ describe("discoverSchemas — external schema sources (hybrid candidates)", () =
     expect(schemas).toHaveLength(0)
   })
 
-  it("never marks an external `recursive` import as core-recursive", () => {
+  it("routes a `recursive` named import to core-recursive from ANY configured source", () => {
+    // `recursive` is a tskm-specific export name (zod/valibot/arktype publish no
+    // such export), so a re-export hub that forwards it must still route the root to
+    // the structural walker — that is what makes the anti-corruption-layer pattern
+    // work without an Infer marker. Safety net: the worker validates the runtime
+    // value (`type === "recursive"` && tskm vendor) before walking, so a hypothetical
+    // NON-tskm `recursive` export is skipped with a diagnostic, never emitted wrong.
     const src = `
-      import { recursive } from "zod"
-      export const xSchema = recursive(() => 1)
+      import { recursive } from "@acme/hub"
+      export const xSchema = recursive((self) => self)
     `
-    const { schemas } = discoverSchemas("a.ts", src, opts)
+    const { schemas } = discoverSchemas("a.ts", src, {
+      schemaSources: ["@tskm/core", "@acme/hub"],
+    })
     const found = find(schemas, "xSchema")
-    expect(found?.recursive).toBe(false)
-    expect(found?.capability.typeResolver).toBe("standard-checker")
+    expect(found?.recursive).toBe(true)
+    expect(found?.capability).toEqual(tskmCap(true))
+  })
+
+  it("keeps a NON-recursive hub schema a standard candidate (only `recursive` is special)", () => {
+    // The hub forwards `object` too, but a non-recursive root has no tskm-specific
+    // signal at parse time, so it stays an external candidate confirmed by the
+    // `~standard` probe on the checker path — unchanged behavior.
+    const src = `
+      import { object, string } from "@acme/hub"
+      export const userSchema = object({ name: string() })
+    `
+    const { schemas } = discoverSchemas("a.ts", src, {
+      schemaSources: ["@tskm/core", "@acme/hub"],
+    })
+    expect(find(schemas, "userSchema")?.capability).toEqual(candidateCap("@acme/hub"))
+  })
+
+  it("inherits hub core-recursive onto an Infer alias", () => {
+    const src = `
+      import { recursive } from "@acme/hub"
+      const treeSchema = recursive((self) => self)
+      export type Tree = Infer<typeof treeSchema>
+    `
+    const { schemas } = discoverSchemas("a.ts", src, {
+      schemaSources: ["@tskm/core", "@acme/hub"],
+    })
+    expect(find(schemas, "treeSchema")).toEqual({
+      name: "treeSchema",
+      typeName: "Tree",
+      origin: "alias",
+      recursive: true,
+      capability: tskmCap(true),
+    })
   })
 
   it("defaults to tskm-only discovery when no schemaSources are passed", () => {

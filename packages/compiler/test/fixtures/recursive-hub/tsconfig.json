@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "@tskm/core": ["../../../../tskm/src/index.ts"],
+      "@validator": ["./src/validator.ts"],
+      "@foreign": ["./src/foreign-lib.ts"]
+    }
+  },
+  "include": ["src"]
+}
