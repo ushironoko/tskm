@@ -6,9 +6,12 @@ import {
   object,
   parse,
   pipe,
+  pipeAsync,
   safeParse,
+  safeParseAsync,
   string,
   transform,
+  transformAsync,
   union,
 } from "../src/index.ts"
 
@@ -125,6 +128,42 @@ describe("warning consistency across read sites (#21)", () => {
     expect(r.success).toBe(true)
     if (r.success) {
       expect(r.output).toEqual({ a: "HI" })
+    }
+  })
+
+  it("an unknown/typo severity is fail-closed (treated as an error, kept visible)", () => {
+    // A JS caller (modeled with `as any`) can pass a typo severity through the public
+    // `ctx.issue` API. It must NOT vanish into a successful parse: only an exact
+    // `"warning"` is non-fatal, so a typo fails the parse and stays in `issues`.
+    const schema = pipe(
+      string(),
+      transform((value: string, ctx) => {
+        // biome-ignore lint/suspicious/noExplicitAny: modeling an untyped JS caller
+        ;(ctx.issue as (m: string, s: any) => void)("typo severity", "warn")
+        return value
+      }),
+    )
+    const r = safeParse(schema, "hi")
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.issues.some((i) => i.message === "typo severity")).toBe(true)
+      expect(r.warnings).toHaveLength(0)
+    }
+  })
+
+  it("transformAsync carries a warning the same way (async diagnostic path)", async () => {
+    const schema = pipeAsync(
+      string(),
+      transformAsync(async (value: string, ctx) => {
+        ctx.issue("async deprecated", "warning")
+        return value.toUpperCase()
+      }),
+    )
+    const r = await safeParseAsync(schema, "hi")
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.output).toBe("HI")
+      expect(r.warnings).toHaveLength(1)
     }
   })
 })
