@@ -201,7 +201,7 @@ The compiler never reads your schema at runtime. The inferred type only exists i
 
 4. **Recursive tskm schemas** (`recursive()`) take a structural route instead, because the plain query would collapse their self positions to `any` before the checker ever saw them. (External recursive schemas ride the plain query through the library's own exported self annotation; see [Standard Schema interop](#standard-schema-interop).)
 
-   Discovery flags `recursive()` roots syntactically and routes them to an isolated, SIGKILL-guarded worker. The worker imports the module and walks the runtime schema graph, using the same identity-keyed cycle guard as the JSON Schema emitter, and renders a named self-referential alias directly:
+   Discovery flags `recursive()` roots syntactically and routes them to an isolated, SIGKILL-guarded worker. A `recursive` import from any configured schema source counts, not just a direct `@tskm/core` one, so a re-export hub keeps working (see [Standard Schema interop](#standard-schema-interop)). That flag is only a hint: the worker imports the module and is the real authority, walking the runtime schema graph only when the value is a tskm `recursive()` (its `~standard.vendor` is `"tskm"`). Anything else is skipped with a diagnostic, never emitted wrong. It uses the same identity-keyed cycle guard as the JSON Schema emitter and renders a named self-referential alias directly:
 
    ```ts
    export type Category = {
@@ -328,6 +328,7 @@ What you should know:
 - **External schemas are sidecar-only.** In-place markers stay tskm-only, and external schemas never enter the tskm structural walker or Tier-1, which read tskm's internal conventions.
 - **Converter rejections are per schema.** A JSON Schema conversion the external converter rejects (for example zod `bigint`/`date`/`transform`, or valibot `transform`) is skipped with the converter's reason; the rest of the file still emits.
 - **Other libraries are opt-in, not auto-detected.** Only the configured `schemaSources` are scanned, so a Standard Schema library outside the default three produces nothing until you add its package to `schemaSources`. The pipeline itself is vendor-generic: the type query, recursion annotations, the compile gate, and spec-1.1 JSON Schema converters all work unchanged for a never-seen vendor.
+- **Re-export hubs work for `recursive()`.** If you funnel the runtime through one module (an anti-corruption layer) and author schemas against it, add that hub to `schemaSources` so its imports are scanned. A `recursive()` root reached through the hub is then routed to the structural walker by name, with no `Infer` marker. The worker confirms the runtime vendor is `"tskm"` before walking, so a same-named `recursive` exported by some other library is skipped with a diagnostic rather than mis-walked. Other discovery shapes (a local helper, a non-`recursive` re-export, a namespace import) still need an explicit `Infer` marker.
 - **Vendor identity is the package root.** tskm derives each source's vendor name from its package root (`zod/v4` becomes `zod`) and matches it against the runtime `~standard` vendor string for JSON Schema allow-listing and brand-marker imports. This holds for zod/valibot/arktype. A library whose vendor string differs from its package root is reported per file as not allow-listed (never silently dropped), but it cannot currently be enabled for JSON Schema delegation.
 
 See [`examples/standard-schema`](examples/standard-schema) for the end-to-end loop over all three vendors (transforms, brands, annotated recursion, an arktype morph).
@@ -340,7 +341,7 @@ See [`examples/standard-schema`](examples/standard-schema) for the end-to-end lo
   export const userSchema = object({ name: string() })
   ```
 
-  Schemas built through a local helper (`export const x = make()`), a `satisfies` clause, a re-export, or a namespace import are **not** found. Add an explicit `export type T = Infer<typeof x>` marker for those. For **recursive** schemas the marker must live in the schema's defining file; cross-file markers fail closed (see below).
+  Schemas built through a local helper (`export const x = make()`), a `satisfies` clause, a re-export, or a namespace import are **not** found. Add an explicit `export type T = Infer<typeof x>` marker for those. The one exception is a `recursive()` root whose `recursive` is imported from a re-export hub listed in `schemaSources`: it is found by name and routed to the walker, no marker needed (see [Standard Schema interop](#standard-schema-interop)). For **recursive** schemas the marker must live in the schema's defining file; cross-file markers fail closed (see below).
 
 - **One alias per derived name.** Two exports that derive the same type name (`user` and `userSchema` both become `User`) keep the first declaration in discovery order; the later one is skipped with a diagnostic. The canonical schema-plus-marker pair emits exactly one `User`:
 

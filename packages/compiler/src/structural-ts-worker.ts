@@ -37,13 +37,17 @@ let typeNames: ReadonlyMap<object, string> | undefined
 await runSchemaWorker<StructuralWorkerEntry>((name, value, mod) => {
   typeNames ??= buildTargetIdentityMap(mod, pairs)
   const typeName = nameFor(name)
-  const recursive = (value as { type?: unknown }).type === "recursive"
+  // `recursive` means "a tskm recursive() root" — the runtime authority for routing,
+  // independent of how `recursive` was imported (direct or via a re-export hub). The
+  // vendor gate is part of that judgement, not just the walk gate: a foreign value
+  // that merely carries `type: "recursive"` (a non-tskm vendor) reports recursive=false
+  // so the parent skips it with a diagnostic, never emitting an empty/invalid alias.
+  const recursive = (value as { type?: unknown }).type === "recursive" && isTskmWalkable(value)
   // Only declared targets are walked: the parent never consumes non-target entries,
   // and the walk contract requires the root to be IN the identity map (which only
-  // targets are). A re-exported import gets a stub here, never a body. The
-  // walkability gate is belt-and-braces: even a declared external schema that
-  // happens to carry `type: "recursive"` must never enter the tskm walker.
-  if (!recursive || !overrides.has(name) || !isTskmWalkable(value)) {
+  // targets are). A re-exported tskm recursive gets a stub here (recursive=true, no
+  // body) and is simply never consumed.
+  if (!recursive || !overrides.has(name)) {
     return {
       name,
       typeName,

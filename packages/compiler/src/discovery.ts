@@ -103,15 +103,20 @@ interface SourceImports {
   readonly named: Map<string, string>
   /** Namespace-import locals (`import * as z`) -> the schema source. */
   readonly namespaces: Map<string, string>
-  /** Local names bound specifically to @tskm/core's `recursive` export. */
+  /** Local names bound to a `recursive` named export of ANY configured source. */
   readonly recursiveLocals: Set<string>
 }
 
 /**
  * Collects every local binding imported from a configured schema source. A
  * subpath import (`zod/v4`) maps to its root source (`zod`), which doubles as
- * the vendor hint. Only @tskm/core's `recursive` participates in core-recursive
- * routing — an external export of the same name never does.
+ * the vendor hint. A `recursive` NAMED import from ANY configured source becomes
+ * a core-recursive binding (not just @tskm/core's): `recursive` is a tskm-specific
+ * export name — zod/valibot/arktype publish no such export — so an anti-corruption
+ * layer that re-exports the runtime through a hub keeps working. Detection stays a
+ * perf hint, never the final word: the structural worker validates
+ * `value.type === "recursive"` && tskm vendor before walking, so a mis-detected
+ * binding degrades to a skip + diagnostic, never wrong output.
  */
 function collectSourceImports(
   body: ReadonlyArray<OxcNode>,
@@ -141,7 +146,7 @@ function collectSourceImports(
       if (spec.type === "ImportSpecifier") {
         named.set(local, source)
         const imported = (spec.imported as { name?: string } | undefined)?.name
-        if (source === RUNTIME_MODULE && imported === "recursive") {
+        if (imported === "recursive") {
           recursiveLocals.add(local)
         }
       } else if (spec.type === "ImportNamespaceSpecifier") {
@@ -219,9 +224,14 @@ function calleeInfo(init: OxcNode | undefined, imports: SourceImports): CalleeIn
  * explicit subpath source (a configured `zod/v4`) still identifies as vendor
  * `zod` for brand-import gating and diagnostics, while the matched source
  * string keeps driving runtime-vs-standard routing.
+ *
+ * A `recursive(...)` const is tskm by construction (only tskm exports `recursive`),
+ * so it takes the tskm capability whatever source it was imported from — including a
+ * re-export hub. The structural worker is the safety net: a value that turns out not
+ * to be a tskm `recursive()` at runtime is skipped, never emitted wrong.
  */
 function capabilityFor(source: string, recursive: boolean): SchemaCapability {
-  if (source === RUNTIME_MODULE) {
+  if (source === RUNTIME_MODULE || recursive) {
     return tskmCapability(recursive)
   }
   return {
@@ -415,7 +425,10 @@ export function discoverSchemas(
     if (!id?.name || !info) {
       return undefined
     }
-    const recursive = info.source === RUNTIME_MODULE && imports.recursiveLocals.has(info.callee)
+    // `recursiveLocals` already only holds `recursive` named imports (from any
+    // configured source), so the binding test alone routes a hub-imported root to
+    // the structural path; the worker re-checks at runtime before walking.
+    const recursive = imports.recursiveLocals.has(info.callee)
     const annotationName = readAnnotationName(declarator)
     const exportedAs = annotationName ? typeExports.get(annotationName) : undefined
     return {
