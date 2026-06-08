@@ -1,6 +1,6 @@
 import type { Config } from "../types/config.ts"
 import type { OutputDataset, UnknownDataset } from "../types/dataset.ts"
-import type { Issue, IssuePathItem } from "../types/issue.ts"
+import type { Issue, IssuePathItem, IssueSeverity } from "../types/issue.ts"
 import { _received } from "./_received.ts"
 
 export interface IssueInfo {
@@ -9,6 +9,8 @@ export interface IssueInfo {
   readonly expected: string | null
   readonly message?: string | undefined
   readonly path?: readonly IssuePathItem[] | undefined
+  /** Defaults to `"error"`. A `"warning"` is reported but does not fail the parse. */
+  readonly severity?: IssueSeverity | undefined
 }
 
 type MutableDataset = {
@@ -41,6 +43,7 @@ export function _addIssue(
     message,
     input: dataset.value,
     path: info.path,
+    severity: info.severity,
   }
 
   const mutable = dataset as MutableDataset
@@ -49,7 +52,7 @@ export function _addIssue(
   } else {
     mutable.issues = [issue]
   }
-  if (info.kind === "schema") {
+  if (info.kind === "schema" && (info.severity ?? "error") === "error") {
     mutable.typed = false
   }
 }

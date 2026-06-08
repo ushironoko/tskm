@@ -1,12 +1,21 @@
+import { isReject } from "../types/config.ts"
 import type { MutableDataset, OutputDataset } from "../types/dataset.ts"
 import type { InferInput, InferOutput } from "../types/infer.ts"
 import type { Issue, IssuePathItem } from "../types/issue.ts"
 import type { BaseSchema, BaseSchemaAsync } from "../types/schema.ts"
 import { _addIssue } from "../utils/_addIssue.ts"
 import { _getStandardProps } from "../utils/_getStandardProps.ts"
+import { hasErrorIssue } from "../utils/_severity.ts"
+import { _applyRest, type RestMode } from "./object.ts"
 
 export interface ObjectEntriesAsync {
   readonly [key: string]: BaseSchema<unknown, unknown> | BaseSchemaAsync<unknown, unknown>
+}
+
+/** Options form of `objectAsync`. Mirrors the sync `rest` unknown-key policy. */
+export interface ObjectOptionsAsync {
+  readonly message?: string | undefined
+  readonly rest?: RestMode | undefined
 }
 
 type Prettify<T> = { [K in keyof T]: T[K] } & {}
@@ -24,6 +33,8 @@ export interface ObjectSchemaAsync<E extends ObjectEntriesAsync>
   readonly reference: typeof objectAsync
   readonly entries: E
   readonly message: string | undefined
+  /** Unknown-key policy (see `object`'s `rest`). The async output type stays closed. */
+  readonly rest: RestMode
 }
 
 /**
@@ -34,8 +45,11 @@ export interface ObjectSchemaAsync<E extends ObjectEntriesAsync>
 // @__NO_SIDE_EFFECTS__
 export function objectAsync<const E extends ObjectEntriesAsync>(
   entries: E,
-  message?: string,
+  arg?: string | ObjectOptionsAsync,
 ): ObjectSchemaAsync<E> {
+  const options: ObjectOptionsAsync = typeof arg === "string" ? { message: arg } : (arg ?? {})
+  const message = options.message
+  const rest: RestMode = options.rest ?? "strip"
   return {
     kind: "schema",
     type: "object",
@@ -44,6 +58,7 @@ export function objectAsync<const E extends ObjectEntriesAsync>(
     async: true,
     entries,
     message,
+    rest,
     get "~standard"() {
       return _getStandardProps(this)
     },
@@ -56,7 +71,8 @@ export function objectAsync<const E extends ObjectEntriesAsync>(
         // Build a fresh output object — never mutate the user's input.
         const output: Record<string, unknown> = {}
         let aborted = false
-        for (const key in entries) {
+        // Own keys only, matching `_applyRest` and the compiler walkers.
+        for (const key of Object.keys(entries)) {
           const valueSchema = entries[key] as
             | BaseSchema<unknown, unknown>
             | BaseSchemaAsync<unknown, unknown>
@@ -69,7 +85,7 @@ export function objectAsync<const E extends ObjectEntriesAsync>(
                 : [head]
             }
             _pushIssues(out, valueDataset.issues)
-            if (config.abortEarly) {
+            if (hasErrorIssue(valueDataset.issues) && isReject(config)) {
               out.typed = false
               aborted = true
               break
@@ -80,6 +96,9 @@ export function objectAsync<const E extends ObjectEntriesAsync>(
           }
           output[key] = valueDataset.value
         }
+        if (!aborted && rest !== "strip") {
+          aborted = _applyRest(dataset, record, entries, output, rest, message, config)
+        }
         if (!aborted) {
           out.value = output
         }
@@ -89,6 +108,18 @@ export function objectAsync<const E extends ObjectEntriesAsync>(
       return out as unknown as OutputDataset<InferObjectOutputAsync<E>>
     },
   }
+}
+
+/**
+ * Async closed-object factory: rejects undeclared keys. Equivalent to
+ * `objectAsync(entries, { rest: "exact" })`.
+ */
+// @__NO_SIDE_EFFECTS__
+export function exactObjectAsync<const E extends ObjectEntriesAsync>(
+  entries: E,
+  message?: string,
+): ObjectSchemaAsync<E> {
+  return objectAsync(entries, { rest: "exact", message })
 }
 
 function _pushIssues(dataset: { issues?: Issue[] }, incoming: readonly Issue[]): void {

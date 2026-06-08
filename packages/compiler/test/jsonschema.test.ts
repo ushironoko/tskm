@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: assertions compare against template-literal type text that contains literal "${...}"
 import { describe, expect, it } from "bun:test"
 import { resolveConfig } from "../src/config.ts"
 import { jsonSchemaOutputPath, schemaToJsonSchema } from "../src/jsonschema.ts"
@@ -55,6 +56,18 @@ describe("schemaToJsonSchema — object", () => {
       required: ["id"],
       additionalProperties: false,
     })
+  })
+
+  it("reflects the unknown-key policy in additionalProperties (#16)", () => {
+    const withRest = (rest: string) => ({
+      kind: "schema",
+      type: "object",
+      entries: { a: s.string() },
+      rest,
+    })
+    expect(schemaToJsonSchema(withRest("strip")).schema.additionalProperties).toBe(false)
+    expect(schemaToJsonSchema(withRest("exact")).schema.additionalProperties).toBe(false)
+    expect(schemaToJsonSchema(withRest("passthrough")).schema.additionalProperties).toBe(true)
   })
 })
 
@@ -249,6 +262,98 @@ describe("schemaToJsonSchema — lossy primitives warn", () => {
     const r = schemaToJsonSchema({ kind: "schema", type: "nullish", wrapped: s.string() })
     expect(r.schema).toEqual({ anyOf: [{ type: "string" }, { type: "null" }] })
     expect(r.warnings.some((w) => w.includes("undefined"))).toBe(true)
+  })
+})
+
+describe("schemaToJsonSchema — templateLiteral and discriminatedUnion (#18, #15)", () => {
+  it("templateLiteral maps to a string with a pattern and a vendor extension", () => {
+    const tmpl = {
+      kind: "schema",
+      type: "templateLiteral",
+      parts: ["user_", s.string()],
+      pattern: "^user_[\\s\\S]*?$",
+      expects: "`user_${string}`",
+    }
+    expect(schemaToJsonSchema(tmpl).schema).toEqual({
+      type: "string",
+      pattern: "^user_[\\s\\S]*?$",
+      "x-tskm-template": "`user_${string}`",
+    })
+  })
+
+  it("discriminatedUnion maps to oneOf with the discriminant as const", () => {
+    const du = {
+      kind: "schema",
+      type: "discriminated_union",
+      discriminant: "k",
+      options: [
+        s.object({ k: s.literal("c"), r: s.number() }),
+        s.object({ k: s.literal("s"), side: s.number() }),
+      ],
+    }
+    expect(schemaToJsonSchema(du).schema).toEqual({
+      oneOf: [
+        {
+          type: "object",
+          properties: { k: { const: "c" }, r: { type: "number" } },
+          required: ["k", "r"],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: { k: { const: "s" }, side: { type: "number" } },
+          required: ["k", "side"],
+          additionalProperties: false,
+        },
+      ],
+      "x-tskm-discriminant": "k",
+    })
+  })
+})
+
+describe("schemaToJsonSchema — keyed record (#19)", () => {
+  it("an unkeyed record stays additionalProperties only", () => {
+    expect(schemaToJsonSchema(s.record(s.number())).schema).toEqual({
+      type: "object",
+      additionalProperties: { type: "number" },
+    })
+  })
+
+  it("a keyed record constrains keys via propertyNames", () => {
+    const tmplKey = {
+      kind: "schema",
+      type: "templateLiteral",
+      parts: ["item_", s.string()],
+      pattern: "^item_[\\s\\S]*?$",
+      expects: "`item_${string}`",
+    }
+    expect(
+      schemaToJsonSchema({ kind: "schema", type: "record", key: tmplKey, value: s.number() })
+        .schema,
+    ).toEqual({
+      type: "object",
+      additionalProperties: { type: "number" },
+      propertyNames: {
+        type: "string",
+        pattern: "^item_[\\s\\S]*?$",
+        "x-tskm-template": "`item_${string}`",
+      },
+    })
+  })
+
+  it("a picklist key constrains keys via propertyNames enum", () => {
+    expect(
+      schemaToJsonSchema({
+        kind: "schema",
+        type: "record",
+        key: s.picklist(["a", "b"]),
+        value: s.number(),
+      }).schema,
+    ).toEqual({
+      type: "object",
+      additionalProperties: { type: "number" },
+      propertyNames: { enum: ["a", "b"] },
+    })
   })
 })
 

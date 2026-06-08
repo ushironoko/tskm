@@ -42,7 +42,7 @@ describe("recursive type-level", () => {
     expectTypeOf<Unrolled["children"]>().toEqualTypeOf<Probe[]>()
   })
 
-  test("explicit output param pins ~types for Standard Schema consumers", () => {
+  test("explicit output param pins ~standard.types for Standard Schema consumers", () => {
     type Category = { name: string; children: Category[] }
     const categorySchema = recursive<Category>((self) =>
       object({

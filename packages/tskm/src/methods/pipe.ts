@@ -1,8 +1,10 @@
 import type { Config } from "../types/config.ts"
+import { isReject } from "../types/config.ts"
 import type { OutputDataset, SuccessDataset, UnknownDataset } from "../types/dataset.ts"
 import type { InferInput, InferOutput } from "../types/infer.ts"
 import type { BaseSchema, BaseTransformation, BaseValidation } from "../types/schema.ts"
 import { _getStandardProps } from "../utils/_getStandardProps.ts"
+import { hasErrorIssue } from "../utils/_severity.ts"
 
 type AnyPipeItem = BaseValidation<any> | BaseTransformation<any, any>
 
@@ -43,7 +45,9 @@ export function pipe<
     "~run"(dataset: UnknownDataset, config: Config) {
       let current = schema["~run"](dataset, config) as OutputDataset<unknown>
       for (const item of items) {
-        if (current.issues && (config.abortEarly || config.abortPipeEarly)) break
+        // Bail only on an ERROR-severity issue; a transform `"warning"` is non-fatal and
+        // must not short-circuit the remaining pipeline items.
+        if (hasErrorIssue(current.issues) && (isReject(config) || config.abortPipeEarly)) break
         if (item.kind === "transformation") {
           // Transformations only run on a well-typed value.
           if (current.typed) {

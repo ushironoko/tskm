@@ -1,0 +1,30 @@
+import { describe, test } from "bun:test"
+import { expectTypeOf } from "expect-type"
+import { type InferOutput, nullish, number, object, optional, string } from "../src/index.ts"
+
+/**
+ * Type-level half of the faithful optional-property mode (issue #17): `InferObjectOutput`
+ * gives `optional`/`nullish` entries a `?` modifier (with `undefined` stripped) only when
+ * the object is built with `{ optionalKeys: true }`. The default stays byte-identical.
+ */
+describe("optionalKeys InferOutput (#17)", () => {
+  test("default mode: an optional entry is a required key with a `| undefined` value", () => {
+    const s = object({ a: string(), b: optional(string()) })
+    expectTypeOf<InferOutput<typeof s>>().toEqualTypeOf<{ a: string; b: string | undefined }>()
+  })
+
+  test("optionalKeys: an optional entry becomes an omittable `b?:` key", () => {
+    const s = object({ a: string(), b: optional(string()) }, { optionalKeys: true })
+    expectTypeOf<InferOutput<typeof s>>().toEqualTypeOf<{ a: string; b?: string }>()
+  })
+
+  test("optionalKeys: nullish becomes omittable with `null` kept in the value", () => {
+    const s = object({ a: string(), b: nullish(number()) }, { optionalKeys: true })
+    expectTypeOf<InferOutput<typeof s>>().toEqualTypeOf<{ a: string; b?: number | null }>()
+  })
+
+  test("optionalKeys with no optional entries is the same shape as default", () => {
+    const s = object({ a: string(), b: number() }, { optionalKeys: true })
+    expectTypeOf<InferOutput<typeof s>>().toEqualTypeOf<{ a: string; b: number }>()
+  })
+})

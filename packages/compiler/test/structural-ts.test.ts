@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: assertions compare against template-literal type text that contains literal "${...}"
 import { describe, expect, it } from "bun:test"
 import { schemaToTypeString } from "../src/structural-ts.ts"
 
@@ -369,5 +370,88 @@ describe("schemaToTypeString — non-finite number literals (spec: .gen.ts must 
     expect(walk(s.literal(1e21)).typeString).toBe("1e+21")
     expect(walk(s.literal(-5.5)).typeString).toBe("-5.5")
     expect(walk(s.literal(-0)).typeString).toBe("0")
+  })
+})
+
+describe("schemaToTypeString — faithful optional-property mode (#17)", () => {
+  // An object schema built with `{ optionalKeys: true }`, as the walker sees it.
+  const objectWith = (entries: Record<string, unknown>) => ({
+    kind: "schema",
+    type: "object",
+    optionalKeys: true,
+    entries,
+  })
+
+  it("emits `k?:` with `undefined` stripped for an optional entry", () => {
+    expect(walk(objectWith({ id: s.string(), nick: s.optional(s.string()) })).typeString).toBe(
+      "{ id: string; nick?: string }",
+    )
+  })
+
+  it("emits `k?:` keeping `null` for a nullish entry", () => {
+    expect(walk(objectWith({ id: s.string(), alt: s.nullish(s.number()) })).typeString).toBe(
+      "{ id: string; alt?: number | null }",
+    )
+  })
+
+  it("leaves required entries unchanged under the mode", () => {
+    expect(walk(objectWith({ id: s.string(), n: s.number() })).typeString).toBe(
+      "{ id: string; n: number }",
+    )
+  })
+
+  it("without the flag, optional keys stay required (byte-identical default)", () => {
+    expect(walk(s.object({ id: s.string(), nick: s.optional(s.string()) })).typeString).toBe(
+      "{ id: string; nick: string | undefined }",
+    )
+  })
+})
+
+describe("schemaToTypeString — templateLiteral and discriminatedUnion (#18, #15)", () => {
+  const tmpl = (parts: unknown[]) => ({ kind: "schema", type: "templateLiteral", parts })
+
+  it("templateLiteral emits a backtick template literal type", () => {
+    expect(walk(tmpl(["user_", s.string()])).typeString).toBe("`user_${string}`")
+    expect(walk(tmpl([s.picklist(["a", "b"]), "-", s.number()])).typeString).toBe(
+      '`${"a" | "b"}-${number}`',
+    )
+  })
+
+  it("templateLiteral escapes a backtick in a fixed segment", () => {
+    expect(walk(tmpl(["a`b", s.string()])).typeString).toBe("`a\\`b${string}`")
+  })
+
+  it("discriminatedUnion emits a tag-narrowing union of its members", () => {
+    const du = {
+      kind: "schema",
+      type: "discriminated_union",
+      discriminant: "kind",
+      options: [
+        s.object({ kind: s.literal("c"), r: s.number() }),
+        s.object({ kind: s.literal("s"), side: s.number() }),
+      ],
+    }
+    expect(walk(du).typeString).toBe('{ kind: "c"; r: number } | { kind: "s"; side: number }')
+  })
+})
+
+describe("schemaToTypeString — keyed record (#19)", () => {
+  const tmplKey = { kind: "schema", type: "templateLiteral", parts: ["item_", s.string()] }
+
+  it("an unkeyed record stays a string index signature", () => {
+    expect(walk(s.record(s.number())).typeString).toBe("{ [key: string]: number }")
+  })
+
+  it("a templateLiteral key emits a templated partial mapped type", () => {
+    expect(
+      walk({ kind: "schema", type: "record", key: tmplKey, value: s.number() }).typeString,
+    ).toBe("{ [K in `item_${string}`]?: number }")
+  })
+
+  it("a finite literal key set emits a partial mapped type", () => {
+    expect(
+      walk({ kind: "schema", type: "record", key: s.picklist(["a", "b"]), value: s.number() })
+        .typeString,
+    ).toBe('{ [K in "a" | "b"]?: number }')
   })
 })

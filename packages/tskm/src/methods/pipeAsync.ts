@@ -1,6 +1,7 @@
 import type { CheckActionAsync } from "../actions/checkAsync.ts"
 import type { TransformActionAsync } from "../actions/transformAsync.ts"
 import type { Config } from "../types/config.ts"
+import { isReject } from "../types/config.ts"
 import type { OutputDataset, SuccessDataset, UnknownDataset } from "../types/dataset.ts"
 import type { InferInput, InferOutput } from "../types/infer.ts"
 import type {
@@ -10,6 +11,7 @@ import type {
   BaseValidation,
 } from "../types/schema.ts"
 import { _getStandardProps } from "../utils/_getStandardProps.ts"
+import { hasErrorIssue } from "../utils/_severity.ts"
 
 type AnyBaseSchema = BaseSchema<unknown, unknown> | BaseSchemaAsync<unknown, unknown>
 
@@ -60,7 +62,8 @@ export function pipeAsync<
     async "~run"(dataset: UnknownDataset, config: Config) {
       let current = (await schema["~run"](dataset, config)) as OutputDataset<unknown>
       for (const item of items) {
-        if (current.issues && (config.abortEarly || config.abortPipeEarly)) break
+        // Bail only on an ERROR-severity issue; a transform `"warning"` is non-fatal.
+        if (hasErrorIssue(current.issues) && (isReject(config) || config.abortPipeEarly)) break
         if (item.kind === "transformation") {
           // Transformations only run on a well-typed value.
           if (current.typed) {

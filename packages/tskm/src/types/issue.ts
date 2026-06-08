@@ -3,6 +3,9 @@ export interface IssuePathItem {
   readonly key: PropertyKey
 }
 
+/** Issue severity. An `"error"` fails the parse; a `"warning"` is reported but non-fatal. */
+export type IssueSeverity = "error" | "warning"
+
 /**
  * Rich internal issue. Converted to the lean Standard Schema issue
  * (`{ message, path? }`) at the `~standard.validate` boundary.
@@ -22,4 +25,10 @@ export interface Issue {
   readonly input: unknown
   /** Path from the root value to the offending value. Built by parent schemas. */
   readonly path?: readonly IssuePathItem[] | undefined
+  /**
+   * Severity. Absent means `"error"` (the default), so existing issues are unchanged.
+   * Only `"error"`-severity issues fail a parse; a `"warning"` is reported alongside a
+   * successful value. Internal only: severity never crosses the Standard Schema boundary.
+   */
+  readonly severity?: IssueSeverity | undefined
 }

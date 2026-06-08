@@ -1,9 +1,11 @@
+import { isReject } from "../types/config.ts"
 import type { MutableDataset, OutputDataset } from "../types/dataset.ts"
 import type { InferInput, InferOutput } from "../types/infer.ts"
 import type { Issue, IssuePathItem } from "../types/issue.ts"
 import type { BaseSchema, BaseSchemaAsync } from "../types/schema.ts"
 import { _addIssue } from "../utils/_addIssue.ts"
 import { _getStandardProps } from "../utils/_getStandardProps.ts"
+import { hasErrorIssue } from "../utils/_severity.ts"
 
 type AnyItemSchema = BaseSchema<unknown, unknown> | BaseSchemaAsync<unknown, unknown>
 
@@ -54,7 +56,7 @@ export function arrayAsync<const TItem extends AnyItemSchema>(
                 : [head]
             }
             _pushIssues(out, valueDataset.issues)
-            if (config.abortEarly) {
+            if (hasErrorIssue(valueDataset.issues) && isReject(config)) {
               out.typed = false
               aborted = true
               break

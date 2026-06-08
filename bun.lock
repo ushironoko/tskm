@@ -53,7 +53,7 @@
     },
     "packages/compiler": {
       "name": "@tskm/compiler",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "bin": {
         "tskm": "./dist/cli.mjs",
       },
@@ -77,11 +77,12 @@
       "version": "0.1.0",
       "devDependencies": {
         "@standard-schema/spec": "1.1.0",
+        "valibot": "1.4.1",
       },
     },
     "packages/vite": {
       "name": "@tskm/vite",
-      "version": "0.0.2",
+      "version": "0.0.3",
       "dependencies": {
         "@tskm/compiler": "workspace:*",
       },

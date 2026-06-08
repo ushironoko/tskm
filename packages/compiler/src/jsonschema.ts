@@ -145,8 +145,18 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): JsonSchema {
       return walkObject(schema, ctx)
     case "array":
       return { type: "array", items: walk(schema.item, ctx) }
-    case "record":
-      return { type: "object", additionalProperties: walk(schema.value, ctx) }
+    case "record": {
+      // A keyed record (issue #19) constrains keys via `propertyNames`; an unkeyed record
+      // keeps the open `additionalProperties` form.
+      const recordValue = walk(schema.value, ctx)
+      return isObject(schema.key)
+        ? {
+            type: "object",
+            additionalProperties: recordValue,
+            propertyNames: walk(schema.key, ctx),
+          }
+        : { type: "object", additionalProperties: recordValue }
+    }
     case "tuple": {
       const items = Array.isArray(schema.items) ? schema.items : []
       return {
@@ -158,6 +168,25 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): JsonSchema {
     case "union": {
       const options = Array.isArray(schema.options) ? schema.options : []
       return { anyOf: options.map((option) => walk(option, ctx)) }
+    }
+    case "discriminated_union": {
+      // `oneOf` (members are mutually exclusive by tag) + the discriminant `const`, which
+      // each member's object walker already emits for its `literal` discriminant entry. The
+      // discriminant key is surfaced as a vendor extension (primitive contract, section 2).
+      const options = Array.isArray(schema.options) ? schema.options : []
+      const result: JsonSchema = { oneOf: options.map((option) => walk(option, ctx)) }
+      if (typeof schema.discriminant === "string") {
+        result["x-tskm-discriminant"] = schema.discriminant
+      }
+      return result
+    }
+    case "templateLiteral": {
+      // Pattern approximation (the anchored runtime regex) plus a vendor extension that
+      // carries the literal structure for richer consumers.
+      const ext = typeof schema.expects === "string" ? schema.expects : true
+      return typeof schema.pattern === "string"
+        ? { type: "string", pattern: schema.pattern, "x-tskm-template": ext }
+        : { type: "string", "x-tskm-template": ext }
     }
     case "optional":
       // The object walker drops the key from `required`; the value type is the wrapped one.
@@ -194,7 +223,9 @@ function walkObject(schema: SchemaLike, ctx: WalkContext): JsonSchema {
     type: "object",
     properties,
     required,
-    additionalProperties: false,
+    // The unknown-key policy: `passthrough` keeps undeclared keys (open object), every
+    // other mode (`strip`/`exact`/absent) is closed. (Issue #16.)
+    additionalProperties: schema.rest === "passthrough",
   }
 }
 

@@ -15,7 +15,7 @@ export { type MultipleOfAction, multipleOf } from "./actions/multipleOf.ts"
 export { type NonEmptyAction, nonEmpty } from "./actions/nonEmpty.ts"
 export { type ReadonlyAction, readonly } from "./actions/readonly.ts"
 export { type RegexAction, regex } from "./actions/regex.ts"
-export { type TransformAction, transform } from "./actions/transform.ts"
+export { type TransformAction, type TransformContext, transform } from "./actions/transform.ts"
 export { type TransformActionAsync, transformAsync } from "./actions/transformAsync.ts"
 export { type UrlAction, url } from "./actions/url.ts"
 // ---- Methods ----
@@ -36,6 +36,16 @@ export { type ArraySchemaAsync, arrayAsync } from "./schemas/arrayAsync.ts"
 export { type BigintSchema, bigint } from "./schemas/bigint.ts"
 export { type BooleanSchema, boolean } from "./schemas/boolean.ts"
 export { type DateSchema, date } from "./schemas/date.ts"
+export {
+  type DiscriminatedUnionMembers,
+  type DiscriminatedUnionSchema,
+  discriminatedUnion,
+} from "./schemas/discriminatedUnion.ts"
+export {
+  type DiscriminatedUnionMembersAsync,
+  type DiscriminatedUnionSchemaAsync,
+  discriminatedUnionAsync,
+} from "./schemas/discriminatedUnionAsync.ts"
 export { type LazySchema, lazy } from "./schemas/lazy.ts"
 export { type Literal, type LiteralSchema, literal } from "./schemas/literal.ts"
 export { type NeverSchema, never_ } from "./schemas/neverSchema.ts"
@@ -43,9 +53,18 @@ export { type NullableDefault, type NullableSchema, nullable } from "./schemas/n
 export { type NullishDefault, type NullishSchema, nullish } from "./schemas/nullish.ts"
 export { type NullSchema, null_ } from "./schemas/nullSchema.ts"
 export { type NumberSchema, number } from "./schemas/number.ts"
-export { type ObjectEntries, type ObjectSchema, object } from "./schemas/object.ts"
 export {
+  exactObject,
+  type ObjectEntries,
+  type ObjectOptions,
+  type ObjectSchema,
+  object,
+  type RestMode,
+} from "./schemas/object.ts"
+export {
+  exactObjectAsync,
   type ObjectEntriesAsync,
+  type ObjectOptionsAsync,
   type ObjectSchemaAsync,
   objectAsync,
 } from "./schemas/objectAsync.ts"
@@ -54,6 +73,13 @@ export { type PicklistOptions, type PicklistSchema, picklist } from "./schemas/p
 export { type RecordSchema, record } from "./schemas/record.ts"
 export { type RecursiveBuild, type RecursiveSchema, recursive } from "./schemas/recursive.ts"
 export { type StringSchema, string } from "./schemas/string.ts"
+export {
+  type InferTemplateLiteral,
+  type TemplateLiteralSchema,
+  type TemplatePart,
+  type TemplateParts,
+  templateLiteral,
+} from "./schemas/templateLiteral.ts"
 export {
   type InferTupleInput,
   type InferTupleOutput,
@@ -69,7 +95,7 @@ export {
   unionAsync,
 } from "./schemas/unionAsync.ts"
 export { type UnknownSchema, unknown } from "./schemas/unknownSchema.ts"
-export type { Config } from "./types/config.ts"
+export { type Config, isReject, type ParseMode } from "./types/config.ts"
 export type {
   FailureDataset,
   OutputDataset,
@@ -78,7 +104,7 @@ export type {
   UnknownDataset,
 } from "./types/dataset.ts"
 export type { Infer, InferInput, InferOutput } from "./types/infer.ts"
-export type { Issue, IssuePathItem } from "./types/issue.ts"
+export type { Issue, IssuePathItem, IssueSeverity } from "./types/issue.ts"
 export type {
   BaseSchema,
   BaseSchemaAsync,
@@ -87,6 +113,7 @@ export type {
   GenericSchema,
   GenericSchemaAsync,
   PipeItem,
+  StandardProps,
 } from "./types/schema.ts"
 export type { StandardSchemaV1 } from "./types/standard.ts"
 

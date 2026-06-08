@@ -3,6 +3,7 @@ import type { InferInput, InferOutput } from "../types/infer.ts"
 import type { BaseSchema } from "../types/schema.ts"
 import { _addIssue } from "../utils/_addIssue.ts"
 import { _getStandardProps } from "../utils/_getStandardProps.ts"
+import { hasErrorIssue } from "../utils/_severity.ts"
 
 export type UnionOptions = readonly BaseSchema<unknown, unknown>[]
 
@@ -33,12 +34,17 @@ export function union<const TOptions extends UnionOptions>(
     "~run"(dataset, config) {
       const out = dataset as MutableDataset
       const input = out.value
-      // Try each option on a FRESH dataset; the first fully-valid match wins.
+      // Try each option on a FRESH dataset; the first match without an ERROR wins (a
+      // member that succeeded with only warnings is a valid match, and its warnings are
+      // carried onto the result).
       for (const option of options) {
         const optionDataset = option["~run"]({ value: input }, config)
-        if (optionDataset.typed && !optionDataset.issues) {
+        if (optionDataset.typed && !hasErrorIssue(optionDataset.issues)) {
           out.typed = true
           out.value = optionDataset.value
+          if (optionDataset.issues) {
+            out.issues = optionDataset.issues
+          }
           return out as unknown as OutputDataset<InferOutput<TOptions[number]>>
         }
       }

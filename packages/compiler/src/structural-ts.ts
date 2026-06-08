@@ -240,12 +240,24 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): string {
       return walkObject(schema, ctx)
     case "array":
       return `${parenthesizeIfCompound(walkChild(schema.item, ".item", ctx))}[]`
-    case "record":
+    case "record": {
       // An index-signature literal, NOT `Record<string, V>`: type arguments to
       // another alias are resolved eagerly, so `Record` would make a
       // self-referential alias circular (TS2456). The literal form is deferred
       // (legal) and matches how tsgo itself renders these types.
-      return `{ [key: string]: ${walkChild(schema.value, ".value", ctx)} }`
+      const recordValue = walkChild(schema.value, ".value", ctx)
+      const keySchema = schema.key
+      if (!isObject(keySchema)) {
+        return `{ [key: string]: ${recordValue} }`
+      }
+      // A keyed record (issue #19). A keyed record is a PARTIAL dictionary, so it emits a
+      // mapped type with an optional value (`{ [K in <key>]?: V }`). This is sound for both
+      // an infinite key (`string`/`templateLiteral`) and a finite literal union (`picklist`),
+      // and the mapped form is deferred, so a recursive value avoids the TS2456 hazard the
+      // unkeyed index-signature literal also sidesteps.
+      const keyType = walkChild(keySchema, ".key", ctx)
+      return `{ [K in ${keyType}]?: ${recordValue} }`
+    }
     case "tuple": {
       const items = Array.isArray(schema.items) ? schema.items : []
       return `[${items.map((item, i) => walkChild(item, `.items[${i}]`, ctx)).join(", ")}]`
@@ -255,6 +267,29 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): string {
       return options.length === 0
         ? "never"
         : options.map((option, i) => walkChild(option, `.options[${i}]`, ctx)).join(" | ")
+    }
+    case "discriminated_union": {
+      // A tagged union emits like `union` (a `|` join of members); each member is an
+      // object carrying its literal discriminant entry, so the emitted type narrows by
+      // tag and an exhaustive check over the tag set type-checks.
+      const options = Array.isArray(schema.options) ? schema.options : []
+      return options.length === 0
+        ? "never"
+        : options.map((option, i) => walkChild(option, `.options[${i}]`, ctx)).join(" | ")
+    }
+    case "templateLiteral": {
+      // Emit a real `` `${...}` `` template literal type: fixed segments inline (escaped),
+      // placeholder parts via the normal walker recursion (so a picklist placeholder
+      // yields `${"a" | "b"}`, a number yields `${number}`, etc.).
+      const parts = Array.isArray(schema.parts) ? schema.parts : []
+      const body = parts
+        .map((part, i) =>
+          typeof part === "string"
+            ? escapeTemplateSegment(part)
+            : `\${${walkChild(part, `.parts[${i}]`, ctx)}}`,
+        )
+        .join("")
+      return `\`${body}\``
     }
     case "optional":
       return `${walkChild(schema.wrapped, ".wrapped", ctx)} | undefined`
@@ -286,13 +321,26 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): string {
 
 function walkObject(schema: SchemaLike, ctx: WalkContext): string {
   const entries = isObject(schema.entries) ? schema.entries : {}
+  // Faithful optional-property mode (issue #17): when the object was built with
+  // `{ optionalKeys: true }`, an `optional`/`nullish` entry is emitted as an omittable
+  // `k?:` with `undefined` stripped from the value, matching the runtime drop-missing
+  // output and `InferObjectOutput`. Off by default, so keys stay required and optionality
+  // lives in the VALUE union (`k: T | undefined`), exactly like the checker path.
+  const optionalKeys = schema.optionalKeys === true
   const fields: string[] = []
   for (const key of Object.keys(entries)) {
-    // Keys are ALWAYS required: `object()`'s parser writes every entry key into its
-    // output and `InferObjectOutput` carries no `?` modifier, so optionality lives
-    // in the VALUE union (`k: T | undefined`) — exactly like the checker path.
-    const rendered = walkChild(entries[key], `.entries[${key}]`, ctx)
-    fields.push(`${renderKey(key)}: ${rendered}`)
+    const entry = entries[key]
+    const entryType = isObject(entry) ? entry.type : undefined
+    if (optionalKeys && (entryType === "optional" || entryType === "nullish")) {
+      const wrapped = isObject(entry) ? entry.wrapped : undefined
+      const value = walkChild(wrapped, `.entries[${key}].wrapped`, ctx)
+      // `nullish` keeps `null` in the value (only `undefined` is dropped by the `?`).
+      const rendered = entryType === "nullish" ? `${value} | null` : value
+      fields.push(`${renderKey(key)}?: ${rendered}`)
+    } else {
+      const rendered = walkChild(entry, `.entries[${key}]`, ctx)
+      fields.push(`${renderKey(key)}: ${rendered}`)
+    }
   }
   return fields.length === 0 ? "{}" : `{ ${fields.join("; ")} }`
 }
@@ -350,6 +398,11 @@ function renderLiteralIn(value: unknown, ctx: WalkContext): string {
     return "number"
   }
   return typeof value === "string" ? JSON.stringify(value) : String(value)
+}
+
+/** Escapes a fixed template-literal segment for emission inside a `` `...` `` type. */
+function escapeTemplateSegment(segment: string): string {
+  return segment.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${")
 }
 
 const IDENTIFIER_KEY = /^[A-Za-z_$][A-Za-z0-9_$]*$/
