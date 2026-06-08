@@ -2,13 +2,20 @@
 import { describe, expect, it } from "bun:test"
 import {
   bigint,
+  brand,
   lazy,
+  literal,
+  minLength,
+  minValue,
   null_,
   number,
   picklist,
+  pipe,
+  readonly,
   safeParse,
   string,
   templateLiteral,
+  transform,
 } from "../src/index.ts"
 
 /**
@@ -75,5 +82,72 @@ describe("templateLiteral type/runtime soundness (#18 review)", () => {
     // `lazy` output is string (a valid placeholder type), but its kind cannot be bounded
     // by a regex fragment, so it fails closed at construction rather than any-matching.
     expect(() => templateLiteral([lazy(() => string())])).toThrow()
+  })
+})
+
+describe("templateLiteral rejects transforming placeholders (#18 review, fail-closed)", () => {
+  it("a direct transforming pipe placeholder is a construction error", () => {
+    // The pipe spreads its base, so its surface `type` is "string" while its OUTPUT type is
+    // `number`. A regex built from the base would accept e.g. "vabc" though the inferred type
+    // is `` `v${number}` ``, so construction fails closed rather than diverging.
+    const transformed = pipe(
+      string(),
+      transform((value: string) => Number(value)),
+    )
+    expect(() => templateLiteral(["v", transformed])).toThrow()
+  })
+
+  it("a transform nested in a pipe's base schema is still caught", () => {
+    // The OUTER pipe's own actions are validation-only (`minValue`), but its base — `pipe[0]`
+    // — is itself a transforming pipe. The guard walks `pipe[0]`, so the nested transform is
+    // not missed even though the outer action list carries no transformation.
+    const nested = pipe(
+      pipe(
+        string(),
+        transform((value: string) => Number(value)),
+      ),
+      minValue(0),
+    )
+    expect(() => templateLiteral(["v", nested])).toThrow()
+  })
+
+  it("a validation-only pipe placeholder is allowed (output type equals the base)", () => {
+    // `minLength` does not change the output type, so the base `string` fragment stays sound
+    // and the placeholder is accepted. (The validation itself is not re-run by the regex.)
+    const validated = pipe(string(), minLength(1))
+    const t = templateLiteral(["v", validated])
+    expect(safeParse(t, "vabc").success).toBe(true)
+    expect(safeParse(t, "v").success).toBe(true)
+  })
+
+  it("a runtime-identity transformation (readonly/brand) is also rejected (deliberate fail-closed)", () => {
+    // `readonly`/`brand` keep the runtime value, so they could be allowed — but the guard
+    // rejects the whole transformation kind rather than maintain a per-action allowlist a
+    // future value-transform could slip through. These placeholders carry no runtime meaning
+    // inside a regex, so the lost cases are contrived (note the redundant explicit type args
+    // they need to typecheck as a placeholder at all).
+    expect(() => templateLiteral(["v", pipe(string(), readonly<string>())])).toThrow()
+    expect(() => templateLiteral(["v", pipe(string(), brand<string, "X">("X"))])).toThrow()
+  })
+})
+
+describe("templateLiteral rejects non-finite numeric placeholders (#18 review, fail-closed)", () => {
+  it("a finite numeric literal still matches its exact text", () => {
+    // Guard regression check: finite numbers are unaffected — `literal(404)` infers
+    // `` `s-404` `` and matches only "s-404".
+    const t = templateLiteral(["s-", literal(404)])
+    expect(safeParse(t, "s-404").success).toBe(true)
+    expect(safeParse(t, "s-405").success).toBe(false)
+  })
+
+  it("a non-finite numeric literal is a construction error", () => {
+    // `literal(Infinity)`/`literal(NaN)` widen their output type to `number`, but "Infinity"
+    // and "NaN" are not members of `${number}`, so no fragment is sound — fail closed.
+    expect(() => templateLiteral([literal(Number.POSITIVE_INFINITY)])).toThrow()
+    expect(() => templateLiteral([literal(Number.NaN)])).toThrow()
+  })
+
+  it("a non-finite numeric picklist option is a construction error", () => {
+    expect(() => templateLiteral([picklist([1, Number.NaN])])).toThrow()
   })
 })

@@ -138,8 +138,10 @@ describe("warning consistency across read sites (#21)", () => {
     const schema = pipe(
       string(),
       transform((value: string, ctx) => {
-        // biome-ignore lint/suspicious/noExplicitAny: modeling an untyped JS caller
-        ;(ctx.issue as (m: string, s: any) => void)("typo severity", "warn")
+        // Model an untyped JS caller passing a typo severity. The cast only widens the
+        // severity parameter from `"error" | "warning"` to `string` (the message stays
+        // typed) — the weakest cast that lets us reach the runtime guard, no `any` needed.
+        ;(ctx.issue as (m: string, s: string) => void)("typo severity", "warn")
         return value
       }),
     )
@@ -164,6 +166,16 @@ describe("warning consistency across read sites (#21)", () => {
     if (r.success) {
       expect(r.output).toBe("HI")
       expect(r.warnings).toHaveLength(1)
+    }
+  })
+
+  it("safeParseAsync exposes an empty `warnings` array on a warning-free parse (sync parity)", async () => {
+    // The result-shape contract is symmetric: `warnings` is always present, and a parse with
+    // no warnings carries an empty array (not `undefined`/omitted) on both sync and async.
+    const r = await safeParseAsync(string(), "hi")
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.warnings).toHaveLength(0)
     }
   })
 })

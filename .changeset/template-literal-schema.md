@@ -7,5 +7,6 @@ Add a `templateLiteral` value schema (issue #18). `templateLiteral([...parts])` 
 
 - Parts are fixed string segments and placeholder schemas (`string()`, `number()`, a `picklist`/`literal` of tags, etc.). The runtime matches the input against the concatenation pattern; the output type folds the parts into a `` `${...}` `` template literal type, so a `picklist` placeholder distributes the union and a constrained string keeps its constrained type next to a discriminant.
 - The compiler emits the faithful template literal type in the structural TypeScript walker, and a `{ type: "string", pattern, "x-tskm-template": ... }` approximation in the JSON Schema walker.
+- A placeholder whose runtime match cannot be kept faithful to its inferred type fails at construction instead of diverging silently. This covers a transforming pipe placeholder (its output type differs from the base schema the regex is built from), a non-finite numeric literal, and an unbounded placeholder kind.
 
 Additive: a new factory and export, one new case in each walker. Existing `pipe(string(), regex(...))` usages are unchanged.

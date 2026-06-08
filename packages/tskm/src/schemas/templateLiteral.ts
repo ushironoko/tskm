@@ -50,6 +50,47 @@ function escapeRegex(text: string): string {
 const NEVER_MATCH = "[^\\s\\S]"
 
 /**
+ * The exact regex text for a `literal`/`picklist` option. A finite value's `String()` form is
+ * its `${…}` template form, so the fragment matches it precisely. A non-finite number
+ * (`Infinity`/`-Infinity`/`NaN`) is rejected: it has no literal type, so it widens its
+ * placeholder's output type to `number`, yet its string form ("Infinity"/"NaN") is not a
+ * member of `${number}` — no fragment can match both, so fail closed at construction rather
+ * than emit one that diverges from the inferred type.
+ */
+function literalOptionFragment(value: unknown): string {
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new Error(
+      `templateLiteral: a non-finite numeric placeholder (${String(value)}) cannot be bounded by a regex; its output type widens to \`number\` while its string form is outside \`\${number}\``,
+    )
+  }
+  return escapeRegex(String(value))
+}
+
+/**
+ * True if a placeholder carries a transformation anywhere in its pipe chain. `pipe(base, …)`
+ * spreads `base`, so a pipe's surface `type` is the BASE schema's type while its OUTPUT type
+ * is the transformed one. Computing a regex from `type` would then accept values outside the
+ * inferred template-literal type. The walk descends into every `pipe` entry — crucially
+ * `pipe[0]`, the base, which can itself be a transforming pipe — so a nested transform behind
+ * an otherwise validation-only outer pipe is not missed. A validation-only pipe carries no
+ * transformation, leaves the output type equal to the base, and stays allowed.
+ *
+ * The whole `kind: "transformation"` is rejected, including the runtime-identity refinements
+ * `readonly`/`brand` that happen to preserve the value. Exempting them would mean maintaining
+ * a per-action allowlist that any future transformation could silently slip through; rejecting
+ * the kind keeps the rule fail-closed and self-maintaining on a soundness-critical path, at the
+ * cost of two contrived placeholders with no runtime meaning inside a regex.
+ */
+function hasTransformation(node: { pipe?: unknown }): boolean {
+  const items = node.pipe
+  if (!Array.isArray(items)) return false
+  return items.some((item) => {
+    const entry = item as { kind?: unknown; pipe?: unknown }
+    return entry.kind === "transformation" || hasTransformation(entry)
+  })
+}
+
+/**
  * The regex fragment a placeholder schema contributes, kept as tight as the placeholder's
  * OUTPUT type so the runtime never accepts a string the inferred template literal type
  * rejects. Enumerable placeholders become precise alternations (an empty set matches
@@ -68,6 +109,16 @@ function placeholderFragment(schema: BaseSchema<unknown, unknown>): string {
     literal?: unknown
     options?: unknown
     wrapped?: unknown
+    pipe?: unknown
+  }
+  // Fail closed on a transforming placeholder before reading `type`: the pipe's surface
+  // `type` is the base schema's, so a regex computed from it would diverge from the
+  // placeholder's transformed OUTPUT type. Wrapper/union branches re-enter this function,
+  // so a transform nested inside `optional`/`union`/etc. is caught on re-entry.
+  if (hasTransformation(node)) {
+    throw new Error(
+      "templateLiteral: a transforming placeholder cannot be bounded by a regex; its runtime match would diverge from the inferred template-literal type. Use the schema the transform produces (e.g. `picklist`/`literal`) as the placeholder instead.",
+    )
   }
   switch (node.type) {
     case "string":
@@ -86,10 +137,10 @@ function placeholderFragment(schema: BaseSchema<unknown, unknown>): string {
     case "never":
       return NEVER_MATCH
     case "literal":
-      return escapeRegex(String(node.literal))
+      return literalOptionFragment(node.literal)
     case "picklist":
       return Array.isArray(node.options) && node.options.length > 0
-        ? `(?:${node.options.map((option) => escapeRegex(String(option))).join("|")})`
+        ? `(?:${node.options.map((option) => literalOptionFragment(option)).join("|")})`
         : NEVER_MATCH
     case "union":
       return Array.isArray(node.options) && node.options.length > 0
