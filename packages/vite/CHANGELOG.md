@@ -1,5 +1,12 @@
 # @tskm/vite
 
+## 0.0.4
+
+### Patch Changes
+
+- Updated dependencies [b61e04a]
+  - @tskm/compiler@0.3.0
+
 ## 0.0.3
 
 ### Patch Changes
