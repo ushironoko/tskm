@@ -91,8 +91,10 @@ parse(userSchema, { name: "Ada", age: 36, tags: ["math"] })
 // → typed output; throws a TskmError on failure
 
 const result = safeParse(userSchema, { name: "", age: 1, tags: [] })
-// → { success: false, issues: [...] }  (discriminated result, never throws)
+// → { success: false, issues: [...], warnings: [] }  (discriminated result, never throws)
 ```
+
+The result always carries `warnings` (non-fatal `"warning"`-severity issues); a parse that produced only warnings still `success`es. See [Issue severity](#issue-severity-and-warnings).
 
 **Materialize the type.** Run the compiler and import the generated type:
 
@@ -125,9 +127,39 @@ export type User = {
 import type { User } from "./user.schema.gen"
 ```
 
-Schemas: `string number boolean bigint date literal null_ undefined_ any unknown never_ picklist object array record tuple union optional nullable nullish lazy recursive` (+ async `objectAsync` `arrayAsync` `unionAsync`).
+Schemas: `string number boolean bigint date literal templateLiteral null_ undefined_ any unknown never_ picklist object exactObject array record tuple union discriminatedUnion optional nullable nullish lazy recursive` (+ async `objectAsync` `exactObjectAsync` `arrayAsync` `unionAsync` `discriminatedUnionAsync` `recordAsync`).
 Actions (via `pipe`): `minLength maxLength length minValue maxValue integer multipleOf email url regex nonEmpty check transform brand readonly` (+ `checkAsync` `transformAsync`).
 Methods: `pipe parse safeParse is assert fallback` (+ `parseAsync safeParseAsync pipeAsync`).
+
+## Issue severity and warnings
+
+Every issue carries a `severity` of `"error"` (the default) or `"warning"`. Success is decided by
+the absence of any `"error"`: a parse that produced only warnings still succeeds, and the warnings
+ride the result. Both `safeParse` branches expose `warnings`, so reading it never needs a success
+check:
+
+```ts
+const result = safeParse(schema, input)
+result.warnings // readonly Issue[], always present (empty when there are none)
+```
+
+A `transform` reports a non-fatal observation through its context, which keeps the parse
+successful while still surfacing the diagnostic:
+
+```ts
+pipe(
+  string(),
+  transform((value: string, ctx) => {
+    ctx.issue("`title` is deprecated; use `name`", "warning")
+    return value
+  }),
+)
+```
+
+The parse mode governs how the runtime treats issues end to end. The default `"report"` mode
+collects every issue across the whole value; `"reject"` bails at the first error as a fast
+acceptance gate (`abortEarly: true` is the back-compat alias). `isReject(config)` reads the active
+mode. See [`examples/ssot`](examples/ssot) for the warning channel in a real schema.
 
 ## CLI
 
@@ -248,15 +280,19 @@ The **experimental JSON Schema** emitter is different: it walks the runtime sche
 | `bigint` | `bigint` | `{ "type": "string" }` ⚠ |
 | `date` | `Date` | `{ "type": "string", "format": "date-time" }` ⚠ |
 | `literal(x)` | `x` (non-finite numbers widen to `number` ⚠) | `{ "const": x }` |
+| `templateLiteral(["p_", string()])` | `` `p_${string}` `` (template literal type, not widened to `string`) | `{ "type": "string", "pattern": ... }` |
 | `picklist([...])` | union of literals | `{ "enum": [...] }` |
 | `null_` `undefined_` | `null` `undefined` | `{ "type": "null" }` · `{}` ⚠ |
 | `any` `unknown` `never_` | `any` `unknown` `never` | `{}` · `{}` · `{ "not": {} }` |
-| `object({...})` | `{ k: T }` | `{ "type": "object", "properties", "required", "additionalProperties": false }` |
+| `object({...})` | `{ k: T }` (unknown keys stripped) | `{ "type": "object", "properties", "required", "additionalProperties": false }` |
+| `exactObject({...})` / `object(_, { rest })` | `{ k: T }` (same shape; `exact` rejects unknown keys, `passthrough` copies them through) | `additionalProperties: false` (`exact`/`strip`) · `true` (`passthrough`) |
 | `array(T)` | `T[]` | `{ "type": "array", "items": T }` |
-| `record(V)` | `{ [key: string]: V }` (index signature; also legal inside recursive aliases) | `{ "type": "object", "additionalProperties": V }` |
+| `record(V)` | `{ [key: string]: V }` (open index signature; also legal inside recursive aliases) | `{ "type": "object", "additionalProperties": V }` |
+| `record(K, V)` | `{ [P in K-output]?: V }` (templated/picklist key, partial; a `regex` key widens to `string` ⚠) | `additionalProperties: V`, `propertyNames: K` |
 | `tuple([A, B])` | `[A, B]` | `{ "type": "array", "prefixItems": [A, B], "items": false }` |
 | `union([A, B])` | `A \| B` | `{ "anyOf": [A, B] }` |
-| `optional(T)` | `T \| undefined` | inside `object`: `T`, key dropped from `required`; standalone: `T` ⚠ (drops `undefined`) |
+| `discriminatedUnion("k", [A, B])` | `A \| B` (same shape as `union`; O(1) tag dispatch + `.literals`/`.mapping` metadata) | `{ "oneOf": [A, B], "x-tskm-discriminant": "k" }` |
+| `optional(T)` | `T \| undefined`; under `object(_, { optionalKeys: true })` the key is omittable (`k?: T`) | inside `object`: `T`, key dropped from `required`; standalone: `T` ⚠ (drops `undefined`) |
 | `nullable(T)` | `T \| null` | `{ "anyOf": [T, { "type": "null" }] }` |
 | `nullish(T)` | `T \| null \| undefined` | `{ "anyOf": [T, { "type": "null" }] }` ⚠ (drops `undefined`) |
 | `lazy(() => T)` | recursive `T` (needs a hand-written annotation) | `$ref` / `$defs` |
@@ -383,25 +419,35 @@ See [`examples/standard-schema`](examples/standard-schema) for the end-to-end lo
 
 - **`lazy` stays as the non-recursive defer / escape hatch.** lazy-based recursion still needs the old hand-written `GenericSchema<T>` annotation (the "before" form shown in [Why tskm?](#why-tskm)) and is not auto-materialized in v1. At runtime both `lazy` and `recursive` follow the input's depth and are not cycle-guarded, so a pathologically deep value can overflow the stack.
 
-- **`optional(x)`** renders as `k: T | undefined`, not `k?: T` (the value is the same; the key is still required in the object position). JSON Schema correctly drops it from `required`:
+- **`optional(x)` renders as `k: T | undefined` by default**, not `k?: T` (the value is the same; the key is still required in the object position). JSON Schema drops it from `required` either way:
 
   ```ts
   export const profileSchema = object({ nickname: optional(string()) })
   // generates: type Profile = { nickname: string | undefined }
   ```
 
+  Opt into the faithful-optional mode to emit an omittable key (`k?: T`) instead, which mirrors exactly what the validator accepts:
+
+  ```ts
+  export const profileSchema = object({ nickname: optional(string()) }, { optionalKeys: true })
+  // generates: type Profile = { nickname?: string }
+  ```
+
+  `optionalKeys` must be the literal `true` (an inline `{ optionalKeys: true }` or an `as const`) for the omittable type to resolve. See [`examples/ssot`](examples/ssot).
+
 - **In-place mode** only recognizes *single-line* `export type T = Infer<typeof X>` markers, and trailing content on that line is dropped on first conversion. It is experimental and opt-in.
 
 - **JSON Schema** runs your schema module in an isolated subprocess. It assumes the module is side-effect-free and imports cleanly under the chosen runtime (`--exec`/`execPath`). `transform`/refinements that JSON Schema can't express are warned and omitted. `minValue`/`maxValue` map to `minimum`/`maximum` and are only meaningful on a number base (on a `date` base they emit numeric bounds that don't apply to the string schema). Recursive (`lazy`/`recursive`) schemas become `$ref`/`$defs`. `recursive()` roots are named after their exports (`Category`), while other hoisted cycles keep kind-derived names (`object`, `object_2`, and so on).
 
-- **`union`** emits a single schema-level issue on failure (no per-member aggregation yet).
+- **`union`** emits a single schema-level issue on failure (no per-member aggregation yet). `discriminatedUnion` also emits a single schema-level issue (path-unscoped) whose `expected` names the discriminant and its tag set, since the tag alone selects the member; an unknown or missing tag fails there rather than per member.
 
 - **`pipe(schema, transform(fn))`** infers `fn`'s input from an explicit parameter annotation; annotate it (`transform((s: string) => s.trim())`) when the input isn't otherwise constrained.
 
 ## Examples
 
 - [`examples/basic`](examples/basic): the smallest end-to-end loop, schema → generated type → validate.
-- [`examples/advanced`](examples/advanced): discriminated unions, a recursive JSON schema materialized by `recursive()`, and the explicit `export type T = Infer<typeof schema>` marker.
+- [`examples/advanced`](examples/advanced): a `discriminatedUnion` with derived tag metadata, a recursive JSON schema materialized by `recursive()`, and the explicit `export type T = Infer<typeof schema>` marker.
+- [`examples/ssot`](examples/ssot): the **single-source-of-truth** primitives composed in one place, `templateLiteral` ids, faithful optional keys, a `record` keyed by a template literal, `exactObject` closed shapes, `discriminatedUnion`, and the issue severity / warning channel.
 - [`examples/standard-schema`](examples/standard-schema): **zod, valibot and arktype** schemas compiled by one tskm pipeline, with transform/morph output types, branded ids (`$brand`/`Brand` imports), and annotated recursion.
 
 ## Development

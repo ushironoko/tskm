@@ -2,7 +2,7 @@ import { safeParse } from "@tskm/core"
 import type { Product, User } from "./user.schema.gen.ts"
 import { productSchema, userSchema } from "./user.schema.ts"
 
-// The generated types are concrete — no `Infer<typeof schema>` at the use site, so the
+// The generated types are concrete, with no `Infer<typeof schema>` at the use site, so the
 // type system pays nothing to consume them.
 const user: User = {
   name: "Ada",

@@ -39,6 +39,16 @@
         "@tskm/compiler": "workspace:*",
       },
     },
+    "examples/ssot": {
+      "name": "@tskm/example-ssot",
+      "version": "0.0.1",
+      "dependencies": {
+        "@tskm/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@tskm/compiler": "workspace:*",
+      },
+    },
     "examples/standard-schema": {
       "name": "@tskm/example-standard-schema",
       "version": "0.0.1",
@@ -53,7 +63,7 @@
     },
     "packages/compiler": {
       "name": "@tskm/compiler",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "bin": {
         "tskm": "./dist/cli.mjs",
       },
@@ -82,7 +92,7 @@
     },
     "packages/vite": {
       "name": "@tskm/vite",
-      "version": "0.0.3",
+      "version": "0.0.4",
       "dependencies": {
         "@tskm/compiler": "workspace:*",
       },
@@ -308,6 +318,8 @@
     "@tskm/example-advanced": ["@tskm/example-advanced@workspace:examples/advanced"],
 
     "@tskm/example-basic": ["@tskm/example-basic@workspace:examples/basic"],
+
+    "@tskm/example-ssot": ["@tskm/example-ssot@workspace:examples/ssot"],
 
     "@tskm/example-standard-schema": ["@tskm/example-standard-schema@workspace:examples/standard-schema"],
 
