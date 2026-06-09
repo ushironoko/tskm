@@ -8,7 +8,7 @@ This example composes the primitives that make that hold: a `templateLiteral` id
 optional key, a `record` keyed by a template literal, an `exactObject` closed shape, a
 `discriminatedUnion` with O(1) tag dispatch, and the issue severity channel.
 
-## 1. Structural fidelity — `templateLiteral`, faithful optional, keyed `record`
+## 1. Structural fidelity: `templateLiteral`, faithful optional, keyed `record`
 
 [`src/node.schema.ts`](src/node.schema.ts) is a recursive node, written data-first. Three
 primitives each close a gap between what the validator accepts and what the generated type says:
@@ -48,7 +48,7 @@ The `attrs` key is templated (`attr_${string}`), not a bare `{ [key: string]: nu
 of these is also enforced at runtime, so a wrong id prefix or an out-of-pattern key is rejected by
 `safeParse`.
 
-## 2. Tag discrimination — `discriminatedUnion` and `exactObject`
+## 2. Tag discrimination: `discriminatedUnion` and `exactObject`
 
 [`src/event.schema.ts`](src/event.schema.ts) is a tagged, closed union. Each member is an
 `exactObject`, so an undeclared key is rejected with a path-precise issue instead of silently
@@ -68,7 +68,7 @@ exposed as data, so an exhaustive handler is derived from the schema rather than
 schema. The generated `Event` type is the union the members describe, narrowing on `type`
 ([`event.schema.gen.ts`](src/event.schema.gen.ts)).
 
-## 3. Severity channel — non-fatal warnings
+## 3. Severity channel: non-fatal warnings
 
 The `renamed` member carries a deprecated `title`. Its `transform` reports through the severity
 channel with `ctx.issue(message, "warning")`. A `"warning"` is non-fatal, so the parse still

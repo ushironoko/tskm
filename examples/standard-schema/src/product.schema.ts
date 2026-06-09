@@ -1,6 +1,6 @@
 import * as v from "valibot"
 
-// A plain valibot schema — same compiler, same pipeline as the zod file:
+// A plain valibot schema, same compiler, same pipeline as the zod file:
 // valibot is a default schemaSource, the `~standard` probe confirms it, and
 // the sidecar carries the inferred OUTPUT type.
 export const productSchema = v.object({

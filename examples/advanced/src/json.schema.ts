@@ -2,7 +2,7 @@ import { array, boolean, null_, number, record, recursive, string, union } from 
 
 // A recursive (self-referential) schema, written DATA-FIRST. `recursive` passes the
 // self-reference INTO the builder, so the declaring const never appears in its own
-// initializer — no hand-written `type Json`, no `GenericSchema<Json>` annotation, no
+// initializer: no hand-written `type Json`, no `GenericSchema<Json>` annotation, no
 // `lazy(() => …)` wrappers, and TypeScript's implicit-any rule for self-referential
 // initializers (TS7022) never fires.
 //

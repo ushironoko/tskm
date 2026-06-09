@@ -9,7 +9,7 @@ import { nodeSchema } from "./node.schema.ts"
 // DISCRIMINATION (`discriminatedUnion`). The generated types and the validators agree because
 // they come from the same declaration.
 
-// 1. Structural fidelity — the generated `Node` mirrors exactly what `nodeSchema` accepts.
+// 1. Structural fidelity: the generated `Node` mirrors exactly what `nodeSchema` accepts.
 //    `id` is templated (`node_${string}`), `label` is omittable (`label?:`), and `attrs` is a
 //    templated index signature. Each assignment below would fail `tsgo --noEmit` if codegen ever
 //    widened the id to `string`, made `label` required, or dropped the templated key.
@@ -27,7 +27,7 @@ console.log("node valid:", nodeResult.success)
 const badId = safeParse(nodeSchema, { id: "x_root", attrs: {}, children: [] })
 console.log("bad id rejected:", !badId.success)
 
-// 2. Tag discrimination — `discriminatedUnion` dispatches on `type` in O(1), and exposes the
+// 2. Tag discrimination: `discriminatedUnion` dispatches on `type` in O(1), and exposes the
 //    tags as data so an exhaustive handler is DERIVED from the schema, not re-declared.
 const events: Event[] = [
   { type: "created", id: "evt_1", at: 1 },
@@ -46,12 +46,12 @@ for (const event of events) {
 console.log("event tags:", eventSchema.literals.join(", ")) // created, renamed
 console.log("member for 'renamed' resolved from tag:", eventSchema.mapping.has("renamed"))
 
-// 3. Closed shape — each member is an `exactObject`, so an undeclared key fails the parse with a
+// 3. Closed shape: each member is an `exactObject`, so an undeclared key fails the parse with a
 //    path-precise issue instead of being silently dropped.
 const withUnknownKey = safeParse(eventSchema, { type: "created", id: "evt_3", at: 2, extra: true })
 console.log("unknown key rejected:", !withUnknownKey.success)
 
-// 4. Severity channel — `renamed.title` is deprecated. Its transform reports a `"warning"`, which
+// 4. Severity channel: `renamed.title` is deprecated. Its transform reports a `"warning"`, which
 //    is non-fatal: the parse SUCCEEDS and the diagnostic rides `result.warnings`.
 const deprecated = safeParse(eventSchema, { type: "renamed", id: "evt_4", title: "Old name" })
 if (deprecated.success) {

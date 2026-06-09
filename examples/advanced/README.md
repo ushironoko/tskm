@@ -42,11 +42,11 @@ from the one declaration rather than re-stated by hand. `shapeSchema.literals` l
 (`["circle", "rectangle", "text"]`), and `shapeSchema.mapping` resolves a tag to its member
 schema (a `ReadonlyMap`). [`src/main.ts`](src/main.ts) reads both.
 
-## 2. Recursive / cyclic schema — data-first with `recursive()`
+## 2. Recursive / cyclic schema: data-first with `recursive()`
 
 [`src/json.schema.ts`](src/json.schema.ts) models a JSON value, which is both a **union** and
 **recursive** (a JSON value contains JSON values). TypeScript cannot *infer* a self-referential
-type — but you don't have to write one either. `recursive` passes the self-reference INTO the
+type, but you don't have to write one either. `recursive` passes the self-reference INTO the
 builder, so the declaring const never appears in its own initializer:
 
 ```ts
@@ -55,7 +55,7 @@ export const jsonSchema = recursive((self) =>
 )
 ```
 
-No hand-written `type Json`, no `GenericSchema<Json>` annotation, no `lazy(() => …)` wrappers —
+No hand-written `type Json`, no `GenericSchema<Json>` annotation, no `lazy(() => …)` wrappers:
 the three pieces of ceremony recursion used to require. `tskm gen` cannot ask the checker for
 this type (inference always collapses a value-level self-reference), so it walks the runtime
 schema graph instead and materializes the named self-referential alias
@@ -68,14 +68,14 @@ export type Json = string | number | boolean | null | Json[] | {
 ```
 
 > The record position is an index-signature literal on purpose: `Record<string, Json>` inside a
-> self-referential alias is a circularity error (TS2456) — type arguments to another alias are
+> self-referential alias is a circularity error (TS2456); type arguments to another alias are
 > resolved eagerly. The literal form is the deferred, legal spelling.
 
 > `lazy` still exists as the non-recursive defer / escape hatch; lazy-based recursion keeps the
 > old hand-annotation requirement. At runtime both `lazy` and `recursive` follow the input's
 > depth and are not cycle-guarded, so a pathologically deep value can overflow the stack.
 
-## 3. The explicit `Infer` marker — opt-in discovery
+## 3. The explicit `Infer` marker: opt-in discovery
 
 tskm's auto-discovery is syntactic: it only finds a **direct** `export const x = object(…)`
 (or another tskm factory). A schema built by a **helper** is invisible to it. In
@@ -89,14 +89,14 @@ function makeEntity<E extends ObjectEntries>(entries: E) {
 
 export const bookSchema = makeEntity({ title: string(), pages: number() })
 
-// Opt in explicitly — this marker is what `tskm gen` keys on.
+// Opt in explicitly. This marker is what `tskm gen` keys on.
 export type Book = Infer<typeof bookSchema>
 ```
 
 `export type T = Infer<typeof schema>` (or `InferOutput<…>`) tells the compiler to materialize
 that schema anyway. It writes the concrete `Book` into [`book.schema.gen.ts`](src/book.schema.gen.ts);
 import `Book` from there. (`tskm gen --mode inplace` rewrites the marker *in place* instead of
-writing a sidecar — see the root README.)
+writing a sidecar. See the root README.)
 
 ## Generate
 
@@ -108,7 +108,7 @@ bun packages/compiler/dist/cli.mjs gen --root examples/advanced
 ```
 
 Recursive schemas are resolved by an isolated worker that **imports your schema module**, so the
-worker runtime must be able to import `.ts` — run the CLI with bun (as above), or set
+worker runtime must be able to import `.ts`. Run the CLI with bun (as above), or set
 `worker.execPath` in `tskm.config.ts`. Everything else stays on the static checker path.
 
 `tsconfig.json` maps `@tskm/core` to the workspace source via `paths` so the checker can resolve
