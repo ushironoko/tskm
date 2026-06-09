@@ -11,7 +11,7 @@
  */
 
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { join } from "node:path"
 
 export interface ProfileOptions {
@@ -32,7 +32,7 @@ export interface ProfileOptions {
 }
 
 export interface ProfileArtifacts {
-  /** Path to the captured `.cpuprofile`, or null if none was produced. */
+  /** Path to the captured `.cpuprofile`, or null if the run failed (non-zero exit) or produced nothing. */
   readonly cpuprofile: string | null
   /** Path to the markdown summary, or null. */
   readonly markdown: string | null
@@ -41,17 +41,22 @@ export interface ProfileArtifacts {
 }
 
 /**
- * Spawns `bun --cpu-prof <script>` and returns the artifact paths. Because we pass an
- * explicit `--cpu-prof-name`, Bun writes a deterministic `<name>.cpuprofile` (and `<name>.md`
- * with `--cpu-prof-md`), overwriting any prior run. We look the produced files up by that
- * exact name rather than by a before/after directory diff, so a re-run that overwrites an
- * existing profile is still detected as success.
+ * Spawns `bun --cpu-prof <script>` and returns the artifact paths. Because we pass an explicit
+ * `--cpu-prof-name`, Bun writes deterministically-named files (`<name>.cpuprofile`, and
+ * `<name>.md` with `--cpu-prof-md`). Those fixed names mean a previous run's artifacts could
+ * otherwise be mistaken for this run's output, so the expected paths are deleted before
+ * spawning and a non-null path is returned only on a clean exit (status 0) with the file
+ * present. Deletion makes the post-run `existsSync` authoritative for "produced by this run",
+ * and the status gate rejects the case where Bun flushes a partial profile on a crashing exit.
  */
 export function profileScript(options: ProfileOptions): ProfileArtifacts {
   const { script, outDir, name } = options
   const intervalUs = options.intervalUs ?? 200
   const markdown = options.markdown ?? true
   mkdirSync(outDir, { recursive: true })
+
+  const cpuprofilePath = join(outDir, `${name}.cpuprofile`)
+  const mdPath = join(outDir, `${name}.md`)
 
   // Bun appends `.cpuprofile` (and `.md`) to the name, so pass the bare base name.
   const flags = [
@@ -64,6 +69,10 @@ export function profileScript(options: ProfileOptions): ProfileArtifacts {
     flags.push("--cpu-prof-md")
   }
 
+  // Remove any prior run's artifacts so a file seen after the spawn was written by THIS run.
+  rmSync(cpuprofilePath, { force: true })
+  rmSync(mdPath, { force: true })
+
   const result = spawnSync("bun", [...flags, script, ...(options.args ?? [])], {
     cwd: process.cwd(),
     env: { ...process.env, ...options.env },
@@ -71,12 +80,11 @@ export function profileScript(options: ProfileOptions): ProfileArtifacts {
     stdio: ["ignore", "pipe", "pipe"],
   })
 
-  const cpuprofilePath = join(outDir, `${name}.cpuprofile`)
-  const mdPath = join(outDir, `${name}.md`)
+  const ok = result.status === 0
 
   return {
-    cpuprofile: existsSync(cpuprofilePath) ? cpuprofilePath : null,
-    markdown: markdown && existsSync(mdPath) ? mdPath : null,
+    cpuprofile: ok && existsSync(cpuprofilePath) ? cpuprofilePath : null,
+    markdown: ok && markdown && existsSync(mdPath) ? mdPath : null,
     exitCode: result.status ?? -1,
     stderr: result.stderr ?? "",
   }
