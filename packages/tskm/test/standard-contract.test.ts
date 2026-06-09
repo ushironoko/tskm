@@ -22,6 +22,7 @@ import {
   optional,
   picklist,
   record,
+  recordAsync,
   recursive,
   string,
   templateLiteral,
@@ -107,6 +108,20 @@ const standardCases: ReadonlyArray<ConformanceCase> = [
     invalid: 1,
   },
   { name: "arrayAsync", schema: arrayAsync(string()), async: true, valid: ["x"], invalid: [1] },
+  {
+    name: "recordAsync",
+    schema: recordAsync(number()),
+    async: true,
+    valid: { a: 1 },
+    invalid: { a: "x" },
+  },
+  {
+    name: "recordAsyncKeyed",
+    schema: recordAsync(picklist(["a", "b"]), number()),
+    async: true,
+    valid: { a: 1 },
+    invalid: { c: 1 },
+  },
   {
     name: "objectAsync",
     schema: objectAsync({ a: string() }),

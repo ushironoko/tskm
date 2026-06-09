@@ -71,6 +71,7 @@ export {
 export { type Default, type OptionalSchema, optional } from "./schemas/optional.ts"
 export { type PicklistOptions, type PicklistSchema, picklist } from "./schemas/picklist.ts"
 export { type RecordSchema, record } from "./schemas/record.ts"
+export { type RecordKeyAsync, type RecordSchemaAsync, recordAsync } from "./schemas/recordAsync.ts"
 export { type RecursiveBuild, type RecursiveSchema, recursive } from "./schemas/recursive.ts"
 export { type StringSchema, string } from "./schemas/string.ts"
 export {
