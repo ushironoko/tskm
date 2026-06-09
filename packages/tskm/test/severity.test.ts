@@ -1,18 +1,25 @@
 import { describe, expect, it } from "bun:test"
 import {
+  array,
+  arrayAsync,
   assert,
   fallback,
   number,
   object,
+  objectAsync,
   parse,
+  parseAsync,
   pipe,
   pipeAsync,
+  record,
   safeParse,
   safeParseAsync,
   string,
   transform,
   transformAsync,
+  tuple,
   union,
+  unionAsync,
 } from "../src/index.ts"
 
 /**
@@ -176,6 +183,124 @@ describe("warning consistency across read sites (#21)", () => {
     expect(r.success).toBe(true)
     if (r.success) {
       expect(r.warnings).toHaveLength(0)
+    }
+  })
+})
+
+describe("warning is non-fatal at every container/method read site (#21)", () => {
+  const warned = pipe(
+    string(),
+    transform((value: string, ctx) => {
+      ctx.issue("deprecated", "warning")
+      return value.toUpperCase()
+    }),
+  )
+  const warnedAsync = pipeAsync(
+    string(),
+    transformAsync(async (value: string, ctx) => {
+      ctx.issue("deprecated", "warning")
+      return value.toUpperCase()
+    }),
+  )
+
+  it("array carries a child warning and still succeeds", () => {
+    const r = safeParse(array(warned), ["hi", "yo"])
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.output).toEqual(["HI", "YO"])
+      expect(r.warnings).toHaveLength(2)
+    }
+  })
+
+  it("arrayAsync carries a child warning and still succeeds", async () => {
+    const r = await safeParseAsync(arrayAsync(warnedAsync), ["hi"])
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.warnings).toHaveLength(1)
+    }
+  })
+
+  it("tuple carries a member warning and still succeeds", () => {
+    const r = safeParse(tuple([warned, number()]), ["hi", 1])
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.output).toEqual(["HI", 1])
+      expect(r.warnings).toHaveLength(1)
+    }
+  })
+
+  it("record carries a value warning and still succeeds", () => {
+    const r = safeParse(record(warned), { a: "hi" })
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.output).toEqual({ a: "HI" })
+      expect(r.warnings).toHaveLength(1)
+    }
+  })
+
+  it("objectAsync carries a value warning and still succeeds", async () => {
+    const r = await safeParseAsync(objectAsync({ a: warnedAsync }), { a: "hi" })
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.output).toEqual({ a: "HI" })
+      expect(r.warnings).toHaveLength(1)
+    }
+  })
+
+  it("unionAsync accepts a member that produced only a warning", async () => {
+    const r = await safeParseAsync(unionAsync([number(), warnedAsync]), "hi")
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.output).toBe("HI")
+      expect(r.warnings).toHaveLength(1)
+    }
+  })
+
+  it("parseAsync returns the value on a warning-only parse (does not throw)", async () => {
+    expect(await parseAsync(warnedAsync, "hi")).toBe("HI")
+  })
+
+  it("a pipe warning does NOT short-circuit later pipe items (sync)", () => {
+    let secondRan = false
+    const schema = pipe(
+      string(),
+      transform((value: string, ctx) => {
+        ctx.issue("deprecated", "warning")
+        return value
+      }),
+      transform((value: string) => {
+        secondRan = true
+        return value.toUpperCase()
+      }),
+    )
+    const r = safeParse(schema, "hi")
+    expect(r.success).toBe(true)
+    expect(secondRan).toBe(true)
+    if (r.success) {
+      expect(r.output).toBe("HI")
+      expect(r.warnings).toHaveLength(1)
+    }
+  })
+
+  it("a pipeAsync warning does NOT short-circuit later items (async)", async () => {
+    let secondRan = false
+    const schema = pipeAsync(
+      string(),
+      transformAsync(async (value: string, ctx) => {
+        ctx.issue("deprecated", "warning")
+        return value
+      }),
+      transformAsync(async (value: string) => {
+        secondRan = true
+        return value.toUpperCase()
+      }),
+    )
+    const r = await safeParseAsync(schema, "hi")
+    expect(r.success).toBe(true)
+    expect(secondRan).toBe(true)
+    if (r.success) {
+      expect(r.output).toBe("HI")
+      expect(r.warnings).toHaveLength(1)
     }
   })
 })

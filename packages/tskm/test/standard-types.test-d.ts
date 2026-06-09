@@ -10,6 +10,8 @@ import {
   object,
   pipe,
   recursive,
+  type StandardProps,
+  type StandardSchemaV1,
   string,
   transform,
   union,
@@ -88,5 +90,12 @@ describe("standard.types present marker (#20)", () => {
     const s = object({ a: string(), b: number() })
     expectTypeOf<InferOutput<typeof s>>().toEqualTypeOf<{ a: string; b: number }>()
     expectTypeOf<InferInput<typeof s>>().toEqualTypeOf<{ a: string; b: number }>()
+  })
+
+  test("AC3: StandardProps stays assignable to the spec's Props (contract unchanged)", () => {
+    // Making `~standard.types` a PRESENT carrier must not break the Standard Schema contract:
+    // `StandardProps` must still extend the spec's `Props`, so a tskm schema is a valid
+    // `StandardSchemaV1` to any vendor-neutral consumer.
+    expectTypeOf<StandardProps<string, number>>().toExtend<StandardSchemaV1.Props<string, number>>()
   })
 })

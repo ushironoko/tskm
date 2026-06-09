@@ -36,6 +36,24 @@ describe("faithful optional-property runtime mode (#17)", () => {
     expect(parse(schema, { a: "x", b: "y" })).toEqual({ a: "x", b: "y" })
   })
 
+  it("explicit `{ optionalKeys: false }` materializes the missing key (legacy, like the default)", () => {
+    // The runtime enables the drop only for an exact `true`, so an explicit `false` is the
+    // legacy behavior: a missing optional key is present as `undefined`. `schema.optionalKeys`
+    // reflects the false flag.
+    const schema = object({ a: string(), b: optional(string()) }, { optionalKeys: false })
+    expect(schema.optionalKeys).toBe(false)
+    const out = parse(schema, { a: "x" })
+    expect(out).toEqual({ a: "x", b: undefined })
+    expect("b" in out).toBe(true)
+  })
+
+  it("a runtime-widened `boolean` flag that is false also materializes (legacy)", () => {
+    const flag: boolean = false
+    const schema = object({ a: string(), b: optional(string()) }, { optionalKeys: flag })
+    const out = parse(schema, { a: "x" })
+    expect("b" in out).toBe(true)
+  })
+
   it("optionalKeys: an explicit `{ b: undefined }` input is dropped like a missing key", () => {
     // The drop is on the output value, so an explicitly-supplied `undefined` is omitted,
     // matching the omittable `b?: string` type (whose value excludes `undefined`).
