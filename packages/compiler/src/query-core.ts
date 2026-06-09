@@ -50,6 +50,18 @@ export function withQueryFile<T>(
   body: string,
   fn: () => T,
 ): T {
+  if (client.supportsOverlay) {
+    // In-memory overlay: no disk write and no file-set change. The overlay document is keyed
+    // by the same absolute path callers query, so getTypeAtPosition resolves against it. Only
+    // taken when the runtime advertises the capability; a stock native-preview tsgo does not,
+    // so it falls through to the disk path below (byte-identical to the historical behavior).
+    try {
+      client.applyOverlay([{ document: queryFileAbs, text: body }])
+      return fn()
+    } finally {
+      client.clearOverlay([queryFileAbs])
+    }
+  }
   try {
     writeFileSync(queryFileAbs, body)
     client.updateFile(queryFileAbs, "created")

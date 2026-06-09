@@ -63,6 +63,14 @@ const stubClient = (script: {
     updateFile: () => {
       calls++
     },
+    updateFiles: () => {
+      calls++
+    },
+    // Disk path: supportsOverlay false keeps withQueryFile writing real query files, so the
+    // overlay members are never reached and the call counter matches the historical disk flow.
+    supportsOverlay: false,
+    applyOverlay: () => {},
+    clearOverlay: () => {},
     // Batched callers go through withSnapshot; drive resolveAt through the same
     // scripted resolveTypeAt so the call counter and results are unchanged.
     withSnapshot: (fn) => fn(resolveTypeAt),

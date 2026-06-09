@@ -113,6 +113,16 @@ describe("resolveSentinelUnroll — empty targets", () => {
       updateFile: () => {
         touched++
       },
+      updateFiles: () => {
+        touched++
+      },
+      supportsOverlay: false,
+      applyOverlay: () => {
+        touched++
+      },
+      clearOverlay: () => {
+        touched++
+      },
       // Batched callers go through withSnapshot; the empty-target guard must short
       // circuit before this (or any other member) is ever reached.
       withSnapshot: (fn) => fn(resolveTypeAt),
