@@ -98,25 +98,47 @@ program re-sync of about 2 ms.
 
 ### Changes (behavior-preserving, verified byte-identical)
 
-- `tsgo-client.ts` and `resolve.ts`: one snapshot per query file instead of one per marker.
+- `session.ts` + `resolve.ts` + `tsgo-client.ts`: BATCH the query-file registration. `generateAll`
+  now prepares every file, registers all checker query files in ONE snapshot, resolves each
+  against the pre-registered files, then tears them all down in ONE snapshot, instead of a
+  create then delete pair per file. This collapses the program re-sync tsgo runs on every
+  file-set change from one-per-file to two-per-run, the dominant codegen cost. `resolveSchemas`
+  was split into `queryArtifact` plus `resolveRegisteredQuery` so the single-file and watch path
+  keep their self-registering behavior unchanged.
+- `tsgo-client.ts` + `query-core.ts`: a forward-compatible in-memory overlay seam. When the
+  runtime advertises the overlay capability (via describeCapabilities), query files are registered
+  as in-memory overlays with no disk IO; a stock native-preview tsgo does not, so it falls back to
+  the disk path (byte-identical to before). This is the path to dropping query-file IO entirely
+  once upstream typescript-go implements overlays.
+- `tsgo-client.ts` and `resolve.ts`: resolve all of a query file's markers under one snapshot
+  instead of one per marker (the no-op snapshot was already cheap, so this is a small cleanup).
 - `discovery.ts`: fuse the two order-independent AST pre-passes into one walk.
 - `emit.ts`: build the reindenter output into an array joined once, and track line starts with a
   boolean instead of rescanning the accumulator. Verified byte-identical by differential fuzzing.
-- `token-scan.ts`, `session.ts`: smaller allocation and pass reductions.
+- `token-scan.ts`: smaller allocation and pass reductions.
 
-These reduce real work (IPC call count, redundant queries, AST passes, string allocations) and
-compound on larger projects, but on this fixture they are close to neutral on wall-clock time
-because the dominant costs are elsewhere.
+### Measured
 
-### The remaining win, with data
+| case | vs baseline |
+| --- | --- |
+| codegen/warm-generateAll | 2.7x to 2.9x |
+| codegen/cold-full | 1.4x to 1.5x |
 
-The file-registration churn (created plus deleted, about 356 ms of the measured time) is the
-one reducible cost left. It is not addressed here because it requires restructuring the core
-stateful tsgo flow (a per-directory shared query file registered once and updated as content
-changes, or one combined query file with namespaced markers), which carries real edge cases
-(cleanup on throw, nested-directory import resolution, the verify gate and Tier-1 probe files)
-in a compiler whose output users depend on. The measurement above is recorded so this is a
-clear, data-backed next step rather than a guess.
+`warm-generateAll` (the steady-state codegen, the number most runs care about) is the
+batched-registration win: a spike isolated the registration cost dropping 6.4x (26 ms to 4 ms
+over the fixture), and end to end the warm path improved from about 61 ms to about 22 ms. The
+cold full run, which also pays the one-time tsgo spawn, improved by roughly half. The numbers
+carry the usual shared-machine noise, but the registration spike (measured in one process)
+confirms the mechanism.
+
+### What is still irreducible
+
+After batching, the dominant remaining cost is `getTypeAtPosition`, the actual checker type
+resolution, which cannot be reduced without changing output. The query-file disk IO that remains
+would vanish entirely with in-memory overlays, but a stock native-preview tsgo does not implement
+that capability yet (its executable is built straight from upstream typescript-go via
+`go build ./cmd/tsgo`, with no overlay patch). The overlay seam above is ready for the day
+upstream typescript-go adds it.
 
 ## Verification
 

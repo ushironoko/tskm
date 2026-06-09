@@ -122,26 +122,76 @@ export function queryFilePath(sourceFileAbs: string): string {
   return join(dir, `${base}.tskm-query.ts`)
 }
 
+/** The query file path plus its body for a set of schemas; null when there are none. */
+export interface QueryArtifact {
+  readonly queryFile: string
+  readonly body: string
+  readonly markers: ReadonlyArray<SchemaMarkers>
+}
+
 /**
- * Writes a query file next to the source, resolves each schema's inferred output
- * type via tsgo, and applies the R6 guard (Any/Unknown/Never => resolution failure,
- * skipped with a diagnostic so existing output is never overwritten with garbage).
- * The raw marker is resolved first; the pretty marker only when the raw text
- * looks like a top-level object (the only form `__P` improves). The query file is
- * always cleaned up.
+ * The deterministic query-file path and body for `schemas` (null when empty). The session
+ * uses this to write and batch-register query files before resolving, so the same artifact
+ * the resolver rebuilds matches what was registered.
+ */
+export function queryArtifact(
+  sourceFileAbs: string,
+  schemas: ReadonlyArray<DiscoveredSchema>,
+): QueryArtifact | null {
+  if (schemas.length === 0) {
+    return null
+  }
+  const queryFile = queryFilePath(sourceFileAbs)
+  const { body, markers } = buildQueryBody(sourceImportSpecifier(sourceFileAbs), schemas)
+  return { queryFile, body, markers }
+}
+
+/**
+ * Resolves each schema's inferred output type against an ALREADY-REGISTERED query file
+ * (written and registered by the caller, e.g. the session's batched registration). Applies
+ * the R6 guard (Any/Unknown/Never => resolution failure, skipped with a diagnostic so existing
+ * output is never overwritten with garbage). The raw marker is resolved first; the pretty
+ * marker only when the raw text looks like a top-level object (the only form `__P` improves).
+ */
+export function resolveRegisteredQuery(
+  client: TsgoClient,
+  sourceFileAbs: string,
+  schemas: ReadonlyArray<DiscoveredSchema>,
+): ResolveResult {
+  const artifact = queryArtifact(sourceFileAbs, schemas)
+  if (!artifact) {
+    return { resolved: [], diagnostics: [] }
+  }
+  return resolveMarkers(client, sourceFileAbs, artifact, schemas)
+}
+
+/**
+ * Writes a query file next to the source, registers it, resolves every schema against it,
+ * and always cleans it up. The single-file/standalone entry; the session batches the
+ * register/cleanup across files via {@link queryArtifact} + {@link resolveRegisteredQuery}.
  */
 export function resolveSchemas(
   client: TsgoClient,
   sourceFileAbs: string,
   schemas: ReadonlyArray<DiscoveredSchema>,
 ): ResolveResult {
-  if (schemas.length === 0) {
+  const artifact = queryArtifact(sourceFileAbs, schemas)
+  if (!artifact) {
     return { resolved: [], diagnostics: [] }
   }
+  return withQueryFile(client, artifact.queryFile, artifact.body, () =>
+    resolveMarkers(client, sourceFileAbs, artifact, schemas),
+  )
+}
 
-  const queryFile = queryFilePath(sourceFileAbs)
-  const { body, markers } = buildQueryBody(sourceImportSpecifier(sourceFileAbs), schemas)
-
+/** The shared marker-resolution loop, run against a registered query file. */
+function resolveMarkers(
+  client: TsgoClient,
+  sourceFileAbs: string,
+  artifact: QueryArtifact,
+  schemas: ReadonlyArray<DiscoveredSchema>,
+): ResolveResult {
+  const { queryFile, body, markers } = artifact
   const resolved: ResolvedSchema[] = []
   const diagnostics: string[] = []
   /** vendor -> [candidates seen, candidates confirmed], for the version-skew hint. */
@@ -158,71 +208,69 @@ export function resolveSchemas(
     vendorTallies.set(vendor, entry)
   }
 
-  withQueryFile(client, queryFile, body, () => {
-    // One snapshot serves every marker of this query file: the file state is fixed
-    // for the whole loop, so reusing a single snapshot avoids a fresh (dominant-cost)
-    // snapshot per marker. Same checker queries, same results, one snapshot lifecycle.
-    client.withSnapshot((resolveAt) => {
-      schemas.forEach((schema, i) => {
-        const marker = markers[i]
-        if (!marker) {
+  // One snapshot serves every marker of this query file: the file state is fixed
+  // for the whole loop, so reusing a single snapshot avoids a fresh (dominant-cost)
+  // snapshot per marker. Same checker queries, same results, one snapshot lifecycle.
+  client.withSnapshot((resolveAt) => {
+    schemas.forEach((schema, i) => {
+      const marker = markers[i]
+      if (!marker) {
+        return
+      }
+      // Guard FIRST: a candidate whose probe is not the literal `true` is not a
+      // Standard Schema (or is `any`) — drop it silently, raw/pretty unresolved.
+      // It carried no user intent (auto-collected), so no diagnostic either.
+      if (marker.guard) {
+        const verdict = resolveAt(queryFile, markerPosition(body, marker.guard))
+        const confirmed = verdict?.text === "true"
+        tally(schema.capability.vendorHint, confirmed)
+        if (!confirmed) {
           return
         }
-        // Guard FIRST: a candidate whose probe is not the literal `true` is not a
-        // Standard Schema (or is `any`) — drop it silently, raw/pretty unresolved.
-        // It carried no user intent (auto-collected), so no diagnostic either.
-        if (marker.guard) {
-          const verdict = resolveAt(queryFile, markerPosition(body, marker.guard))
-          const confirmed = verdict?.text === "true"
-          tally(schema.capability.vendorHint, confirmed)
-          if (!confirmed) {
-            return
-          }
-        }
-        const raw = resolveAt(queryFile, markerPosition(body, marker.raw))
+      }
+      const raw = resolveAt(queryFile, markerPosition(body, marker.raw))
 
-        if (!raw || raw.flags & FAILURE_TYPE_FLAGS) {
-          const flags = raw ? `flags=${raw.flags}` : "no type"
-          // An external schema most commonly fails here when it is recursive
-          // without the library-idiomatic self annotation — say so.
-          const hint =
-            schema.capability.sourceKind === "standard" && !schema.recursiveAnnotation
-              ? " If the schema is recursive, add an explicit self type annotation (e.g. z.ZodType<T> / v.GenericSchema<T>)."
-              : ""
-          diagnostics.push(
-            `tskm: could not resolve a concrete type for "${schema.name}" (${flags}); skipping ${schema.typeName}.${hint} Existing output left untouched.`,
-          )
-          return
-        }
+      if (!raw || raw.flags & FAILURE_TYPE_FLAGS) {
+        const flags = raw ? `flags=${raw.flags}` : "no type"
+        // An external schema most commonly fails here when it is recursive
+        // without the library-idiomatic self annotation — say so.
+        const hint =
+          schema.capability.sourceKind === "standard" && !schema.recursiveAnnotation
+            ? " If the schema is recursive, add an explicit self type annotation (e.g. z.ZodType<T> / v.GenericSchema<T>)."
+            : ""
+        diagnostics.push(
+          `tskm: could not resolve a concrete type for "${schema.name}" (${flags}); skipping ${schema.typeName}.${hint} Existing output left untouched.`,
+        )
+        return
+      }
 
-        // Only a top-level object benefits from __P; skip the second query otherwise.
-        const pretty = raw.text.trimStart().startsWith("{")
-          ? resolveAt(queryFile, markerPosition(body, marker.pretty))
-          : null
+      // Only a top-level object benefits from __P; skip the second query otherwise.
+      const pretty = raw.text.trimStart().startsWith("{")
+        ? resolveAt(queryFile, markerPosition(body, marker.pretty))
+        : null
 
-        const typeString = chooseRendering(raw, pretty)
+      const typeString = chooseRendering(raw, pretty)
 
-        // A rendered reference to a NON-exported annotation type can never compile
-        // in the sidecar (TS2459) — fail closed with an actionable diagnostic.
-        const annotation = schema.recursiveAnnotation
-        if (
-          annotation &&
-          !annotation.exported &&
-          referencesTypeOutsideQuotes(typeString, annotation.name)
-        ) {
-          diagnostics.push(
-            `tskm: "${schema.name}" renders as a reference to type "${annotation.name}", which is not exported from the source module; export it (\`export type ${annotation.name} = ...\`) so the generated sidecar can import it. Skipping ${schema.typeName}. Existing output left untouched.`,
-          )
-          return
-        }
+      // A rendered reference to a NON-exported annotation type can never compile
+      // in the sidecar (TS2459) — fail closed with an actionable diagnostic.
+      const annotation = schema.recursiveAnnotation
+      if (
+        annotation &&
+        !annotation.exported &&
+        referencesTypeOutsideQuotes(typeString, annotation.name)
+      ) {
+        diagnostics.push(
+          `tskm: "${schema.name}" renders as a reference to type "${annotation.name}", which is not exported from the source module; export it (\`export type ${annotation.name} = ...\`) so the generated sidecar can import it. Skipping ${schema.typeName}. Existing output left untouched.`,
+        )
+        return
+      }
 
-        resolved.push({
-          typeName: schema.typeName,
-          typeString,
-          sourceName: schema.name,
-          vendorHint: schema.capability.vendorHint,
-          ...(annotation ? { recursiveAnnotation: annotation } : {}),
-        })
+      resolved.push({
+        typeName: schema.typeName,
+        typeString,
+        sourceName: schema.name,
+        vendorHint: schema.capability.vendorHint,
+        ...(annotation ? { recursiveAnnotation: annotation } : {}),
       })
     })
   })

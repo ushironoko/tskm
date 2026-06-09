@@ -1,4 +1,4 @@
-import { globSync, readFileSync } from "node:fs"
+import { globSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path"
 import type { ResolvedTskmConfig, TskmMode } from "./config.ts"
 import type { DiscoveredSchema } from "./discovery.ts"
@@ -7,8 +7,8 @@ import { emitSidecar, renderSidecar } from "./emit.ts"
 import { collectInplaceTargets, emitInplace } from "./inplace.ts"
 import { type PruneCandidate, pruneDanglingAliases } from "./prune.ts"
 import { sourceImportSpecifier, withQueryFile } from "./query-core.ts"
-import type { ResolvedSchema } from "./resolve.ts"
-import { resolveSchemas } from "./resolve.ts"
+import type { QueryArtifact, ResolvedSchema } from "./resolve.ts"
+import { queryArtifact, resolveRegisteredQuery, resolveSchemas } from "./resolve.ts"
 import { resolveRecursiveSchemas } from "./structural-resolve.ts"
 import { createTsgoClient, type TsgoClient } from "./tsgo-client.ts"
 import { applyTier1 } from "./verify-splice.ts"
@@ -123,6 +123,18 @@ function makeRootRelative(diagnostics: ReadonlyArray<string>, root: string): Rea
  * is correct both for a cold one-shot run and for a file edited after the project was
  * opened.
  */
+/** The per-file work computed before any tsgo query: discovery, target routing, diagnostics. */
+interface PreparedFile {
+  readonly sourceText: string
+  readonly targets: ReadonlyArray<DiscoveredSchema>
+  readonly checkerTargets: ReadonlyArray<DiscoveredSchema>
+  readonly structuralTargets: ReadonlyArray<DiscoveredSchema>
+  /** discovery + inplace/dedup diagnostics accumulated before resolution. */
+  readonly prefixDiagnostics: ReadonlyArray<string>
+}
+
+type PrepareResult = { kind: "skip"; diagnostics: string[] } | ({ kind: "ok" } & PreparedFile)
+
 export function createSession(config: ResolvedTskmConfig): TskmSession {
   const client: TsgoClient = createTsgoClient({
     cwd: config.root,
@@ -130,7 +142,7 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     executable: config.executable,
   })
 
-  const generateFile: TskmSession["generateFile"] = (sourceAbs, pretty = true) => {
+  const prepareTargets = (sourceAbs: string): PrepareResult => {
     const sourceText = readFileSync(sourceAbs, "utf8")
     const discovery = discoverSchemas(sourceAbs, sourceText, {
       schemaSources: config.schemaSources,
@@ -192,7 +204,7 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     })
 
     if (targets.length === 0) {
-      return { file: null, diagnostics: [...discovery.diagnostics, ...extraDiagnostics] }
+      return { kind: "skip", diagnostics: [...discovery.diagnostics, ...extraDiagnostics] }
     }
 
     // The split happens AFTER the inplace alias filter so recursive markers keep
@@ -201,11 +213,37 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       targets,
       config.codegen.nameSharedSchemas,
     )
+    return {
+      kind: "ok",
+      sourceText,
+      targets,
+      checkerTargets,
+      structuralTargets,
+      prefixDiagnostics: [...discovery.diagnostics, ...extraDiagnostics],
+    }
+  }
 
-    // Inform the checker of the file's current content before querying it.
-    client.updateFile(sourceAbs, "changed")
+  /**
+   * Resolves and emits one prepared file. `preRegistered` is true in the batched generateAll
+   * path, where the session already registered every query file in one snapshot and notified
+   * the sources as changed; it is false for the single-file path, which self-registers the
+   * query file via resolveSchemas + updateFile (byte-identical to the historical per-file flow).
+   */
+  const resolveAndFinalize = (
+    sourceAbs: string,
+    prep: PreparedFile,
+    pretty: boolean,
+    preRegistered: boolean,
+  ): PerFileResult => {
+    const { sourceText, targets, checkerTargets, structuralTargets, prefixDiagnostics } = prep
+    if (!preRegistered) {
+      // Inform the checker of the file's current content before querying it.
+      client.updateFile(sourceAbs, "changed")
+    }
 
-    const checkerResult = resolveSchemas(client, sourceAbs, checkerTargets)
+    const checkerResult = preRegistered
+      ? resolveRegisteredQuery(client, sourceAbs, checkerTargets)
+      : resolveSchemas(client, sourceAbs, checkerTargets)
     const structuralResult = resolveRecursiveSchemas(sourceAbs, structuralTargets, {
       root: config.root,
       execPath: config.worker.execPath ?? process.execPath,
@@ -283,8 +321,7 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     }
 
     const allDiagnostics = [
-      ...discovery.diagnostics,
-      ...extraDiagnostics,
+      ...prefixDiagnostics,
       ...checkerResult.diagnostics,
       ...structuralResult.diagnostics,
       ...skeletonWarnings,
@@ -372,6 +409,54 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     }
   }
 
+  const generateFile: TskmSession["generateFile"] = (sourceAbs, pretty = true) => {
+    const prep = prepareTargets(sourceAbs)
+    if (prep.kind === "skip") {
+      return { file: null, diagnostics: prep.diagnostics }
+    }
+    return resolveAndFinalize(sourceAbs, prep, pretty, false)
+  }
+
+  /**
+   * Registers all checker query files for a run in ONE snapshot. The dominant codegen cost is
+   * the project re-sync tsgo runs on every file-set change, so batching collapses N create
+   * re-syncs into one (and N teardown re-syncs into one in cleanupQueries). Uses in-memory
+   * overlays when the runtime supports them, else writes real query files to disk. The
+   * source-changed notifications ride along in the same snapshot.
+   */
+  const registerQueries = (
+    docs: ReadonlyArray<QueryArtifact>,
+    sourcesToNotify: ReadonlyArray<string>,
+  ): void => {
+    if (client.supportsOverlay) {
+      if (sourcesToNotify.length > 0) {
+        client.updateFiles({ changed: sourcesToNotify })
+      }
+      client.applyOverlay(docs.map((d) => ({ document: d.queryFile, text: d.body })))
+      return
+    }
+    for (const d of docs) {
+      writeFileSync(d.queryFile, d.body)
+    }
+    client.updateFiles({ changed: sourcesToNotify, created: docs.map((d) => d.queryFile) })
+  }
+
+  /** Tears down everything {@link registerQueries} set up, in one snapshot. */
+  const cleanupQueries = (docs: ReadonlyArray<QueryArtifact>): void => {
+    if (docs.length === 0) {
+      return
+    }
+    if (client.supportsOverlay) {
+      client.clearOverlay(docs.map((d) => d.queryFile))
+      return
+    }
+    // Remove the files, then notify the checker, matching the single-file withQueryFile order.
+    for (const d of docs) {
+      rmSync(d.queryFile, { force: true })
+    }
+    client.updateFiles({ deleted: docs.map((d) => d.queryFile) })
+  }
+
   const generateAll: TskmSession["generateAll"] = (pretty = true) => {
     const sources = collectSources(config)
     if (sources.length === 0) {
@@ -380,14 +465,47 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
         diagnostics: [`tskm: no source files matched ${config.include.join(", ")}`],
       }
     }
+
+    // Prepare every file (pure discovery + routing) up front, register all checker query files
+    // in ONE batch, then resolve against the pre-registered files. Each file's output is
+    // identical to the single-file path; only the query-file registration is batched (the
+    // codegen win). This reads all sources before resolving any, so it assumes the source set is
+    // stable for the duration of the run, which holds for a one-shot build and for watch (any
+    // on-disk edit re-triggers a fresh run). The prepare pass is pure JS and sub-millisecond, so
+    // the read-to-resolve window is negligible.
+    const prepared = sources.map((sourceAbs) => ({ sourceAbs, prep: prepareTargets(sourceAbs) }))
+    const docs: QueryArtifact[] = []
+    const sourcesToNotify: string[] = []
+    for (const { sourceAbs, prep } of prepared) {
+      if (prep.kind !== "ok") {
+        continue
+      }
+      sourcesToNotify.push(sourceAbs)
+      const artifact = queryArtifact(sourceAbs, prep.checkerTargets)
+      if (artifact) {
+        docs.push(artifact)
+      }
+    }
+
     const files: GeneratedFile[] = []
     const diagnostics: string[] = []
-    for (const sourceAbs of sources) {
-      const result = generateFile(sourceAbs, pretty)
-      diagnostics.push(...result.diagnostics)
-      if (result.file) {
-        files.push(result.file)
+    // Register INSIDE the try so a throw mid-registration (a partial disk write or a failed
+    // overlay apply) still reaches cleanupQueries in the finally, never orphaning query files.
+    // cleanupQueries is idempotent (force rm, delete-notify tolerates unknown paths).
+    try {
+      registerQueries(docs, sourcesToNotify)
+      for (const { sourceAbs, prep } of prepared) {
+        const result =
+          prep.kind === "skip"
+            ? { file: null, diagnostics: prep.diagnostics }
+            : resolveAndFinalize(sourceAbs, prep, pretty, true)
+        diagnostics.push(...result.diagnostics)
+        if (result.file) {
+          files.push(result.file)
+        }
       }
+    } finally {
+      cleanupQueries(docs)
     }
     return { files, diagnostics: makeRootRelative(diagnostics, config.root) }
   }

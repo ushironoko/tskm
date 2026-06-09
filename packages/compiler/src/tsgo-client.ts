@@ -33,6 +33,33 @@ export interface TsgoClient {
   /** Registers a freshly written file with the open project. */
   readonly updateFile: (absPath: string, kind: "created" | "changed" | "deleted") => void
   /**
+   * Batched {@link updateFile}: applies all of `created`/`changed`/`deleted` in ONE
+   * snapshot, so registering N query files costs one project re-sync instead of N. The
+   * file-set change (created/deleted) is what tsgo charges for, so batching it is the
+   * dominant codegen win on a full run.
+   */
+  readonly updateFiles: (summary: {
+    readonly created?: ReadonlyArray<string>
+    readonly changed?: ReadonlyArray<string>
+    readonly deleted?: ReadonlyArray<string>
+  }) => void
+  /**
+   * True when the runtime accepts in-memory `overlayChanges`, letting callers register a
+   * query document without writing it to disk. Determined from the runtime's
+   * describeCapabilities at spawn. A stock native-preview tsgo does not implement the
+   * overlay endpoint, so this is false there and callers fall back to real query files.
+   */
+  readonly supportsOverlay: boolean
+  /**
+   * Registers in-memory overlay documents (no disk write), keyed by an absolute path used
+   * as the document identifier. Only valid when {@link supportsOverlay} is true.
+   */
+  readonly applyOverlay: (
+    entries: ReadonlyArray<{ readonly document: string; readonly text: string }>,
+  ) => void
+  /** Removes in-memory overlay documents previously registered via {@link applyOverlay}. */
+  readonly clearOverlay: (documents: ReadonlyArray<string>) => void
+  /**
    * Runs `fn` under ONE snapshot, passing it a `resolveAt` that reuses that
    * snapshot for every query. Taking a snapshot is the dominant codegen cost, so a
    * caller that issues many queries against an unchanging file state (all markers of
@@ -97,9 +124,10 @@ export interface CreateTsgoClientOptions {
  *
  * `openProject` is called exactly once: repeating it stale-caches the initial file
  * contents and never reloads them. Every later file write must flow through
- * `updateFile` (fileChanges), never another `openProject`. `overlayChanges`
- * (in-memory virtual documents) is unsupported by native-preview, so callers write
- * real query files to disk.
+ * `updateFile`/`updateFiles` (fileChanges), never another `openProject`. In-memory
+ * `overlayChanges` are used instead of real query files ONLY when the runtime advertises
+ * the capability (`supportsOverlay`); a stock native-preview tsgo does not, so callers fall
+ * back to writing real query files to disk.
  */
 export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
   const executable = resolveTsgoExecutable(options.executable)
@@ -121,15 +149,65 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
   }
   openOnce()
 
-  const updateFile: TsgoClient["updateFile"] = (absPath, kind) => {
-    const fileChanges = { [kind]: [absPath] }
-    const snap = client.updateSnapshot({ fileChanges }) as SnapshotRecord
+  // Detect in-memory overlay support from the runtime. A stock native-preview tsgo does not
+  // implement the describeCapabilities endpoint (the call throws "unknown API method"), so
+  // overlay stays off and callers write real query files. When upstream tsgo implements
+  // describeCapabilities + overlayChanges this flips on with no other change needed.
+  let overlayCapable = false
+  try {
+    const caps = client.callJson("describeCapabilities", {}) as
+      | { overlay?: { updateSnapshotOverlayChanges?: boolean } }
+      | null
+      | undefined
+    overlayCapable = caps?.overlay?.updateSnapshotOverlayChanges === true
+  } catch {
+    overlayCapable = false
+  }
+
+  /** Adopts the project id from a snapshot record and releases the short-lived handle. */
+  const consume = (snap: SnapshotRecord): void => {
     const first = snap.projects[0]
     if (first) {
       project = first.id
     }
-    // Snapshots are short-lived handles; resolveTypeAt opens its own.
     client.releaseHandle(snap.snapshot)
+  }
+
+  const updateFile: TsgoClient["updateFile"] = (absPath, kind) => {
+    consume(client.updateSnapshot({ fileChanges: { [kind]: [absPath] } }) as SnapshotRecord)
+  }
+
+  const updateFiles: TsgoClient["updateFiles"] = (summary) => {
+    const fileChanges: { created?: string[]; changed?: string[]; deleted?: string[] } = {}
+    if (summary.created?.length) {
+      fileChanges.created = [...summary.created]
+    }
+    if (summary.changed?.length) {
+      fileChanges.changed = [...summary.changed]
+    }
+    if (summary.deleted?.length) {
+      fileChanges.deleted = [...summary.deleted]
+    }
+    consume(client.updateSnapshot({ fileChanges }) as SnapshotRecord)
+  }
+
+  const applyOverlay: TsgoClient["applyOverlay"] = (entries) => {
+    if (entries.length === 0) {
+      return
+    }
+    const upsert = entries.map((e) => ({
+      document: e.document,
+      text: e.text,
+      languageId: "typescript",
+    }))
+    consume(client.updateSnapshot({ overlayChanges: { upsert } }) as SnapshotRecord)
+  }
+
+  const clearOverlay: TsgoClient["clearOverlay"] = (documents) => {
+    if (documents.length === 0) {
+      return
+    }
+    consume(client.updateSnapshot({ overlayChanges: { delete: [...documents] } }) as SnapshotRecord)
   }
 
   const withSnapshot: TsgoClient["withSnapshot"] = (fn) => {
@@ -231,5 +309,15 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
   }
   probe()
 
-  return { updateFile, withSnapshot, resolveTypeAt, getDiagnostics, close }
+  return {
+    updateFile,
+    updateFiles,
+    supportsOverlay: overlayCapable,
+    applyOverlay,
+    clearOverlay,
+    withSnapshot,
+    resolveTypeAt,
+    getDiagnostics,
+    close,
+  }
 }
