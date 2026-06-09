@@ -42,7 +42,7 @@ packages to pkg.pr.new (no npm registry, no tokens). The bot comments install UR
 bun add https://pkg.pr.new/ushironoko/tskm/@tskm/vite@<sha>
 ```
 
-These are throwaway test artifacts — never commit a pkg.pr.new URL to `package.json` or a
+These are throwaway test artifacts. Never commit a pkg.pr.new URL to `package.json` or a
 lockfile.
 
 ---
