@@ -1,6 +1,6 @@
 {
   "name": "@tskm/compiler",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "AOT schema-to-type compiler for tskm, powered by the tsgo (Corsa) checker API",
   "type": "module",
   "license": "MIT",

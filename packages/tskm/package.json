@@ -1,6 +1,6 @@
 {
   "name": "@tskm/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Standard Schema compliant, functional validation library with AOT type compilation",
   "type": "module",
   "license": "MIT",

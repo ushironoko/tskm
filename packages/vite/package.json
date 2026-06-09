@@ -1,6 +1,6 @@
 {
   "name": "@tskm/vite",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Vite plugin that runs the tskm AOT type compiler",
   "type": "module",
   "license": "MIT",
