@@ -1,6 +1,15 @@
 import { describe, test } from "bun:test"
 import { expectTypeOf } from "expect-type"
-import { type InferOutput, number, picklist, string, templateLiteral } from "../src/index.ts"
+import {
+  discriminatedUnion,
+  type InferOutput,
+  literal,
+  number,
+  object,
+  picklist,
+  string,
+  templateLiteral,
+} from "../src/index.ts"
 
 /**
  * Type-level half of `templateLiteral` (issue #18): the parts fold into a real TS
@@ -26,5 +35,19 @@ describe("templateLiteral InferOutput (#18)", () => {
   test("an all-fixed template is a plain string literal", () => {
     const t = templateLiteral(["a", "b", "c"])
     expectTypeOf<InferOutput<typeof t>>().toEqualTypeOf<"abc">()
+  })
+
+  test("a templateLiteral field survives discriminated-union narrowing (#18 fixture)", () => {
+    // The motivating scenario: a templated field inside a DU member must keep its template
+    // literal type after the tag narrows the union (not widen to `string`).
+    const schema = discriminatedUnion("kind", [
+      object({ kind: literal("user"), id: templateLiteral(["user_", string()]) }),
+      object({ kind: literal("post"), slug: templateLiteral(["post_", number()]) }),
+    ])
+    type Entity = InferOutput<typeof schema>
+    type UserId = Extract<Entity, { kind: "user" }>["id"]
+    type PostSlug = Extract<Entity, { kind: "post" }>["slug"]
+    expectTypeOf<UserId>().toEqualTypeOf<`user_${string}`>()
+    expectTypeOf<PostSlug>().toEqualTypeOf<`post_${number}`>()
   })
 })
