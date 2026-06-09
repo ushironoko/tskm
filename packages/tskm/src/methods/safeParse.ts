@@ -32,9 +32,20 @@ export function safeParse<const TSchema extends BaseSchema<unknown, unknown>>(
   config: Config = defaultConfig,
 ): SafeParseResult<TSchema> {
   const dataset = schema["~run"]({ value: input }, config)
-  const issues = dataset.issues ?? []
+  // `~run` never produces a defined-but-empty `issues`, so undefined means a clean parse:
+  // skip the warnings filter entirely and return a fresh empty array (identical to the old
+  // `[].filter(...)` result: a new, non-frozen `readonly Issue[]` on every clean parse).
+  if (dataset.issues === undefined) {
+    return {
+      success: true,
+      output: dataset.value as InferOutput<TSchema>,
+      issues: undefined,
+      warnings: [],
+    }
+  }
+  const issues = dataset.issues
   const warnings = issues.filter(isWarningIssue)
-  if (hasErrorIssue(dataset.issues)) {
+  if (hasErrorIssue(issues)) {
     return { success: false, output: dataset.value, issues, warnings }
   }
   return {

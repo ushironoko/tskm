@@ -1,0 +1,8 @@
+# Profiling artifacts and generated reports (the committed reference is bench/baselines/).
+results/
+*.cpuprofile
+*.heapsnapshot
+
+# Generated codegen artifacts under the compiler fixture.
+compiler/fixtures/**/*.gen.ts
+compiler/fixtures/**/*.tskm-query.ts

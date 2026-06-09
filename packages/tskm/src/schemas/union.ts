@@ -20,11 +20,16 @@ export function union<const TOptions extends UnionOptions>(
   options: TOptions,
   message?: string,
 ): UnionSchema<TOptions> {
+  // Hoist the joined member-expectation string: it depends only on the
+  // construction-time options, so computing it once here avoids re-mapping and
+  // re-joining the options on every failed parse (the same value feeds both the
+  // schema `expects` field and the no-match issue's `expected`).
+  const expects = options.map((option) => option.expects).join(" | ")
   return {
     kind: "schema",
     type: "union",
     reference: union,
-    expects: options.map((option) => option.expects).join(" | "),
+    expects,
     async: false,
     options,
     message,
@@ -48,13 +53,13 @@ export function union<const TOptions extends UnionOptions>(
           return out as unknown as OutputDataset<InferOutput<TOptions[number]>>
         }
       }
-      // No option matched — emit a single union schema issue.
+      // No option matched, emit a single union schema issue.
       _addIssue(
         dataset,
         {
           kind: "schema",
           type: "union",
-          expected: options.map((option) => option.expects).join(" | "),
+          expected: expects,
           message,
         },
         config,

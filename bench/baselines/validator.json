@@ -1,0 +1,175 @@
+{
+  "suite": "validator",
+  "results": [
+    {
+      "name": "primitive/string",
+      "opsPerSec": 34993656.1208202,
+      "nsPerOp": 28.576608187134504,
+      "nsPerOpMin": 22.126078710289235,
+      "nsPerOpP99": 46.29233443970286,
+      "rmePct": 5.463124430202273,
+      "samples": 50,
+      "innerIters": 63270
+    },
+    {
+      "name": "primitive/number",
+      "opsPerSec": 27479224.376731303,
+      "nsPerOp": 36.391129032258064,
+      "nsPerOpMin": 32.45967741935484,
+      "nsPerOpP99": 53.65564516129032,
+      "rmePct": 3.8433194311728758,
+      "samples": 50,
+      "innerIters": 29760
+    },
+    {
+      "name": "primitive/boolean",
+      "opsPerSec": 28717309.413902927,
+      "nsPerOp": 34.82220376522702,
+      "nsPerOpMin": 30.219490586932448,
+      "nsPerOpP99": 55.07336655592469,
+      "rmePct": 3.5953514285529495,
+      "samples": 50,
+      "innerIters": 54180
+    },
+    {
+      "name": "object/flat",
+      "opsPerSec": 10041405.856590195,
+      "nsPerOp": 99.58764880952381,
+      "nsPerOpMin": 96.99285714285715,
+      "nsPerOpP99": 159.01532738095239,
+      "rmePct": 4.203372664582664,
+      "samples": 50,
+      "innerIters": 13440
+    },
+    {
+      "name": "object/wide-24",
+      "opsPerSec": 2304042.3731930703,
+      "nsPerOp": 434.0197956577267,
+      "nsPerOpMin": 387.08492975734356,
+      "nsPerOpP99": 584.1048531289911,
+      "rmePct": 2.1249525619084095,
+      "samples": 50,
+      "innerIters": 7830
+    },
+    {
+      "name": "object/nested",
+      "opsPerSec": 1567886.3097657673,
+      "nsPerOp": 637.8013468013468,
+      "nsPerOpMin": 565.6919191919192,
+      "nsPerOpP99": 874.8594276094276,
+      "rmePct": 2.6947284172110604,
+      "samples": 50,
+      "innerIters": 1188
+    },
+    {
+      "name": "array/number-100",
+      "opsPerSec": 2233179.7952472107,
+      "nsPerOp": 447.79197901049474,
+      "nsPerOpMin": 404.7661169415292,
+      "nsPerOpP99": 611.0697151424288,
+      "rmePct": 2.7888101122719324,
+      "samples": 50,
+      "innerIters": 2668
+    },
+    {
+      "name": "array/object-50",
+      "opsPerSec": 230031.99087758845,
+      "nsPerOp": 4347.221428571429,
+      "nsPerOpMin": 3883.730952380952,
+      "nsPerOpP99": 7037.202380952381,
+      "rmePct": 3.052040043760509,
+      "samples": 50,
+      "innerIters": 420
+    },
+    {
+      "name": "union/primitive",
+      "opsPerSec": 14462626.882768255,
+      "nsPerOp": 69.14373219373219,
+      "nsPerOpMin": 61.58789173789174,
+      "nsPerOpP99": 111.79767331433997,
+      "rmePct": 3.591225683239413,
+      "samples": 50,
+      "innerIters": 21060
+    },
+    {
+      "name": "union/discriminated",
+      "opsPerSec": 7607547.1698113205,
+      "nsPerOp": 131.4484126984127,
+      "nsPerOpMin": 115.53508517228029,
+      "nsPerOpP99": 224.5168892760356,
+      "rmePct": 4.705356741278944,
+      "samples": 50,
+      "innerIters": 20664
+    },
+    {
+      "name": "pipe/string-validated",
+      "opsPerSec": 10511781.40056762,
+      "nsPerOp": 95.1313542294555,
+      "nsPerOpMin": 85.17093630701225,
+      "nsPerOpP99": 107.99678521197508,
+      "rmePct": 2.0032612438014485,
+      "samples": 50,
+      "innerIters": 19908
+    },
+    {
+      "name": "pipe/number-validated",
+      "opsPerSec": 22105011.597339444,
+      "nsPerOp": 45.23861005892256,
+      "nsPerOpMin": 40.455545033670035,
+      "nsPerOpP99": 62.03856271043771,
+      "rmePct": 2.6426930404951596,
+      "samples": 50,
+      "innerIters": 38016
+    },
+    {
+      "name": "record/string-number",
+      "opsPerSec": 4541535.666747282,
+      "nsPerOp": 220.18983739837398,
+      "nsPerOpMin": 209.4512195121951,
+      "nsPerOpP99": 319.2752032520325,
+      "rmePct": 2.713103370656538,
+      "samples": 50,
+      "innerIters": 4920
+    },
+    {
+      "name": "tuple/3",
+      "opsPerSec": 17428718.412396528,
+      "nsPerOp": 57.37656529516995,
+      "nsPerOpMin": 50.758224011130984,
+      "nsPerOpP99": 91.18982309679984,
+      "rmePct": 3.166499487797832,
+      "samples": 50,
+      "innerIters": 40248
+    },
+    {
+      "name": "composite/api-payload",
+      "opsPerSec": 859834.426039583,
+      "nsPerOp": 1163.0146103896104,
+      "nsPerOpMin": 1040.4155844155844,
+      "nsPerOpP99": 1433.5771103896104,
+      "rmePct": 2.2905545777525136,
+      "samples": 50,
+      "innerIters": 1232
+    },
+    {
+      "name": "error/object-flat",
+      "opsPerSec": 877803.6377645755,
+      "nsPerOp": 1139.2069444444444,
+      "nsPerOpMin": 989.6416666666667,
+      "nsPerOpP99": 2317.2166666666667,
+      "rmePct": 5.8371592839062325,
+      "samples": 50,
+      "innerIters": 1440
+    },
+    {
+      "name": "error/object-nested",
+      "opsPerSec": 215762.61609357718,
+      "nsPerOp": 4634.723188405797,
+      "nsPerOpMin": 3921.195652173913,
+      "nsPerOpP99": 6573.007246376812,
+      "rmePct": 2.8297239530825333,
+      "samples": 50,
+      "innerIters": 690
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "suite": "compiler",
+  "results": [
+    {
+      "name": "codegen/cold-full",
+      "opsPerSec": 8.809967943081546,
+      "nsPerOp": 113507791,
+      "nsPerOpMin": 109028625,
+      "nsPerOpP99": 115978500,
+      "rmePct": 0,
+      "samples": 5,
+      "innerIters": 1
+    },
+    {
+      "name": "codegen/warm-generateAll",
+      "opsPerSec": 16.344899343696717,
+      "nsPerOp": 61181166,
+      "nsPerOpMin": 57523708,
+      "nsPerOpP99": 71291500,
+      "rmePct": 0,
+      "samples": 8,
+      "innerIters": 1
+    },
+    {
+      "name": "codegen/discovery-all",
+      "opsPerSec": 2762.5892920657743,
+      "nsPerOp": 361979.25,
+      "nsPerOpMin": 346807.25,
+      "nsPerOpP99": 608708.375,
+      "rmePct": 3.3440386538123756,
+      "samples": 50,
+      "innerIters": 8
+    }
+  ]
+}

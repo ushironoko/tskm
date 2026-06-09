@@ -118,6 +118,15 @@ export function object<const E extends ObjectEntries>(
   const message = options.message
   const optionalKeys = options.optionalKeys === true
   const rest: RestMode = options.rest ?? "strip"
+  // `entries` is fixed at construction (schemas are immutable plain objects by convention,
+  // valibot-style; mutating `entries` after building the schema is not supported and would
+  // already desync the inferred output type), so resolve its key list and parallel schema
+  // list ONCE here instead of recomputing `Object.keys(entries)` and re-indexing
+  // `entries[key]` on every `~run` (the per-parse hot path). `keyList` preserves
+  // `Object.keys(entries)` order, which is the iteration/key-write order the contract
+  // requires, and `_applyRest` reads the same immutable `entries`, so the two never disagree.
+  const keyList = Object.keys(entries)
+  const schemaList = keyList.map((k) => entries[k] as BaseSchema<unknown, unknown>)
   return {
     kind: "schema",
     type: "object",
@@ -142,8 +151,13 @@ export function object<const E extends ObjectEntries>(
         let aborted = false
         // Own keys only, matching `_applyRest`'s `Object.hasOwn` check and the compiler
         // walkers, so an inherited entry key cannot be flagged as unexpected in exact mode.
-        for (const key of Object.keys(entries)) {
-          const valueSchema = entries[key] as BaseSchema<unknown, unknown>
+        // Iterate the precomputed `keyList`/`schemaList` by index: same keys, same order as
+        // `Object.keys(entries)`, but no per-parse key enumeration or `entries[key]` lookup.
+        for (let i = 0; i < keyList.length; i++) {
+          // Index is in [0, keyList.length), so both reads are present; the casts only drop
+          // the `| undefined` that noUncheckedIndexedAccess adds.
+          const key = keyList[i] as string
+          const valueSchema = schemaList[i] as BaseSchema<unknown, unknown>
           const valueDataset = valueSchema["~run"]({ value: record[key] }, config)
           if (valueDataset.issues) {
             const head: IssuePathItem = { key }
@@ -246,9 +260,16 @@ export function _applyRest(
 }
 
 function _pushIssues(dataset: { issues?: Issue[] }, incoming: readonly Issue[]): void {
-  if (dataset.issues) {
-    dataset.issues.push(...incoming)
-  } else {
-    dataset.issues = [...incoming]
+  // Index-loop append instead of `push(...incoming)` / `[...incoming]`: same resulting
+  // order and contents, but no argument spread and no throwaway intermediate array.
+  let target = dataset.issues
+  if (target === undefined) {
+    target = []
+    dataset.issues = target
+  }
+  for (let i = 0; i < incoming.length; i++) {
+    // Index is in [0, incoming.length), so the element is present; the cast only drops the
+    // `| undefined` from noUncheckedIndexedAccess.
+    target.push(incoming[i] as Issue)
   }
 }

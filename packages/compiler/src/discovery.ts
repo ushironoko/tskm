@@ -107,56 +107,83 @@ interface SourceImports {
   readonly recursiveLocals: Set<string>
 }
 
+interface ModulePrescan {
+  /** Schema-source import bindings (see {@link SourceImports}). */
+  readonly imports: SourceImports
+  /** Local type name -> exported name (see {@link recordTypeExports}). */
+  readonly typeExports: Map<string, string>
+}
+
 /**
- * Collects every local binding imported from a configured schema source. A
- * subpath import (`zod/v4`) maps to its root source (`zod`), which doubles as
- * the vendor hint. A `recursive` NAMED import from ANY configured source becomes
- * a core-recursive binding (not just @tskm/core's): `recursive` is a tskm-specific
- * export name — zod/valibot/arktype publish no such export — so an anti-corruption
- * layer that re-exports the runtime through a hub keeps working. Detection stays a
- * perf hint, never the final word: the structural worker validates
- * `value.type === "recursive"` && tskm vendor before walking, so a mis-detected
- * binding degrades to a skip + diagnostic, never wrong output.
+ * Records one `ImportDeclaration` into the import accumulators. Collects every
+ * local binding imported from a configured schema source. A subpath import
+ * (`zod/v4`) maps to its root source (`zod`), which doubles as the vendor hint.
+ * A `recursive` NAMED import from ANY configured source becomes a core-recursive
+ * binding (not just @tskm/core's): `recursive` is a tskm-specific export name
+ * (zod/valibot/arktype publish no such export), so an anti-corruption layer that
+ * re-exports the runtime through a hub keeps working. Detection stays a perf hint,
+ * never the final word: the structural worker validates `value.type === "recursive"`
+ * && tskm vendor before walking, so a mis-detected binding degrades to a skip +
+ * diagnostic, never wrong output.
  */
-function collectSourceImports(
-  body: ReadonlyArray<OxcNode>,
+function recordSourceImport(
+  node: OxcNode,
   schemaSources: ReadonlyArray<string>,
-): SourceImports {
-  const named = new Map<string, string>()
-  const namespaces = new Map<string, string>()
-  const recursiveLocals = new Set<string>()
-  for (const node of body) {
-    if (node.type !== "ImportDeclaration") {
+  imports: SourceImports,
+): void {
+  const module = (node.source as { value?: unknown } | undefined)?.value
+  if (typeof module !== "string") {
+    return
+  }
+  const source = schemaSources.find((s) => matchesSchemaSource(module, s))
+  if (!source) {
+    return
+  }
+  const specifiers = (node.specifiers ?? []) as ReadonlyArray<OxcNode>
+  for (const spec of specifiers) {
+    const local = (spec.local as { name?: string } | undefined)?.name
+    if (!local) {
       continue
     }
-    const module = (node.source as { value?: unknown } | undefined)?.value
-    if (typeof module !== "string") {
-      continue
-    }
-    const source = schemaSources.find((s) => matchesSchemaSource(module, s))
-    if (!source) {
-      continue
-    }
-    const specifiers = (node.specifiers ?? []) as ReadonlyArray<OxcNode>
-    for (const spec of specifiers) {
-      const local = (spec.local as { name?: string } | undefined)?.name
-      if (!local) {
-        continue
+    if (spec.type === "ImportSpecifier") {
+      imports.named.set(local, source)
+      const imported = (spec.imported as { name?: string } | undefined)?.name
+      if (imported === "recursive") {
+        imports.recursiveLocals.add(local)
       }
-      if (spec.type === "ImportSpecifier") {
-        named.set(local, source)
-        const imported = (spec.imported as { name?: string } | undefined)?.name
-        if (imported === "recursive") {
-          recursiveLocals.add(local)
-        }
-      } else if (spec.type === "ImportNamespaceSpecifier") {
-        namespaces.set(local, source)
-      } else if (spec.type === "ImportDefaultSpecifier") {
-        named.set(local, source)
-      }
+    } else if (spec.type === "ImportNamespaceSpecifier") {
+      imports.namespaces.set(local, source)
+    } else if (spec.type === "ImportDefaultSpecifier") {
+      imports.named.set(local, source)
     }
   }
-  return { named, namespaces, recursiveLocals }
+}
+
+/**
+ * Single syntactic prescan over the module body: imports and type exports write
+ * to disjoint accumulators, so fusing their two former passes into one walk is
+ * order-identical (each dispatches on its own node type and never touches the
+ * other's). Both maps must be complete before the const/alias walk, because a
+ * const can reference an import or an aliased re-export declared later in the file.
+ */
+function prescanModule(
+  body: ReadonlyArray<OxcNode>,
+  schemaSources: ReadonlyArray<string>,
+): ModulePrescan {
+  const imports: SourceImports = {
+    named: new Map<string, string>(),
+    namespaces: new Map<string, string>(),
+    recursiveLocals: new Set<string>(),
+  }
+  const typeExports = new Map<string, string>()
+  for (const node of body) {
+    if (node.type === "ImportDeclaration") {
+      recordSourceImport(node, schemaSources, imports)
+    } else if (node.type === "ExportNamedDeclaration") {
+      recordTypeExports(node, typeExports)
+    }
+  }
+  return { imports, typeExports }
 }
 
 /** The base identifier of a callee chain: `z` in `z.object(...)` and `z.string().brand()`. */
@@ -268,17 +295,16 @@ function readAnnotationName(declarator: OxcNode): string | undefined {
 }
 
 /**
- * Maps every locally-declared type name to the name importers see: declared
- * exports (`export type T`, `export interface T`) map to themselves;
- * re-export specifiers (`export { T }`, `export { type T as U }`) map the
- * LOCAL name to the EXPORTED one — the identifier a sidecar `import type`
- * must use. An identity export of the same local wins over an alias, so emit
- * only rebinds when it must. A string-literal export name (`as "weird"`) is
- * not an identifier and is skipped (fail-closed: the annotation stays
- * non-importable).
+ * Records one `ExportNamedDeclaration` into the type-export map, which maps every
+ * locally-declared type name to the name importers see: declared exports
+ * (`export type T`, `export interface T`) map to themselves; re-export specifiers
+ * (`export { T }`, `export { type T as U }`) map the LOCAL name to the EXPORTED one
+ * (the identifier a sidecar `import type` must use). An identity export of the same
+ * local wins over an alias, so emit only rebinds when it must. A string-literal
+ * export name (`as "weird"`) is not an identifier and is skipped (fail-closed: the
+ * annotation stays non-importable).
  */
-function collectTypeExports(body: ReadonlyArray<OxcNode>): Map<string, string> {
-  const exports = new Map<string, string>()
+function recordTypeExports(node: OxcNode, exports: Map<string, string>): void {
   const record = (local: string, exported: string): void => {
     const existing = exports.get(local)
     if (existing === local) {
@@ -288,27 +314,21 @@ function collectTypeExports(body: ReadonlyArray<OxcNode>): Map<string, string> {
       exports.set(local, exported)
     }
   }
-  for (const node of body) {
-    if (node.type !== "ExportNamedDeclaration") {
-      continue
-    }
-    const decl = node.declaration as OxcNode | undefined
-    if (decl?.type === "TSTypeAliasDeclaration" || decl?.type === "TSInterfaceDeclaration") {
-      const id = decl.id as { name?: string } | undefined
-      if (id?.name) {
-        record(id.name, id.name)
-      }
-    }
-    const specifiers = (node.specifiers ?? []) as ReadonlyArray<OxcNode>
-    for (const spec of specifiers) {
-      const local = (spec.local as { name?: string } | undefined)?.name
-      const exported = (spec.exported as { name?: string } | undefined)?.name
-      if (local && exported) {
-        record(local, exported)
-      }
+  const decl = node.declaration as OxcNode | undefined
+  if (decl?.type === "TSTypeAliasDeclaration" || decl?.type === "TSInterfaceDeclaration") {
+    const id = decl.id as { name?: string } | undefined
+    if (id?.name) {
+      record(id.name, id.name)
     }
   }
-  return exports
+  const specifiers = (node.specifiers ?? []) as ReadonlyArray<OxcNode>
+  for (const spec of specifiers) {
+    const local = (spec.local as { name?: string } | undefined)?.name
+    const exported = (spec.exported as { name?: string } | undefined)?.name
+    if (local && exported) {
+      record(local, exported)
+    }
+  }
 }
 
 /**
@@ -396,8 +416,7 @@ export function discoverSchemas(
     typeof e === "string" ? e : ((e as { message?: string }).message ?? String(e)),
   )
   const body = (parsed.program?.body ?? []) as unknown as ReadonlyArray<OxcNode>
-  const imports = collectSourceImports(body, schemaSources)
-  const typeExports = collectTypeExports(body)
+  const { imports, typeExports } = prescanModule(body, schemaSources)
 
   const schemas: DiscoveredSchema[] = []
   const seenNames = new Set<string>()

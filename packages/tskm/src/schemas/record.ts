@@ -104,6 +104,7 @@ export function record(
           // the inferred `InferOutput<TKey>` key type even for a key-transforming schema.
           let outKey = sourceKey
           if (key !== undefined) {
+            // Call `~run` ON `key` so a custom key schema that reads `this` keeps its receiver.
             const keyDataset = key["~run"]({ value: sourceKey }, config)
             if (keyDataset.issues) {
               const head: IssuePathItem = { key: sourceKey }
