@@ -46,6 +46,15 @@ export interface StructuralTypeResult {
   readonly dataKeys: ReadonlyArray<string>
   /** True when the walk met an unnameable cycle (anonymous node or depth fallback). */
   readonly unsupported: boolean
+  /**
+   * True when the walk fell back to a bare `unknown` for an UNSUPPORTED node (an unknown
+   * schema type, a non-object value, or a getter-less lazy/recursive) — as opposed to the
+   * Tier-2 transform floor (`bearsOpaque`). A non-recursive sibling routed here by
+   * `nameSharedSchemas` (issue #22) is then skipped so its CHECKER type stands rather than
+   * overwriting it with an `unknown` the checker could have typed. The recursive Tier-2 path
+   * ignores this flag, so its behavior is unchanged.
+   */
+  readonly bearsUnsupported: boolean
   readonly warnings: ReadonlyArray<string>
 }
 
@@ -78,6 +87,8 @@ interface WalkContext {
   readonly maxDepth: number
   depth: number
   unsupported: boolean
+  /** Set when a bare `unknown` was emitted for an unsupported node (see StructuralTypeResult). */
+  bearsUnsupported: boolean
 }
 
 function isObject(value: unknown): value is SchemaLike {
@@ -103,6 +114,7 @@ export function schemaToTypeString(
     maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
     depth: 0,
     unsupported: false,
+    bearsUnsupported: false,
   }
   const out = walkNode(schema, ctx)
   // When the root participated in its own cycle it was hoisted under its alias name;
@@ -114,6 +126,7 @@ export function schemaToTypeString(
     opaquePaths: ctx.opaquePaths,
     dataKeys: rootDataKeys(schema),
     unsupported: ctx.unsupported,
+    bearsUnsupported: ctx.bearsUnsupported,
     warnings: ctx.warnings,
   }
 }
@@ -133,6 +146,7 @@ function walkChild(schema: unknown, segment: string, ctx: WalkContext): string {
 
 function walkNode(schema: unknown, ctx: WalkContext): string {
   if (!isObject(schema)) {
+    ctx.bearsUnsupported = true
     ctx.warnings.push(
       `tskm: ${ctx.rootName}: cannot type a non-object schema at ${currentPath(ctx)}; emitted 'unknown'.`,
     )
@@ -304,6 +318,7 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): string {
       // back-edges terminate as alias names instead of recursing forever.
       const getter = schema.getter
       if (typeof getter !== "function") {
+        ctx.bearsUnsupported = true
         ctx.warnings.push(
           `tskm: ${ctx.rootName}: ${String(type)} schema has no getter at ${currentPath(ctx)}; emitted 'unknown'.`,
         )
@@ -312,6 +327,7 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): string {
       return walkNode((getter as () => unknown)(), ctx)
     }
     default:
+      ctx.bearsUnsupported = true
       ctx.warnings.push(
         `tskm: ${ctx.rootName}: unknown schema type "${String(type)}" at ${currentPath(ctx)}; emitted 'unknown'.`,
       )

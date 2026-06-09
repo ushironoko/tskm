@@ -59,6 +59,7 @@ await runSchemaWorker<StructuralWorkerEntry>((name, value, mod) => {
       opaquePaths: [],
       dataKeys: [],
       unsupported: false,
+      bearsUnsupported: false,
       warnings: [],
     }
   }

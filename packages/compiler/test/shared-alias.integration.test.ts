@@ -86,6 +86,10 @@ export const probes = [addr, home, place] as const
     // A transform's output type comes from the checker, NOT the walker's `unknown` floor.
     expect(gen).toContain("export type Len = number")
     expect(gen).not.toContain("Len = unknown")
+    // A `fallback()` (a type the walker cannot render) likewise resolves to the checker type,
+    // never overwriting the correct `string` with the walker's `unknown` floor (issue #22).
+    expect(gen).toContain("export type SafeName = string")
+    expect(gen).not.toContain("SafeName = unknown")
     // A non-schema tskm const (`parse(...)`) produces no alias (no invalid `export type X =`).
     expect(gen).not.toContain("export type Parsed")
     // A const + same-binding `Infer` alias folds to a thin re-export over the named body.

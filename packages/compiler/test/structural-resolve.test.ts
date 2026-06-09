@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { type DiscoveredSchema, tskmCapability } from "../src/discovery.ts"
-import { resolveRecursiveSchemas } from "../src/structural-resolve.ts"
+import { bareAliasCycleNames, resolveRecursiveSchemas } from "../src/structural-resolve.ts"
 
 // Parent-side driver tests over the REAL worker subprocess (resolveWorker picks
 // structural-ts-worker.ts) against tiny REAL fixture modules — the degrade-safe
@@ -187,4 +187,44 @@ describe.skipIf(!bun)("resolveRecursiveSchemas — degrade-safe branches (real w
       result.diagnostics.some((d) => /whose canonical alias A could not be resolved/.test(d)),
     ).toBe(true)
   }, 30_000)
+})
+
+describe("bareAliasCycleNames (#22 G4: non-compiling bare-alias cycles)", () => {
+  const res = (typeName: string, skeleton: string) => ({ typeName, skeleton })
+
+  it("flags a bare mutual cycle (type A = B; type B = A)", () => {
+    const cyclic = bareAliasCycleNames([res("A", "B"), res("B", "A")])
+    expect([...cyclic].sort()).toEqual(["A", "B"])
+  })
+
+  it("flags a self-cycle (type A = A)", () => {
+    expect([...bareAliasCycleNames([res("A", "A")])]).toEqual(["A"])
+  })
+
+  it("flags a 3-node cycle (A -> B -> C -> A)", () => {
+    const cyclic = bareAliasCycleNames([res("A", "B"), res("B", "C"), res("C", "A")])
+    expect([...cyclic].sort()).toEqual(["A", "B", "C"])
+  })
+
+  it("does NOT flag a single alias to a real body (type Dup = Canonical)", () => {
+    const cyclic = bareAliasCycleNames([res("Canonical", "{ a: string }"), res("Dup", "Canonical")])
+    expect(cyclic.size).toBe(0)
+  })
+
+  it("does NOT flag a real structural body, even one mentioning another name", () => {
+    // The body is not a BARE alias reference (it has surrounding type syntax), so it is not
+    // treated as an alias edge.
+    const cyclic = bareAliasCycleNames([res("A", "{ next: B }"), res("B", "{ next: A }")])
+    expect(cyclic.size).toBe(0)
+  })
+
+  it("does NOT flag an alias to a name that is not an emitted resolution", () => {
+    // `string` is a primitive, not one of the resolutions, so it is not an alias edge.
+    expect(bareAliasCycleNames([res("A", "string")]).size).toBe(0)
+  })
+
+  it("flags a Unicode-named bare cycle (deriveTypeName does not ASCII-sanitize)", () => {
+    const cyclic = bareAliasCycleNames([res("Café", "Thé"), res("Thé", "Café")])
+    expect([...cyclic].sort()).toEqual(["Café", "Thé"])
+  })
 })
