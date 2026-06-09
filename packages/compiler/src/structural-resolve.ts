@@ -70,6 +70,39 @@ export function splitCanonicalTargets(targets: ReadonlyArray<DiscoveredSchema>):
   return { canonical, duplicates }
 }
 
+/**
+ * The type names whose structural body is a bare alias reference that forms a cycle with other
+ * resolutions (e.g. a bare mutual `lazy`, `type A = B` + `type B = A`, which TypeScript rejects
+ * with TS2456, or a self-cycle `type A = A`). Emitting those is a non-compiling sidecar, so the
+ * caller drops them and lets the checker type stand (issue #22 review, G4). A single alias to a
+ * real body (`type Dup = Canonical`) does not form a cycle and is preserved.
+ */
+export function bareAliasCycleNames(
+  resolutions: ReadonlyArray<{ readonly typeName: string; readonly skeleton: string }>,
+): ReadonlySet<string> {
+  const bodyByName = new Map(resolutions.map((r) => [r.typeName, r.skeleton]))
+  // A bare alias reference is a declared type name with NO surrounding type syntax. Keying off
+  // `bodyByName` (the emitted names) keeps this identifier-correctness-agnostic, so a Unicode
+  // type name (`deriveTypeName` does not ASCII-sanitize) is still recognized; the syntax check
+  // only rejects a compound body that happens to collide with a name.
+  const isAliasRef = (body: string): boolean =>
+    !/[\s.|&<>{}()[\]"'`,;:?=]/.test(body) && bodyByName.has(body)
+  const formsCycle = (start: string): boolean => {
+    let current = start
+    const seen = new Set<string>([start])
+    let body = bodyByName.get(current)
+    while (body !== undefined && isAliasRef(body)) {
+      if (body === start) return true
+      if (seen.has(body)) return false // a cycle that does not pass back through `start`
+      seen.add(body)
+      current = body
+      body = bodyByName.get(current)
+    }
+    return false
+  }
+  return new Set(resolutions.filter((r) => formsCycle(r.typeName)).map((r) => r.typeName))
+}
+
 export function resolveRecursiveSchemas(
   sourceAbs: string,
   targets: ReadonlyArray<DiscoveredSchema>,
@@ -112,10 +145,12 @@ export function resolveRecursiveSchemas(
       )
       continue
     }
-    if (!entry.recursive) {
-      // Discovery flagged it syntactically but the runtime object is not a
-      // recursive() root (e.g. a wrapper hid it). Degrade-safe: skip with the
-      // checker path untouched for everything else.
+    if (!entry.recursive && target.recursive) {
+      // Discovery flagged it recursive but the runtime object is not a recursive()
+      // root (e.g. a wrapper hid it). Degrade-safe: skip with the checker path
+      // untouched for everything else. A target discovery already knows is
+      // non-recursive (routed here by `nameSharedSchemas`, issue #22) is NOT skipped:
+      // it is a sibling we asked to alias, and the worker walked it fully.
       diagnostics.push(
         `tskm: "${target.name}" was flagged recursive but its runtime object is not a recursive() schema; skipping ${target.typeName}. Existing output left untouched.`,
       )
@@ -123,6 +158,29 @@ export function resolveRecursiveSchemas(
     }
     if (entry.unsupported) {
       diagnostics.push(...entry.warnings)
+      continue
+    }
+    if (
+      !target.recursive &&
+      (entry.typeString === "" || entry.bearsOpaque || entry.bearsUnsupported)
+    ) {
+      // A flag-routed non-recursive sibling (issue #22) the walker could not render
+      // losslessly: an empty body means the value is not a tskm-walkable schema (e.g.
+      // `const x = parse(...)`), an opaque body means a transform whose output type only
+      // the checker knows, and `bearsUnsupported` means the walk fell back to a bare
+      // `unknown` for an unsupported node (e.g. a `fallback()` or any type the walker does
+      // not handle). Skip the structural resolution so the CHECKER type stands for this
+      // target (it rides both paths under the flag); never emit an empty or `unknown` alias
+      // that would overwrite the correct checker output.
+      if (entry.typeString === "") {
+        diagnostics.push(
+          `tskm: "${target.name}" is not a structurally-aliasable schema; using the checker-resolved type for ${target.typeName}.`,
+        )
+      } else if (entry.bearsUnsupported) {
+        diagnostics.push(
+          `tskm: "${target.name}" has a position the structural walker cannot type (emitted 'unknown'); using the checker-resolved type for ${target.typeName}.`,
+        )
+      }
       continue
     }
     resolutions.push({
@@ -134,6 +192,24 @@ export function resolveRecursiveSchemas(
       dataKeys: entry.dataKeys,
       warnings: entry.warnings,
     })
+  }
+
+  // Drop any structural resolution whose body is a bare alias name forming a cycle with other
+  // resolutions (e.g. a bare mutual `lazy`: `type A = B; type B = A`, which is TS2456). Emitting
+  // those is a non-compiling sidecar; dropping them lets the CHECKER type stand, so the flag
+  // never produces output worse than flag-off for these targets (issue #22 review, G4).
+  const cyclic = bareAliasCycleNames(resolutions)
+  if (cyclic.size > 0) {
+    for (const name of cyclic) {
+      diagnostics.push(
+        `tskm: "${name}" resolves to a bare alias cycle (e.g. mutual lazy); using the checker-resolved type instead of a non-compiling alias.`,
+      )
+    }
+    for (let i = resolutions.length - 1; i >= 0; i--) {
+      if (cyclic.has(resolutions[i]?.typeName ?? "")) {
+        resolutions.splice(i, 1)
+      }
+    }
   }
 
   // Thin re-exports for duplicate declared aliases — emitted only when their

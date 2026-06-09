@@ -203,6 +203,21 @@ describe("_addIssue", () => {
     expect(mutated.issues?.[0]?.message).toBe('Invalid min_length: Expected >=5 but received "x"')
   })
 
+  it("a schema-kind WARNING is appended but does NOT mark the dataset untyped", () => {
+    // Only an error-severity schema issue untypes the dataset; a `"warning"` is reported but
+    // the value stays well-typed (issue #21, fail-closed default is error).
+    const dataset: UnknownDataset = { value: 123 }
+    _addIssue(
+      dataset,
+      { kind: "schema", type: "string", expected: "string", severity: "warning" },
+      defaultConfig,
+    )
+    const mutated = dataset as unknown as { typed?: boolean; issues?: { severity?: string }[] }
+    expect(mutated.typed).toBeUndefined()
+    expect(mutated.issues).toHaveLength(1)
+    expect(mutated.issues?.[0]?.severity).toBe("warning")
+  })
+
   it("builds the 'Received' form when expected is null", () => {
     const dataset: UnknownDataset = { value: null }
     _addIssue(dataset, { kind: "validation", type: "check", expected: null }, defaultConfig)

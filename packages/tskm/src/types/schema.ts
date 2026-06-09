@@ -2,9 +2,25 @@ import type { Config } from "./config.ts"
 import type { OutputDataset, SuccessDataset, UnknownDataset } from "./dataset.ts"
 import type { StandardSchemaV1 } from "./standard.ts"
 
-export interface SchemaTypes<TInput, TOutput> {
-  readonly input: TInput
-  readonly output: TOutput
+/**
+ * Standard Schema props whose phantom `types` carrier is surfaced as PRESENT, rather
+ * than the spec's optional `types?` form. This lets the vendor-neutral query
+ * `(typeof schema)["~standard"]["types"]["output"]` resolve directly, without the
+ * `NonNullable` the optional form forces, and is still assignable to
+ * `StandardSchemaV1.Props`, so the spec contract is unchanged.
+ *
+ * HAZARD: `types` is type-level ONLY. No runtime field is added (the object built in
+ * `_getStandardProps` omits it and is asserted to this type), so at runtime
+ * `schema["~standard"].types` is `undefined`. Marking it present means TypeScript no
+ * longer forces a `NonNullable`/optional check, so a type-checked runtime READ
+ * (`schema["~standard"].types.output`) compiles but throws. Use it only as a type
+ * (`(typeof schema)["~standard"]["types"]["output"]`), never as a value.
+ */
+export type StandardProps<TInput, TOutput> = Omit<
+  StandardSchemaV1.Props<TInput, TOutput>,
+  "types"
+> & {
+  readonly types: StandardSchemaV1.Types<TInput, TOutput>
 }
 
 /** A synchronous schema: a tagged plain object created by a factory function. */
@@ -15,9 +31,8 @@ export interface BaseSchema<TInput, TOutput> {
   readonly reference: (...args: any[]) => BaseSchema<any, any>
   readonly expects: string
   readonly async: false
-  readonly "~standard": StandardSchemaV1.Props<TInput, TOutput>
+  readonly "~standard": StandardProps<TInput, TOutput>
   readonly "~run": (dataset: UnknownDataset, config: Config) => OutputDataset<TOutput>
-  readonly "~types"?: SchemaTypes<TInput, TOutput> | undefined
 }
 
 /** An asynchronous schema: `~run` returns a Promise. */
@@ -27,9 +42,8 @@ export interface BaseSchemaAsync<TInput, TOutput> {
   readonly reference: (...args: any[]) => BaseSchema<any, any> | BaseSchemaAsync<any, any>
   readonly expects: string
   readonly async: true
-  readonly "~standard": StandardSchemaV1.Props<TInput, TOutput>
+  readonly "~standard": StandardProps<TInput, TOutput>
   readonly "~run": (dataset: UnknownDataset, config: Config) => Promise<OutputDataset<TOutput>>
-  readonly "~types"?: SchemaTypes<TInput, TOutput> | undefined
 }
 
 export type GenericSchema<TInput = unknown, TOutput = TInput> = BaseSchema<TInput, TOutput>

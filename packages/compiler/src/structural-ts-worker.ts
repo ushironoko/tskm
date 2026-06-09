@@ -43,11 +43,13 @@ await runSchemaWorker<StructuralWorkerEntry>((name, value, mod) => {
   // that merely carries `type: "recursive"` (a non-tskm vendor) reports recursive=false
   // so the parent skips it with a diagnostic, never emitting an empty/invalid alias.
   const recursive = (value as { type?: unknown }).type === "recursive" && isTskmWalkable(value)
-  // Only declared targets are walked: the parent never consumes non-target entries,
-  // and the walk contract requires the root to be IN the identity map (which only
-  // targets are). A re-exported tskm recursive gets a stub here (recursive=true, no
-  // body) and is simply never consumed.
-  if (!recursive || !overrides.has(name)) {
+  // Walk any DECLARED target that is a tskm-walkable value: a recursive() root, or a
+  // non-recursive tskm sibling routed here by `nameSharedSchemas` (issue #22) to be
+  // emitted as a named alias. The walk contract requires the root to be IN the identity
+  // map, which every declared target is. A non-walkable value (a foreign vendor, even
+  // one carrying `type: "recursive"`) or a non-declared entry gets a stub the parent
+  // never consumes; the `isTskmWalkable` gate keeps external schemas out of the walker.
+  if (!overrides.has(name) || !isTskmWalkable(value)) {
     return {
       name,
       typeName,
@@ -57,9 +59,10 @@ await runSchemaWorker<StructuralWorkerEntry>((name, value, mod) => {
       opaquePaths: [],
       dataKeys: [],
       unsupported: false,
+      bearsUnsupported: false,
       warnings: [],
     }
   }
   const result = schemaToTypeString(value, { rootName: typeName, typeNames })
-  return { name, typeName, recursive: true, ...result }
+  return { name, typeName, recursive, ...result }
 })

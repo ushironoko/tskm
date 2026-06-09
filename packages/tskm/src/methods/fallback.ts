@@ -3,6 +3,7 @@ import type { OutputDataset, SuccessDataset, UnknownDataset } from "../types/dat
 import type { InferInput, InferOutput } from "../types/infer.ts"
 import type { BaseSchema } from "../types/schema.ts"
 import { _getStandardProps } from "../utils/_getStandardProps.ts"
+import { hasErrorIssue } from "../utils/_severity.ts"
 
 export interface FallbackSchema<
   TSchema extends BaseSchema<unknown, unknown>,
@@ -38,8 +39,9 @@ export function fallback<
     },
     "~run"(dataset: UnknownDataset, config: Config) {
       const result = schema["~run"](dataset, config) as OutputDataset<unknown>
-      if (result.issues) {
-        // Recover: discard the failed result and return a clean typed success.
+      if (hasErrorIssue(result.issues)) {
+        // Recover ONLY on an error: a warning-only result is already a success and keeps
+        // its real value rather than being replaced by the fallback.
         return {
           typed: true,
           value: fallbackValue,

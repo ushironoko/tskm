@@ -3,6 +3,7 @@ import type { InferInput, InferOutput } from "../types/infer.ts"
 import type { BaseSchema, BaseSchemaAsync } from "../types/schema.ts"
 import { _addIssue } from "../utils/_addIssue.ts"
 import { _getStandardProps } from "../utils/_getStandardProps.ts"
+import { hasErrorIssue } from "../utils/_severity.ts"
 
 export type UnionOptionsAsync = readonly (
   | BaseSchema<unknown, unknown>
@@ -43,9 +44,12 @@ export function unionAsync<const TOptions extends UnionOptionsAsync>(
       // Try each option on a FRESH dataset; the first fully-valid match wins.
       for (const option of options) {
         const optionDataset = await option["~run"]({ value: input }, config)
-        if (optionDataset.typed && !optionDataset.issues) {
+        if (optionDataset.typed && !hasErrorIssue(optionDataset.issues)) {
           out.typed = true
           out.value = optionDataset.value
+          if (optionDataset.issues) {
+            out.issues = optionDataset.issues
+          }
           return out as unknown as OutputDataset<InferOutput<TOptions[number]>>
         }
       }

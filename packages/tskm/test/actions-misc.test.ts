@@ -23,7 +23,7 @@ describe("transform", () => {
     expect(action.type).toBe("transform")
     expect(action.reference).toBe(transform)
     expect(action.async).toBe(false)
-    expect(action.operation("abcd")).toBe(4)
+    expect(action.operation("abcd", { issue: () => {} })).toBe(4)
   })
 
   it("maps the output value through the pipe", () => {

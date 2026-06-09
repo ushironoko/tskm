@@ -39,7 +39,7 @@ export interface RecursiveSchema<TBuild extends RecursiveBuild>
  * memoized in a closure, mirroring `lazy`.
  *
  * An explicit output type is optional: `recursive<Category>((self) => ...)` pins
- * `~types` to `Category` for Standard Schema consumers at the call site.
+ * `~standard.types` to `Category` for Standard Schema consumers at the call site.
  */
 // @__NO_SIDE_EFFECTS__
 export function recursive<TBuild extends RecursiveBuild>(build: TBuild): RecursiveSchema<TBuild>
