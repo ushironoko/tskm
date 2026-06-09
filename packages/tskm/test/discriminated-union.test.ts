@@ -1,5 +1,15 @@
 import { describe, expect, it } from "bun:test"
-import { discriminatedUnion, literal, number, object, picklist, safeParse } from "../src/index.ts"
+import {
+  discriminatedUnion,
+  literal,
+  number,
+  object,
+  picklist,
+  pipe,
+  safeParse,
+  string,
+  transform,
+} from "../src/index.ts"
 
 /**
  * Runtime behavior of `discriminatedUnion` (issue #15): O(1) tag dispatch, an
@@ -77,5 +87,60 @@ describe("discriminatedUnion runtime (#15)", () => {
 
   it("throws at construction when a member lacks the discriminant", () => {
     expect(() => discriminatedUnion("kind", [object({ a: number() })])).toThrow()
+  })
+
+  it("throws at construction when the discriminant is not a literal/picklist", () => {
+    expect(() => discriminatedUnion("kind", [object({ kind: number(), a: number() })])).toThrow()
+  })
+
+  it("rejects a missing discriminant key at runtime (same path as an unknown tag)", () => {
+    const r = safeParse(shape, { radius: 3 })
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.issues[0]?.message).toContain('kind = "circle" | "square"')
+    }
+  })
+
+  it("exposes a tag -> member mapping a consumer can read to build a registry", () => {
+    const circle = object({ kind: literal("circle"), radius: number() })
+    const square = object({ kind: literal("square"), side: number() })
+    const du = discriminatedUnion("kind", [circle, square])
+    expect(du.mapping.get("circle")).toBe(circle)
+    expect(du.mapping.get("square")).toBe(square)
+    expect(du.mapping.get("triangle")).toBeUndefined()
+    expect([...du.mapping.keys()]).toEqual(["circle", "square"])
+  })
+
+  it("expands a picklist discriminant in the mapping (every tag keys the same member)", () => {
+    const ab = object({ kind: picklist(["a", "b"]), x: number() })
+    const c = object({ kind: literal("c"), y: number() })
+    const du = discriminatedUnion("kind", [ab, c])
+    expect(du.mapping.get("a")).toBe(ab)
+    expect(du.mapping.get("b")).toBe(ab)
+    expect(du.mapping.get("c")).toBe(c)
+  })
+
+  it("carries a member warning (selected member only): warning succeeds, error fails", () => {
+    const warned = pipe(
+      string(),
+      transform((value: string, ctx) => {
+        ctx.issue("deprecated tag payload", "warning")
+        return value
+      }),
+    )
+    const du = discriminatedUnion("kind", [
+      object({ kind: literal("a"), name: warned }),
+      object({ kind: literal("b"), n: number() }),
+    ])
+    const ok = safeParse(du, { kind: "a", name: "x" })
+    expect(ok.success).toBe(true)
+    if (ok.success) {
+      expect(ok.warnings).toHaveLength(1)
+    }
+    const bad = safeParse(du, { kind: "b", n: "x" })
+    expect(bad.success).toBe(false)
+    if (!bad.success) {
+      expect(bad.issues[0]?.path).toEqual([{ key: "n" }])
+    }
   })
 })

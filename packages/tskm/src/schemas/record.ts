@@ -14,6 +14,13 @@ import { hasErrorIssue } from "../utils/_severity.ts"
  * a `regex`-piped string). A number-output schema is rejected: at runtime the key is the
  * raw string property name, so a numeric key type would promise keys the validator never
  * produces.
+ *
+ * Fidelity note: the key constraint is only as expressive as the key schema's OUTPUT TYPE.
+ * A `picklist`/`templateLiteral` key narrows the emitted key type (`"a" | "b"`, `` `item_${string}` ``),
+ * but a `regex`-piped key outputs plain `string`, so TypeScript cannot represent the pattern:
+ * the inferred and emitted key type is an unconstrained `string`, while the pattern is still
+ * enforced at runtime and carried into JSON Schema as `propertyNames.pattern`. That is a
+ * limitation of TS string types, not a runtime gap.
  */
 export type RecordKey = BaseSchema<unknown, string>
 

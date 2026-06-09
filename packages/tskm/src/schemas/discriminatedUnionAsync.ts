@@ -24,6 +24,11 @@ export interface DiscriminatedUnionSchemaAsync<
   readonly discriminant: TKey
   readonly options: TMembers
   readonly literals: readonly Literal[]
+  /**
+   * The tag -> member map a consumer can read to derive a registry without re-declaring it
+   * (see sync `discriminatedUnion`). A `picklist` discriminant is expanded.
+   */
+  readonly mapping: ReadonlyMap<Literal, TMembers[number]>
   readonly message: string | undefined
 }
 
@@ -55,7 +60,7 @@ export function discriminatedUnionAsync<
   members: TMembers,
   message?: string,
 ): DiscriminatedUnionSchemaAsync<TKey, TMembers> {
-  const lookup = new Map<Literal, AsyncMember>()
+  const lookup = new Map<Literal, TMembers[number]>()
   const literals: Literal[] = []
   for (const member of members) {
     const entry = (member.entries as ObjectEntries)[discriminant]
@@ -90,6 +95,7 @@ export function discriminatedUnionAsync<
     discriminant,
     options: members,
     literals,
+    mapping: lookup,
     message,
     get "~standard"() {
       return _getStandardProps(this)

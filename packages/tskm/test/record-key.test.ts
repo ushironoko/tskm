@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test"
-import { number, picklist, record, safeParse, string, templateLiteral } from "../src/index.ts"
+import {
+  number,
+  picklist,
+  pipe,
+  record,
+  regex,
+  safeParse,
+  string,
+  templateLiteral,
+} from "../src/index.ts"
 
 /**
  * Key schema argument to `record` (issue #19): `record(key, value)` validates each key
@@ -46,5 +55,32 @@ describe("keyed record runtime (#19)", () => {
     const r = record(picklist(["a", "b"]), number())
     expect(safeParse(r, { a: 1 }).success).toBe(true)
     expect(safeParse(r, {}).success).toBe(true)
+  })
+
+  it("a regex-piped string key enforces the pattern at RUNTIME (the TS key type stays `string`)", () => {
+    // A `regex`-piped string outputs `string`, so TypeScript cannot express the pattern: the
+    // inferred key type is `string` and the emitted type is an unconstrained index signature.
+    // The constraint lives at runtime (here) and in JSON Schema (`propertyNames.pattern`).
+    const r = record(pipe(string(), regex(/^k_/)), number())
+    expect(safeParse(r, { k_a: 1, k_b: 2 }).success).toBe(true)
+    const bad = safeParse(r, { nope: 1 })
+    expect(bad.success).toBe(false)
+    if (!bad.success) {
+      expect(bad.issues[0]?.path).toEqual([{ key: "nope" }])
+    }
+  })
+
+  it("writes a `__proto__` key as an own property, never onto the prototype", () => {
+    const r = record(number())
+    // An own `__proto__` key can only be built via JSON.parse, not an object literal.
+    const input = JSON.parse('{"__proto__": 1, "a": 2}')
+    const res = safeParse(r, input)
+    expect(res.success).toBe(true)
+    if (res.success) {
+      const desc = Object.getOwnPropertyDescriptor(res.output, "__proto__")
+      expect(desc?.value).toBe(1)
+      // The output's prototype is intact (the key did not corrupt the [[Prototype]] slot).
+      expect(Object.getPrototypeOf(res.output)).toBe(Object.prototype)
+    }
   })
 })

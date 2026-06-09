@@ -29,6 +29,12 @@ export interface DiscriminatedUnionSchema<
   readonly options: TMembers
   /** The full set of tag literals, derived from the members' discriminant entries. */
   readonly literals: readonly Literal[]
+  /**
+   * The tag -> member map a consumer can read to derive a registry (tag -> handler,
+   * tag -> sub-schema, exhaustive `switch`) without re-declaring the mapping. A `picklist`
+   * discriminant is expanded: every one of its tags keys the same member.
+   */
+  readonly mapping: ReadonlyMap<Literal, TMembers[number]>
   readonly message: string | undefined
 }
 
@@ -60,7 +66,7 @@ export function discriminatedUnion<
   // Build the tag -> member lookup once, at construction time. Misuse (a member missing
   // the discriminant, a non-literal discriminant, or a duplicate tag) is a construction
   // error, not a silent runtime surprise.
-  const lookup = new Map<Literal, ObjectSchema<ObjectEntries, boolean>>()
+  const lookup = new Map<Literal, TMembers[number]>()
   const literals: Literal[] = []
   for (const member of members) {
     const entry = member.entries[discriminant]
@@ -95,6 +101,7 @@ export function discriminatedUnion<
     discriminant,
     options: members,
     literals,
+    mapping: lookup,
     message,
     get "~standard"() {
       return _getStandardProps(this)

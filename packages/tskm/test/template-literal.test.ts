@@ -73,6 +73,32 @@ describe("templateLiteral type/runtime soundness (#18 review)", () => {
     expect(safeParse(t, "01").success).toBe(false)
   })
 
+  it("number placeholder accepts the hex/binary/octal forms that `${number}` includes", () => {
+    // These radix integer strings are members of `${number}` (verified with tsgo), so the
+    // runtime regex must accept them or it would reject strings the emitted type allows.
+    const t = templateLiteral([number()])
+    expect(safeParse(t, "0x10").success).toBe(true)
+    expect(safeParse(t, "0b1011").success).toBe(true)
+    expect(safeParse(t, "0o17").success).toBe(true)
+    expect(safeParse(t, "0xAF").success).toBe(true)
+    // decimal/exponent forms still match
+    expect(safeParse(t, "-3.14").success).toBe(true)
+    expect(safeParse(t, "1e3").success).toBe(true)
+    // `Infinity`/`NaN` are NOT in `${number}`, so they stay rejected (sound subset)
+    expect(safeParse(t, "Infinity").success).toBe(false)
+    expect(safeParse(t, "NaN").success).toBe(false)
+    expect(safeParse(t, "abc").success).toBe(false)
+    // a negative radix is not a `${number}` member, so it is rejected
+    expect(safeParse(t, "-0x10").success).toBe(false)
+  })
+
+  it("bigint placeholder accepts the hex/binary/octal forms that `${bigint}` includes", () => {
+    const t = templateLiteral([bigint()])
+    expect(safeParse(t, "0x10").success).toBe(true)
+    expect(safeParse(t, "0b1011").success).toBe(true)
+    expect(safeParse(t, "0o17").success).toBe(true)
+  })
+
   it("null placeholder matches only its literal text", () => {
     expect(safeParse(templateLiteral([null_()]), "null").success).toBe(true)
     expect(safeParse(templateLiteral([null_()]), "x").success).toBe(false)

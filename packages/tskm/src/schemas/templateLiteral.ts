@@ -63,6 +63,14 @@ function escapeRegex(text: string): string {
 const NEVER_MATCH = "[^\\s\\S]"
 
 /**
+ * Hex/binary/octal integer string forms. Verified with the project's tsgo: each is a member
+ * of both `` `${number}` `` and `` `${bigint}` `` (e.g. `"0x10"`, `"0b10"`, `"0o17"`), while a
+ * NEGATIVE radix (`"-0x10"`) is not a `${number}` member, so this only covers the positive
+ * forms to stay a sound subset.
+ */
+const RADIX_INT = "0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+"
+
+/**
  * The tskm factory that legitimately produces each supported placeholder `type`. A schema's
  * `reference` is its self-identity (see `BaseSchema.reference`); requiring it to match the
  * factory for its claimed `type` closes the structural-trust gap where a forged or foreign
@@ -140,8 +148,10 @@ function hasTransformation(node: { pipe?: unknown }): boolean {
  * silent any-match, so a placeholder kind whose strings the regex cannot bound is rejected
  * up front instead of diverging from the type.
  *
- * The `number` fragment is an approximation: it matches the decimal/exponent forms but not
- * hex/binary/octal or `Infinity`/`NaN` shapes, which the `${number}` type can also denote.
+ * The `number`/`bigint` fragments match the decimal, exponent, and hex/binary/octal integer
+ * forms that `${number}`/`${bigint}` denote (verified against the project's tsgo). `Infinity`
+ * and `NaN` are NOT members of `${number}`, so the fragments correctly exclude them and a
+ * non-finite numeric `literal` is rejected up front.
  */
 function placeholderFragment(schema: BaseSchema<unknown, unknown>): string {
   const node = schema as {
@@ -175,10 +185,11 @@ function placeholderFragment(schema: BaseSchema<unknown, unknown>): string {
     case "string":
       return "[\\s\\S]*?"
     case "number":
-      return "[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?"
+      return `(?:${RADIX_INT}|[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?)`
     case "bigint":
-      // `${bigint}` excludes a leading `+` and leading zeros.
-      return "-?(?:0|[1-9]\\d*)"
+      // `${bigint}` excludes a leading `+` and (decimal) leading zeros, but includes the
+      // hex/binary/octal integer forms.
+      return `(?:${RADIX_INT}|-?(?:0|[1-9]\\d*))`
     case "boolean":
       return "(?:true|false)"
     case "null":
