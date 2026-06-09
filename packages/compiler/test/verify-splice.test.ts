@@ -55,14 +55,18 @@ const stubClient = (script: {
   getDiagnostics?: (probeFileAbs: string) => ReadonlyArray<FileDiagnostic>
 }): { client: TsgoClient; calls: () => number } => {
   let calls = 0
+  const resolveTypeAt = (file: string, position: number): ResolvedType | null => {
+    calls++
+    return script.resolveTypeAt ? script.resolveTypeAt(file, position) : null
+  }
   const client: TsgoClient = {
     updateFile: () => {
       calls++
     },
-    resolveTypeAt: (file, position) => {
-      calls++
-      return script.resolveTypeAt ? script.resolveTypeAt(file, position) : null
-    },
+    // Batched callers go through withSnapshot; drive resolveAt through the same
+    // scripted resolveTypeAt so the call counter and results are unchanged.
+    withSnapshot: (fn) => fn(resolveTypeAt),
+    resolveTypeAt,
     getDiagnostics: (probeFileAbs) => {
       calls++
       return script.getDiagnostics ? script.getDiagnostics(probeFileAbs) : []

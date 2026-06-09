@@ -32,6 +32,16 @@ export interface FileDiagnostic {
 export interface TsgoClient {
   /** Registers a freshly written file with the open project. */
   readonly updateFile: (absPath: string, kind: "created" | "changed" | "deleted") => void
+  /**
+   * Runs `fn` under ONE snapshot, passing it a `resolveAt` that reuses that
+   * snapshot for every query. Taking a snapshot is the dominant codegen cost, so a
+   * caller that issues many queries against an unchanging file state (all markers of
+   * one query file) should batch them here rather than pay a fresh snapshot per
+   * marker. The snapshot is released exactly once when `fn` returns or throws.
+   */
+  readonly withSnapshot: <T>(
+    fn: (resolveAt: (queryFileAbs: string, position: number) => ResolvedType | null) => T,
+  ) => T
   /** Resolves the checker type at a position, then renders it fully expanded. */
   readonly resolveTypeAt: (queryFileAbs: string, position: number) => ResolvedType | null
   /**
@@ -122,14 +132,17 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
     client.releaseHandle(snap.snapshot)
   }
 
-  const resolveTypeAt: TsgoClient["resolveTypeAt"] = (queryFileAbs, position) => {
-    // Take a no-op snapshot to obtain a fresh handle for the current file state.
+  const withSnapshot: TsgoClient["withSnapshot"] = (fn) => {
+    // Take a no-op snapshot ONCE to obtain a fresh handle for the current file state, then
+    // let `fn` reuse it for every query: within one query file the file state never changes,
+    // so one snapshot serves all markers (avoids one updateSnapshot round trip per marker).
+    // Released exactly once in the finally below.
     const snap = client.updateSnapshot({ fileChanges: {} }) as SnapshotRecord
     const first = snap.projects[0]
     if (first) {
       project = first.id
     }
-    try {
+    const resolveAt = (queryFileAbs: string, position: number): ResolvedType | null => {
       const handle = client.getTypeAtPosition(snap.snapshot, project, queryFileAbs, position) as
         | { id: string; flags: number }
         | null
@@ -145,10 +158,18 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
         TYPE_TO_STRING_FLAGS,
       )
       return { flags: handle.flags, text }
+    }
+    try {
+      return fn(resolveAt)
     } finally {
       client.releaseHandle(snap.snapshot)
     }
   }
+
+  // A single-query convenience over withSnapshot, kept so callers that resolve just
+  // one marker need not open a withSnapshot scope themselves.
+  const resolveTypeAt: TsgoClient["resolveTypeAt"] = (queryFileAbs, position) =>
+    withSnapshot((resolveAt) => resolveAt(queryFileAbs, position))
 
   const getDiagnostics: TsgoClient["getDiagnostics"] = (probeFileAbs) => {
     const snap = client.updateSnapshot({ fileChanges: {} }) as SnapshotRecord
@@ -210,5 +231,5 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
   }
   probe()
 
-  return { updateFile, resolveTypeAt, getDiagnostics, close }
+  return { updateFile, withSnapshot, resolveTypeAt, getDiagnostics, close }
 }

@@ -172,20 +172,24 @@ export function resolveSentinelUnroll(
   const unrolled = new Map<number, string>()
   const diagnostics: string[] = []
   withQueryFile(client, queryFile, body, () => {
-    targets.forEach((target, i) => {
-      const marker = markers[i]
-      if (!marker) {
-        return
-      }
-      const result = client.resolveTypeAt(queryFile, markerPosition(body, marker))
-      if (!result || result.flags & FAILURE_TYPE_FLAGS) {
-        const flags = result ? `flags=${result.flags}` : "no type"
-        diagnostics.push(
-          `tskm: Tier-1 unroll for "${target.exportName}" did not resolve (${flags}); keeping the structural skeleton for ${target.typeName}.`,
-        )
-        return
-      }
-      unrolled.set(i, result.text)
+    // One snapshot serves every target marker: the query file is fixed for the whole
+    // loop, so a single snapshot avoids a fresh (dominant-cost) one per target.
+    client.withSnapshot((resolveAt) => {
+      targets.forEach((target, i) => {
+        const marker = markers[i]
+        if (!marker) {
+          return
+        }
+        const result = resolveAt(queryFile, markerPosition(body, marker))
+        if (!result || result.flags & FAILURE_TYPE_FLAGS) {
+          const flags = result ? `flags=${result.flags}` : "no type"
+          diagnostics.push(
+            `tskm: Tier-1 unroll for "${target.exportName}" did not resolve (${flags}); keeping the structural skeleton for ${target.typeName}.`,
+          )
+          return
+        }
+        unrolled.set(i, result.text)
+      })
     })
   })
   return { unrolled, diagnostics }

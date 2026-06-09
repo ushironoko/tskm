@@ -29,6 +29,13 @@ export function tuple<const TItems extends TupleItems>(
   items: TItems,
   message?: string,
 ): TupleSchema<TItems> {
+  // Hoist construction-time facts out of the hot "~run" path: the arity and a
+  // plain (non-readonly, non-tuple-typed) schema list never change per parse,
+  // so resolve them once here and iterate the closure copy by index below. This
+  // avoids re-reading items.length each iteration and re-widening TItems[number]
+  // (a union over the tuple) to BaseSchema on every element.
+  const itemSchemas: BaseSchema<unknown, unknown>[] = [...items]
+  const itemCount = itemSchemas.length
   return {
     kind: "schema",
     type: "tuple",
@@ -43,13 +50,15 @@ export function tuple<const TItems extends TupleItems>(
     "~run"(dataset, config) {
       const out = dataset as MutableDataset
       const input = out.value
-      if (Array.isArray(input) && input.length === items.length) {
+      if (Array.isArray(input) && input.length === itemCount) {
         out.typed = true
         // Build a fresh output tuple — never mutate the user's input.
         const output: unknown[] = []
         let aborted = false
-        for (let index = 0; index < items.length; index++) {
-          const itemSchema = items[index] as BaseSchema<unknown, unknown>
+        for (let index = 0; index < itemCount; index++) {
+          // index is bounded by itemCount, so the element is always present; the cast only
+          // sheds the "| undefined" that noUncheckedIndexedAccess adds, with no runtime cost.
+          const itemSchema = itemSchemas[index] as BaseSchema<unknown, unknown>
           const itemDataset = itemSchema["~run"]({ value: input[index] }, config)
           if (itemDataset.issues) {
             const head: IssuePathItem = { key: index }

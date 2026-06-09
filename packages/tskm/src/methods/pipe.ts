@@ -34,6 +34,17 @@ export function pipe<
   const TSchema extends BaseSchema<unknown, unknown>,
   const TItems extends readonly AnyPipeItem[],
 >(schema: TSchema, ...items: TItems): SchemaWithPipe<TSchema, TItems> {
+  // The item kinds are fixed at construction time, so classify each item once here
+  // instead of re-comparing `item.kind` against the string on every parse. Each step
+  // carries a precomputed `isTransform` boolean the hot loop reads directly, paired with
+  // the item already narrowed to its concrete action type so the loop keeps the original
+  // discriminated `~run` signatures (no per-parse re-narrowing, no widening cast).
+  const steps = items.map((item) =>
+    item.kind === "transformation"
+      ? ({ isTransform: true, item } as const)
+      : ({ isTransform: false, item } as const),
+  )
+
   const result = {
     ...schema,
     pipe: [schema, ...items] as const,
@@ -44,11 +55,12 @@ export function pipe<
     },
     "~run"(dataset: UnknownDataset, config: Config) {
       let current = schema["~run"](dataset, config) as OutputDataset<unknown>
-      for (const item of items) {
+      for (const { item, isTransform } of steps) {
         // Bail only on an ERROR-severity issue; a transform `"warning"` is non-fatal and
-        // must not short-circuit the remaining pipeline items.
+        // must not short-circuit the remaining pipeline items. Truthy (not `=== true`) test to
+        // match the async sibling and accept any abort-early config value the same way.
         if (hasErrorIssue(current.issues) && (isReject(config) || config.abortPipeEarly)) break
-        if (item.kind === "transformation") {
+        if (isTransform) {
           // Transformations only run on a well-typed value.
           if (current.typed) {
             current = item["~run"](current as SuccessDataset<unknown>, config)

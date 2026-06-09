@@ -14,11 +14,14 @@ export interface LiteralSchema<T extends Literal> extends BaseSchema<T, T> {
 
 // @__NO_SIDE_EFFECTS__
 export function literal<const T extends Literal>(value: T, message?: string): LiteralSchema<T> {
+  // Compute the expected string once at construction so the failing-parse branch
+  // reuses it instead of rebuilding the same template literal on every parse.
+  const expected = typeof value === "string" ? `"${value}"` : `${value}`
   return {
     kind: "schema",
     type: "literal",
     reference: literal,
-    expects: typeof value === "string" ? `"${value}"` : `${value}`,
+    expects: expected,
     async: false,
     literal: value,
     message,
@@ -35,7 +38,7 @@ export function literal<const T extends Literal>(value: T, message?: string): Li
           {
             kind: "schema",
             type: "literal",
-            expected: typeof value === "string" ? `"${value}"` : `${value}`,
+            expected,
             message,
           },
           config,

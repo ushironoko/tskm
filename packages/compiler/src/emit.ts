@@ -120,15 +120,23 @@ function matchingBracket(text: string, openIdx: number): number {
  */
 export function reindentType(single: string): string {
   const text = single.trim()
-  let out = ""
+  // Build into chunks and join once instead of growing a string per character:
+  // string concatenation here was a hot allocator in the warm codegen profile.
+  const out: string[] = []
   let depth = 0
   let i = 0
   const pad = (d: number): string => "  ".repeat(Math.max(d, 0))
 
-  const startsLine = (): boolean => out.length === 0 || out.endsWith("\n")
+  // Tracks the old `out.endsWith("\n") || out.length === 0` check without
+  // re-scanning the accumulator: true while the next push begins a fresh line.
+  // Every branch below updates it to mirror what it appends (a `\n`-terminated
+  // chunk leaves it true; any other non-empty chunk leaves it false).
+  let lineStart = true
 
   while (i < text.length) {
-    const ch = text[i]
+    // i is bounded by text.length, so the char is always present; the cast only sheds the
+    // "| undefined" that noUncheckedIndexedAccess adds (same pattern as the sibling scanners).
+    const ch = text[i] as string
 
     if (ch === '"' || ch === "'" || ch === "`") {
       const quote = ch
@@ -147,16 +155,17 @@ export function reindentType(single: string): string {
           break
         }
       }
-      if (startsLine()) {
-        out += pad(depth)
+      if (lineStart) {
+        out.push(pad(depth))
       }
-      out += lit
+      out.push(lit)
+      lineStart = false
       continue
     }
 
     if (ch === "{" || ch === "[" || ch === "(") {
-      if (startsLine()) {
-        out += pad(depth)
+      if (lineStart) {
+        out.push(pad(depth))
       }
       // Empty container: keep `{}` / `[]` / `()` inline.
       const next = text[i + 1]
@@ -165,7 +174,8 @@ export function reindentType(single: string): string {
         (ch === "[" && next === "]") ||
         (ch === "(" && next === ")")
       ) {
-        out += ch + next
+        out.push(ch + next)
+        lineStart = false
         i += 2
         continue
       }
@@ -180,33 +190,39 @@ export function reindentType(single: string): string {
             j++
           }
           if (text[j] === ":") {
-            out += `[${text
-              .slice(i + 1, close)
-              .trim()
-              .replace(/\s+/g, " ")}]`
+            out.push(
+              `[${text
+                .slice(i + 1, close)
+                .trim()
+                .replace(/\s+/g, " ")}]`,
+            )
+            lineStart = false
             i = close + 1
             continue
           }
         }
       }
       depth++
-      out += `${ch}\n`
+      out.push(`${ch}\n`)
+      lineStart = true
       i++
       continue
     }
 
     if (ch === "}" || ch === "]" || ch === ")") {
       depth--
-      if (!startsLine()) {
-        out += "\n"
+      if (!lineStart) {
+        out.push("\n")
       }
-      out += pad(depth) + ch
+      out.push(pad(depth) + ch)
+      lineStart = false
       i++
       continue
     }
 
     if (ch === ";") {
-      out += ";\n"
+      out.push(";\n")
+      lineStart = true
       i++
       // Collapse following whitespace; next token will re-pad.
       while (i < text.length && (text[i] === " " || text[i] === "\t")) {
@@ -215,19 +231,21 @@ export function reindentType(single: string): string {
       continue
     }
 
-    if (ch === " " && startsLine()) {
+    if (ch === " " && lineStart) {
       i++
       continue
     }
 
-    if (startsLine()) {
-      out += pad(depth)
+    if (lineStart) {
+      out.push(pad(depth))
     }
-    out += ch
+    out.push(ch)
+    lineStart = false
     i++
   }
 
   return out
+    .join("")
     .split("\n")
     .map((line) => line.replace(/\s+$/, ""))
     .filter((line, idx, arr) => !(line === "" && (idx === 0 || arr[idx - 1] === "")))

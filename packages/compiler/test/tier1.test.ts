@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { buildSentinelQuery, resolveSentinelUnroll, substituteSentinel } from "../src/tier1.ts"
+import type { TsgoClient } from "../src/tsgo-client.ts"
 
 describe("buildSentinelQuery — the verified unroll query form", () => {
   it("emits one unique-symbol sentinel + one marker per target", () => {
@@ -104,14 +105,18 @@ describe("resolveSentinelUnroll — empty targets", () => {
     // The zero-target guard keeps the no-Tier-1 path completely free of query-file
     // writes and client calls.
     let touched = 0
-    const client = {
+    const resolveTypeAt = (): null => {
+      touched++
+      return null
+    }
+    const client: TsgoClient = {
       updateFile: () => {
         touched++
       },
-      resolveTypeAt: () => {
-        touched++
-        return null
-      },
+      // Batched callers go through withSnapshot; the empty-target guard must short
+      // circuit before this (or any other member) is ever reached.
+      withSnapshot: (fn) => fn(resolveTypeAt),
+      resolveTypeAt,
       getDiagnostics: () => {
         touched++
         return []

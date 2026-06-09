@@ -240,8 +240,18 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       // pruned resolution (below) must not surface notes for a body never emitted.
       structuralWarnings.set(r.typeName, upgradedBody === undefined ? r.warnings : [])
     }
+    // One pass over `targets` builds the candidate list, the declared-name set,
+    // and the typeName->target lookup together: `targets` has unique typeNames
+    // here (the seenTypeNames filter above dropped collisions), and every consumer
+    // keeps discovery order, so the fused build is byte-for-byte the old three
+    // separate `targets` walks (declared's iteration order, which picks the named
+    // sibling in a prune diagnostic, stays the targets order).
     const candidates: PruneCandidate[] = []
+    const targetByTypeName = new Map<string, DiscoveredSchema>()
+    const declared = new Set<string>()
     for (const target of targets) {
+      targetByTypeName.set(target.typeName, target)
+      declared.add(target.typeName)
       const body = byTypeName.get(target.typeName)
       if (body !== undefined) {
         candidates.push({
@@ -254,11 +264,9 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
 
     // Fail-closed backstop: drop (cascade) any structural body referencing a
     // declared sibling alias that did not make it into the emitted set.
-    const declared = new Set(targets.map((t) => t.typeName))
-    const pruned = pruneDanglingAliases(candidates, declared)
     // Re-attach per-target metadata (vendor, annotation) lost through the
-    // body-string merge — emit derives its import lines from it.
-    const targetByTypeName = new Map(targets.map((t) => [t.typeName, t]))
+    // body-string merge (targetByTypeName): emit derives its import lines from it.
+    const pruned = pruneDanglingAliases(candidates, declared)
     const resolved: ResolvedSchema[] = pruned.kept.map((c) => {
       const target = targetByTypeName.get(c.typeName)
       return {

@@ -40,6 +40,8 @@ export function array<TItem extends BaseSchema<unknown, unknown>>(
         const output: unknown[] = []
         let aborted = false
         for (let index = 0; index < input.length; index++) {
+          // Call `~run` ON `item` (not a hoisted reference) so a custom BaseSchema whose
+          // `~run` reads `this` keeps its receiver. The property read is monomorphic and cheap.
           const itemDataset = item["~run"]({ value: input[index] }, config)
           if (itemDataset.issues) {
             const head: IssuePathItem = { key: index }
@@ -72,9 +74,17 @@ export function array<TItem extends BaseSchema<unknown, unknown>>(
 }
 
 function _pushIssues(dataset: { issues?: Issue[] }, incoming: readonly Issue[]): void {
-  if (dataset.issues) {
-    dataset.issues.push(...incoming)
-  } else {
-    dataset.issues = [...incoming]
+  // Index-loop appends instead of `push(...incoming)` / `[...incoming]`: same elements in the
+  // same order, but no spread (which builds an argument list / clone array and, for large issue
+  // batches, can stress the call stack). This path is hot when items repeatedly produce issues.
+  let target = dataset.issues
+  if (target === undefined) {
+    target = []
+    dataset.issues = target
+  }
+  for (let i = 0; i < incoming.length; i++) {
+    // Index is in [0, incoming.length), so the read is always present; the cast only drops the
+    // `| undefined` that noUncheckedIndexedAccess adds.
+    target.push(incoming[i] as Issue)
   }
 }
