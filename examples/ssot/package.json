@@ -1,0 +1,12 @@
+{
+  "name": "@tskm/example-ssot",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@tskm/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@tskm/compiler": "workspace:*"
+  }
+}

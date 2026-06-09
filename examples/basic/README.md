@@ -9,8 +9,8 @@ The smallest end-to-end tskm loop: **write a schema → generate a concrete type
 - [`src/user.schema.gen.ts`](src/user.schema.gen.ts) / [`src/category.schema.gen.ts`](src/category.schema.gen.ts) — **generated** by `tskm gen`. Concrete types, no `Infer<…>` — including the materialized self-referential `Category`.
 - [`src/main.ts`](src/main.ts) — a consumer: imports the generated `User` / `Product` types and validates with `safeParse`.
 
-`tsconfig.json` maps `tskm` to the workspace source via `paths` so the checker can resolve the inferred
-output type. In a real project `tskm` is a normal dependency and no `paths` entry is needed.
+`tsconfig.json` maps `@tskm/core` to the workspace source via `paths` so the checker can resolve the inferred
+output type. In a real project `@tskm/core` is a normal dependency and no `paths` entry is needed.
 
 ## Generate
 
@@ -53,5 +53,8 @@ export default {
 
 ## Next
 
-[`examples/advanced`](../advanced) goes further: discriminated unions, recursive (cyclic)
-schemas (`lazy` + `GenericSchema`), and the explicit `export type T = Infer<typeof schema>` marker.
+[`examples/advanced`](../advanced) goes further: a `discriminatedUnion` with derived tag metadata,
+a recursive (cyclic) JSON schema written data-first with `recursive()`, and the explicit
+`export type T = Infer<typeof schema>` marker. [`examples/ssot`](../ssot) then composes the
+single-source-of-truth primitives (`templateLiteral`, faithful optional keys, keyed `record`,
+`exactObject`, severity warnings) in one place.

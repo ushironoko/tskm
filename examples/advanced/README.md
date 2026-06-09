@@ -7,18 +7,21 @@ system nothing.
 
 ## 1. Discriminated union
 
-[`src/union.schema.ts`](src/union.schema.ts) — every member carries a `kind` literal:
+[`src/union.schema.ts`](src/union.schema.ts) tags every member with a `kind` literal and
+builds the union with `discriminatedUnion`, which reads those tags at construction time:
 
 ```ts
-export const shapeSchema = union([
+export const shapeSchema = discriminatedUnion("kind", [
   object({ kind: literal("circle"), radius: number() }),
   object({ kind: literal("rectangle"), width: number(), height: number() }),
   object({ kind: literal("text"), content: string() }),
 ])
 ```
 
-generates the full union as a concrete type ([`union.schema.gen.ts`](src/union.schema.gen.ts)),
-which narrows on `kind` like any hand-written union:
+At runtime it dispatches on `kind` in O(1) (one `Map` lookup per parse) instead of trying every
+member linearly like a plain `union`. The generated type is the same union a `union([...])`
+would emit, so it narrows on `kind` like any hand-written union
+([`union.schema.gen.ts`](src/union.schema.gen.ts)):
 
 ```ts
 export type Shape = {
@@ -33,6 +36,11 @@ export type Shape = {
   content: string;
 }
 ```
+
+The tags are also exposed as data on the schema, so a registry or exhaustive check is derived
+from the one declaration rather than re-stated by hand. `shapeSchema.literals` lists the tags
+(`["circle", "rectangle", "text"]`), and `shapeSchema.mapping` resolves a tag to its member
+schema (a `ReadonlyMap`). [`src/main.ts`](src/main.ts) reads both.
 
 ## 2. Recursive / cyclic schema — data-first with `recursive()`
 

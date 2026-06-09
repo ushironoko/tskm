@@ -29,6 +29,12 @@ for (const shape of shapes) {
 const parsedShape = parse(shapeSchema, { kind: "circle", radius: 1 })
 console.log("parsed shape kind:", parsedShape.kind)
 
+// The tags are DATA on the schema, not a second source of truth: `.literals` enumerates them
+// and `.mapping` resolves a tag to its member schema. A handler registry or exhaustive check is
+// DERIVED from the schema, never re-declared by hand.
+console.log("shape tags:", shapeSchema.literals.join(", ")) // circle, rectangle, text
+console.log("member for 'circle' resolved from tag:", shapeSchema.mapping.has("circle"))
+
 // 2. Recursive JSON value — the generated `Json` is self-referential AND keeps `null`.
 //    These assignments force every member to exist: if codegen ever dropped `null`,
 //    arrays, or the record case, `tsgo --noEmit` over this file would fail to compile.
