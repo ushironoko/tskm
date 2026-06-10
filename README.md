@@ -463,15 +463,24 @@ bun run test:mutation  # Stryker mutation testing (builds first, then per packag
 ### Mutation testing
 
 Test-suite effectiveness is gated with [StrykerJS](https://stryker-mutator.io).
-The community plugin `@hughescr/stryker-bun-runner` drives `bun test`. Each
-package must keep a mutation score of 80% or higher. CI runs the gate per package
-and fails below the threshold. Per-package config lives in
+Each package must keep a mutation score of 80% or higher. CI runs the gate per
+package and fails below the threshold. Per-package config lives in
 `packages/*/stryker.config.mjs`.
+
+The test runner is the in-repo plugin `tools/stryker-bun-runner` (the official
+Stryker scope has no bun runner, and the community one misattributed per-test
+coverage here). It spawns one fresh `bun test` process per run, activates
+mutants through the `__STRYKER_ACTIVE_MUTANT__` env var that Stryker's
+instrumented code already reads, and attributes per-test coverage by pairing a
+preload-side execution counter with bun's JUnit report (whose document order is
+the execution order). bun 1.3.13 does not implement
+`expect.getState().currentTestName`, which is why the pairing goes through
+sequence numbers instead of test names.
 
 Notes:
 
-- Runs are always full runs. Stryker's incremental mode is disabled because it
-  misattributes per-test coverage with the bun runner (details in the config files).
+- Runs are always full runs; incremental mode stays disabled (details in the
+  config files).
 - `reports/` output is a generated record and must not be committed. CI uploads
   the `json` report as an artifact.
 - `packages/compiler` is mutated in place (`inPlace: true`). Its integration
@@ -479,12 +488,14 @@ Notes:
   sandbox would break that resolution. Stryker restores sources afterwards.
   A killed mutant can still abort a test before its cleanup runs, leaving
   generated fixture artifacts behind (`structural-resolve-tmp-*`,
-  `test/fixtures/**/*.schema.gen.ts`). They are gitignored, but a stale fixture
-  can fail the next `bun test` once. Clean up with
-  `git clean -fdX packages/compiler`.
-- Worker child-process entries (`src/cli.ts`, `src/*-worker.ts`) are excluded
-  from mutation. The runner eager-imports every mutated module, which would
-  execute their top-level process wiring with bogus argv.
+  `test/fixtures/**/*.schema.gen.ts`). They are gitignored, and the package's
+  `test:mutation` script sweeps them before each run; a stale leftover can
+  still fail the next plain `bun test` once. Clean up with
+  `git clean -fX packages/compiler/test`.
+- `src/cli.ts` and the `src/*-worker.ts` child-process entries stay excluded
+  from mutation: no test imports them in-process, so their mutants are only
+  observable across a process boundary and would otherwise sit as no-coverage
+  noise in the report.
 
 ## License
 
