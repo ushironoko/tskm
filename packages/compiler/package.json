@@ -27,7 +27,7 @@
     "build": "rolldown -c rolldown.config.ts",
     "attw": "attw --pack . --profile esm-only",
     "publint": "publint --strict",
-    "test:mutation": "stryker run"
+    "test:mutation": "git clean -fX test && stryker run"
   },
   "dependencies": {
     "@corsa-bind/napi": "0.35.0",

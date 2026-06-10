@@ -67,9 +67,9 @@ jobs:
           retention-days: 14
 
   # Mutation score gate: thresholds.break = 80 in each package's stryker.config.mjs
-  # fails the job when the score drops below 80%. Always a full run — Stryker's
-  # incremental mode misattributes per-test coverage with the bun runner (see the
-  # config comments), so a gated score must be computed from scratch.
+  # fails the job when the score drops below 80%. Always a full run (incremental
+  # mode stays disabled, see the config comments) using the in-repo runner at
+  # tools/stryker-bun-runner.
   # Runs only after the verify lane passes (needs: verify) so the 3-package matrix
   # does not burn CI time on changes that already fail lint/typecheck/test/build.
   mutation:
