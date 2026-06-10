@@ -28,7 +28,14 @@ supports neither OIDC nor provenance yet).
      test, then publishes `@tskm/compiler → @tskm/core → @tskm/vite` over OIDC with
      provenance.
 
-4. **Verify** the green provenance badge on npmjs.com and:
+4. **Tags and GitHub Releases happen automatically.** After `publish` succeeds, the
+   `github_release` job runs `changeset tag`, pushes one tag per package
+   (`@tskm/core@x.y.z` style), and creates a GitHub Release per tag with the matching
+   `CHANGELOG.md` section as its body. Already-tagged versions are skipped, so re-running
+   the job is harmless. If it fails after pushing tags, create the missing Releases by
+   hand with `gh release create <tag>`.
+
+5. **Verify** the green provenance badge on npmjs.com and:
    ```sh
    npm audit signatures
    ```
