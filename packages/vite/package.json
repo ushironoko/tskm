@@ -23,7 +23,8 @@
   "scripts": {
     "build": "rolldown -c rolldown.config.ts",
     "attw": "attw --pack . --profile esm-only",
-    "publint": "publint --strict"
+    "publint": "publint --strict",
+    "test:mutation": "stryker run"
   },
   "dependencies": {
     "@tskm/compiler": "workspace:*"

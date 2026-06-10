@@ -2,20 +2,28 @@
 import { describe, expect, it } from "bun:test"
 import {
   bigint,
+  boolean,
   brand,
   lazy,
   literal,
   minLength,
   minValue,
+  never_,
   null_,
+  nullable,
+  nullish,
   number,
+  optional,
   picklist,
   pipe,
   readonly,
   safeParse,
   string,
+  type TemplatePart,
   templateLiteral,
   transform,
+  undefined_,
+  union,
 } from "../src/index.ts"
 
 /**
@@ -193,5 +201,126 @@ describe("templateLiteral rejects forged/foreign placeholders (#18 review, struc
     // Guard regression check: the real `string()` (correct `reference`) is unaffected.
     const t = templateLiteral(["v", string()])
     expect(safeParse(t, "vanything").success).toBe(true)
+  })
+
+  // A foreign factory distinct from every tskm factory. It returns a real schema, so the
+  // forged object below stays structurally a schema and only the identity check can
+  // tell it apart from the genuine article.
+  const foreignReference = () => string()
+
+  const forgedPlaceholders: [string, TemplatePart][] = [
+    ["string", { ...string(), reference: foreignReference }],
+    ["number", { ...number(), reference: foreignReference }],
+    ["bigint", { ...bigint(), reference: foreignReference }],
+    ["boolean", { ...boolean(), reference: foreignReference }],
+    ["null", { ...null_(), reference: foreignReference }],
+    ["undefined", { ...undefined_(), reference: foreignReference }],
+    ["never", { ...never_(), reference: foreignReference }],
+    ["literal", { ...literal("a"), reference: foreignReference }],
+    ["picklist", { ...picklist(["a"]), reference: foreignReference }],
+    ["union", { ...union([literal("a")]), reference: foreignReference }],
+    ["optional", { ...optional(literal("a")), reference: foreignReference }],
+    ["nullable", { ...nullable(literal("a")), reference: foreignReference }],
+    ["nullish", { ...nullish(literal("a")), reference: foreignReference }],
+  ]
+
+  it.each(
+    forgedPlaceholders,
+  )("a forged %s placeholder with a foreign reference is a construction error", (_type, forged) => {
+    expect(() => templateLiteral([forged])).toThrow(/not tskm's own schema/)
+  })
+})
+
+describe("templateLiteral placeholder fragments match exactly their output type's strings", () => {
+  const cases: [string, string, boolean, TemplatePart][] = [
+    ["boolean", "true", true, boolean()],
+    ["boolean", "false", true, boolean()],
+    ["boolean", "yes", false, boolean()],
+    ["boolean", "", false, boolean()],
+    ["undefined", "undefined", true, undefined_()],
+    ["undefined", "undef", false, undefined_()],
+    ["undefined", "", false, undefined_()],
+    ["never", "", false, never_()],
+    ["never", "x", false, never_()],
+    ["optional", "a", true, optional(literal("a"))],
+    ["optional", "undefined", true, optional(literal("a"))],
+    ["optional", "null", false, optional(literal("a"))],
+    ["optional", "", false, optional(literal("a"))],
+    ["nullable", "a", true, nullable(literal("a"))],
+    ["nullable", "null", true, nullable(literal("a"))],
+    ["nullable", "undefined", false, nullable(literal("a"))],
+    ["nullable", "", false, nullable(literal("a"))],
+    ["nullish", "a", true, nullish(literal("a"))],
+    ["nullish", "null", true, nullish(literal("a"))],
+    ["nullish", "undefined", true, nullish(literal("a"))],
+    ["nullish", "x", false, nullish(literal("a"))],
+    ["union", "a", true, union([literal("a"), number()])],
+    ["union", "42", true, union([literal("a"), number()])],
+    ["union", "b", false, union([literal("a"), number()])],
+    ["union", "undefined", false, union([literal("a"), number()])],
+    ["empty union", "", false, union([])],
+    ["empty union", "a", false, union([])],
+  ]
+
+  it.each(cases)("%s placeholder: %j -> %s", (_kind, input, expected, schema) => {
+    expect(safeParse(templateLiteral([schema]), input).success).toBe(expected)
+  })
+})
+
+describe("templateLiteral construction errors name their cause", () => {
+  it("a transforming placeholder error points at the transform", () => {
+    const transformed = pipe(
+      string(),
+      transform((value: string) => Number(value)),
+    )
+    expect(() => templateLiteral(["v", transformed])).toThrow(/transforming placeholder/)
+  })
+
+  it("a non-finite numeric literal error points at the non-finite value", () => {
+    expect(() => templateLiteral([literal(Number.NaN)])).toThrow(/non-finite numeric placeholder/)
+  })
+
+  it("a nested templateLiteral placeholder is rejected as unsupported, naming its type", () => {
+    expect(() => templateLiteral([templateLiteral(["x"])])).toThrow(
+      /unsupported placeholder schema "templateLiteral"/,
+    )
+  })
+})
+
+describe("templateLiteral public contract", () => {
+  it("exposes the schema discriminants", () => {
+    const t = templateLiteral(["v", string()])
+    expect(t.kind).toBe("schema")
+    expect(t.type).toBe("templateLiteral")
+    expect(t.async).toBe(false)
+  })
+
+  it("a mismatch issue is a schema-kind templateLiteral issue", () => {
+    const r = safeParse(templateLiteral(["id-", number()]), "id-x")
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.issues[0]?.kind).toBe("schema")
+      expect(r.issues[0]?.type).toBe("templateLiteral")
+    }
+  })
+
+  it("rejects a non-string input even when its string form would match the pattern", () => {
+    // Only string INPUTS are template-literal members: the number 12 must fail although
+    // String(12) is "12", which the pattern would match.
+    expect(safeParse(templateLiteral([number()]), 12).success).toBe(false)
+  })
+
+  it("a matching parse is typed, so a piped transform runs on the value", () => {
+    // `pipe` runs transformations only on a typed dataset, so the transformed output
+    // observes that a successful match marks the dataset typed.
+    const t = pipe(
+      templateLiteral(["user_", string()]),
+      transform((value: string) => value.toUpperCase()),
+    )
+    const r = safeParse(t, "user_ada")
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.output).toBe("USER_ADA")
+    }
   })
 })

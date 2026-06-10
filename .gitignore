@@ -4,4 +4,13 @@ dist
 .tskm
 *.tskm-query.ts
 coverage
+reports
+.stryker-tmp
+# In-place mutation runs (packages/compiler) kill mutants mid-test, so per-test
+# cleanup (afterAll) may never run; these are the artifacts such aborted tests leak.
+# (examples/**/*.schema.gen.ts stay tracked — only test fixtures are ephemeral.)
+.stryker-bun-runner-registry.json
+structural-resolve-tmp-*
+packages/compiler/test/fixtures/**/*.schema.gen.ts
+packages/compiler/test/fixtures/standard/src/inplace-ext.ts
 .DS_Store

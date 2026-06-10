@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import type { GenericSchema, UnknownDataset } from "../src/index.ts"
 import {
   discriminatedUnionAsync,
   literal,
@@ -10,6 +11,7 @@ import {
   safeParseAsync,
   string,
   transformAsync,
+  union,
 } from "../src/index.ts"
 
 /**
@@ -119,5 +121,93 @@ describe("discriminatedUnionAsync runtime (#15 async parity)", () => {
     }
     const bad = await safeParseAsync(du, { kind: "b", n: "x" })
     expect(bad.success).toBe(false)
+  })
+
+  it("exposes the schema composition metadata", () => {
+    expect(shape.kind).toBe("schema")
+    expect(shape.type).toBe("discriminated_union")
+    expect(shape.async).toBe(true)
+    expect(shape.expects).toBe("Object | Object")
+  })
+
+  it.each([
+    [5],
+    ["five"],
+    [true],
+    [undefined],
+    [null],
+    [[1]],
+  ])("reports a schema-kind Object issue for the non-object input %o", async (input) => {
+    const r = await safeParseAsync(shape, input)
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.issues[0]?.kind).toBe("schema")
+      expect(r.issues[0]?.type).toBe("discriminated_union")
+      expect(r.issues[0]?.expected).toBe("Object")
+    }
+  })
+
+  it("reports the unknown tag as a schema-kind discriminated_union issue", async () => {
+    const r = await safeParseAsync(shape, { kind: "triangle" })
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.issues[0]?.kind).toBe("schema")
+      expect(r.issues[0]?.type).toBe("discriminated_union")
+      expect(r.issues[0]?.expected).toContain('kind = "circle" | "square"')
+    }
+  })
+
+  it("formats non-string tags without quotes in the unknown-tag message", async () => {
+    const du = discriminatedUnionAsync("level", [
+      object({ level: literal(1), a: number() }),
+      objectAsync({ level: literal(2), b: number() }),
+    ])
+    const r = await safeParseAsync(du, { level: 3 })
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.issues[0]?.message).toContain("level = 1 | 2")
+    }
+  })
+
+  it("names the missing discriminant key in the construction error", () => {
+    expect(() => discriminatedUnionAsync("kind", [object({ a: number() })])).toThrow(
+      'missing the discriminant key "kind"',
+    )
+  })
+
+  // `union` also carries an array `options` field, but only a real picklist may supply tags.
+  it.each<[string, GenericSchema]>([
+    ["number", number()],
+    ["string", string()],
+    ["union", union([literal("a"), literal("b")])],
+  ])("rejects a %s discriminant entry with the literal/picklist error", (_entryType, entry) => {
+    expect(() => discriminatedUnionAsync("kind", [object({ kind: entry, a: number() })])).toThrow(
+      "must be a literal or picklist",
+    )
+  })
+
+  it("formats a non-string duplicate tag without quotes in the construction error", () => {
+    expect(() =>
+      discriminatedUnionAsync("level", [
+        object({ level: literal(1), a: number() }),
+        objectAsync({ level: literal(1), b: number() }),
+      ]),
+    ).toThrow("duplicate discriminant value 1")
+  })
+
+  it("appends member issues after issues already present on the dataset", async () => {
+    const prior = await safeParseAsync(string(), 1)
+    if (prior.success) throw new Error("expected a failing prior parse")
+    // `UnknownDataset` types `issues` as absent, but `~run` mutates whatever dataset its
+    // caller threads through, so issues accumulated upstream must survive the member merge.
+    const dataset = {
+      typed: false,
+      value: { kind: "circle", radius: "x" },
+      issues: [...prior.issues],
+    } as unknown as UnknownDataset
+    const out = await shape["~run"](dataset, {})
+    expect(out.issues).toHaveLength(2)
+    expect(out.issues?.[0]).toBe(prior.issues[0])
+    expect(out.issues?.[1]?.path).toEqual([{ key: "radius" }])
   })
 })

@@ -12,5 +12,10 @@
     }
   },
   "include": ["packages/*/src", "packages/*/test", "packages/*/*.config.ts", "scripts"],
-  "exclude": ["**/node_modules/**", "**/dist/**", "**/fixtures/**"]
+  "exclude": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/fixtures/**",
+    "**/structural-resolve-tmp-*/**"
+  ]
 }

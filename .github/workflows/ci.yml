@@ -65,3 +65,50 @@ jobs:
           path: coverage/lcov.info
           if-no-files-found: warn
           retention-days: 14
+
+  # Mutation score gate: thresholds.break = 80 in each package's stryker.config.mjs
+  # fails the job when the score drops below 80%. Always a full run — Stryker's
+  # incremental mode misattributes per-test coverage with the bun runner (see the
+  # config comments), so a gated score must be computed from scratch.
+  # Runs only after the verify lane passes (needs: verify) so the 3-package matrix
+  # does not burn CI time on changes that already fail lint/typecheck/test/build.
+  mutation:
+    name: mutation (${{ matrix.package }})
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [tskm, compiler, vite]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      # The vite package resolves @tskm/compiler through its dist exports inside
+      # Stryker's sandbox (the tsconfig-paths source fallback only works from the
+      # real repo layout), so dependencies must be built before mutating.
+      - name: Build (rolldown)
+        run: bun run build
+
+      - name: Mutation test
+        run: bun run --cwd packages/${{ matrix.package }} test:mutation
+
+      # Machine-readable record (json reporter) for survived-mutant investigation
+      # and history comparison across runs.
+      - name: Upload mutation report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-report-${{ matrix.package }}
+          path: packages/${{ matrix.package }}/reports/mutation/mutation.json
+          if-no-files-found: warn
+          retention-days: 14
