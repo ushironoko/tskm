@@ -24,7 +24,8 @@
   "scripts": {
     "build": "rolldown -c rolldown.config.ts",
     "attw": "attw --pack . --profile esm-only",
-    "publint": "publint --strict"
+    "publint": "publint --strict",
+    "test:mutation": "stryker run"
   },
   "devDependencies": {
     "@standard-schema/spec": "1.1.0",

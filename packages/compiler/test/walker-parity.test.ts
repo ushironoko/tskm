@@ -63,16 +63,26 @@ function schemaTypeCases(file: string): string[] {
   return [...labels].sort()
 }
 
+// This test inspects source TEXT, so it cannot run against Stryker's in-place
+// instrumented sources (every `case "..."` label is wrapped in mutant-switching
+// ternaries, breaking the lexical extractor). It also cannot kill mutants — all
+// mutants coexist in the text regardless of which one is active — so skipping
+// under instrumentation loses nothing.
+const instrumented = readFileSync(join(SRC, "structural-ts.ts"), "utf8").includes("__stryker")
+
 describe("walker switch-table parity (#23)", () => {
-  it("structural-ts.ts and jsonschema.ts handle the same schema-type set", () => {
-    const structural = schemaTypeCases("structural-ts.ts")
-    const json = schemaTypeCases("jsonschema.ts")
+  it.skipIf(instrumented)(
+    "structural-ts.ts and jsonschema.ts handle the same schema-type set",
+    () => {
+      const structural = schemaTypeCases("structural-ts.ts")
+      const json = schemaTypeCases("jsonschema.ts")
 
-    // Sanity: each walker actually handles a non-trivial set, so an empty extraction
-    // (e.g. a renamed function) cannot make this pass vacuously.
-    expect(structural.length).toBeGreaterThan(5)
-    expect(json.length).toBeGreaterThan(5)
+      // Sanity: each walker actually handles a non-trivial set, so an empty extraction
+      // (e.g. a renamed function) cannot make this pass vacuously.
+      expect(structural.length).toBeGreaterThan(5)
+      expect(json.length).toBeGreaterThan(5)
 
-    expect(structural).toEqual(json)
-  })
+      expect(structural).toEqual(json)
+    },
+  )
 })

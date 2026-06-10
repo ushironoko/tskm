@@ -457,7 +457,34 @@ bun install
 bun run build          # rolldown → dist (ESM + .d.ts)
 bun run test           # bun test: unit + type + integration lanes
 bun run lint           # biome
+bun run test:mutation  # Stryker mutation testing (builds first, then per package)
 ```
+
+### Mutation testing
+
+Test-suite effectiveness is gated with [StrykerJS](https://stryker-mutator.io).
+The community plugin `@hughescr/stryker-bun-runner` drives `bun test`. Each
+package must keep a mutation score of 80% or higher. CI runs the gate per package
+and fails below the threshold. Per-package config lives in
+`packages/*/stryker.config.mjs`.
+
+Notes:
+
+- Runs are always full runs. Stryker's incremental mode is disabled because it
+  misattributes per-test coverage with the bun runner (details in the config files).
+- `reports/` output is a generated record and must not be committed. CI uploads
+  the `json` report as an artifact.
+- `packages/compiler` is mutated in place (`inPlace: true`). Its integration
+  fixtures resolve `@tskm/core` relative to the real repo layout, and a copy
+  sandbox would break that resolution. Stryker restores sources afterwards.
+  A killed mutant can still abort a test before its cleanup runs, leaving
+  generated fixture artifacts behind (`structural-resolve-tmp-*`,
+  `test/fixtures/**/*.schema.gen.ts`). They are gitignored, but a stale fixture
+  can fail the next `bun test` once. Clean up with
+  `git clean -fdX packages/compiler`.
+- Worker child-process entries (`src/cli.ts`, `src/*-worker.ts`) are excluded
+  from mutation. The runner eager-imports every mutated module, which would
+  execute their top-level process wiring with bogus argv.
 
 ## License
 
