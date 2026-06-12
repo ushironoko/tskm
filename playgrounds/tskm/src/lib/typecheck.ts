@@ -1,4 +1,4 @@
-import type * as ts from "typescript"
+import type * as monacoTypes from "monaco-editor/esm/vs/editor/editor.main.js"
 import { renderFallbackContent } from "./generated-type.ts"
 
 export interface InputTypecheckDiagnostic {
@@ -32,38 +32,31 @@ interface TypecheckFailure {
   readonly compilerDiagnostics?: readonly string[]
 }
 
+export interface MonacoTypecheckDiagnostic {
+  readonly start?: number
+  readonly length?: number
+  readonly messageText: string | DiagnosticMessageChain
+  readonly message?: string
+  readonly category: number
+  readonly code: number
+}
+
+interface DiagnosticMessageChain {
+  readonly messageText: string
+  readonly next?: readonly DiagnosticMessageChain[]
+}
+
+type MonacoModule = typeof import("monaco-editor/esm/vs/editor/editor.main.js")
 type TypecheckResponse = TypecheckSuccess | TypecheckFailure
 
 const endpoint = "/__tskm_playground/typecheck"
 const hasTypecheckEndpoint = import.meta.env.DEV || import.meta.env.VITE_TSKM_PLAYGROUND_API === "1"
-const inputFileName = "/playground.input.ts"
-const generatedFileName = "/playground.schema.gen.ts"
-const libFileName = "/lib.d.ts"
+const inputUriPath = "/tskm-playground/playground.input.ts"
+const generatedUriPath = "/tskm-playground/playground.schema.gen.ts"
 const inputPrefix = `import type { PlaygroundOutput } from "./playground.schema.gen"\n\nconst playgroundInput: PlaygroundOutput = `
 const inputSuffix = "\n"
-const clientLibDts = `
-interface Array<T> {
-  length: number
-  [n: number]: T
-}
-interface Boolean {}
-interface CallableFunction extends Function {}
-interface Date {}
-interface Function {}
-interface IArguments {}
-interface NewableFunction extends Function {}
-interface Number {}
-interface Object {}
-interface ReadonlyArray<T> {
-  readonly length: number
-  readonly [n: number]: T
-}
-interface RegExp {}
-interface String {}
-type Readonly<T> = {
-  readonly [P in keyof T]: T[P]
-}
-`
+
+let hasConfiguredMonacoTypeScript = false
 
 export async function fetchInputTypecheck(
   schemaSource: string,
@@ -113,104 +106,64 @@ export async function typecheckInputInBrowser(
     }
   }
 
-  const typescript = await import("typescript")
-  const inputText = `${inputPrefix}${inputSource}${inputSuffix}`
-  const program = createVirtualProgram(typescript, inputText, generatedType.content)
-  const sourceFile = program.getSourceFile(inputFileName)
-  if (!sourceFile) {
+  const monaco = await import("monaco-editor/esm/vs/editor/editor.main.js")
+  configureMonacoTypeScript(monaco)
+
+  const inputUri = monaco.Uri.parse(`file://${inputUriPath}`)
+  const generatedUri = monaco.Uri.parse(`file://${generatedUriPath}`)
+  upsertModel(monaco, inputUri, createTypecheckInputText(inputSource))
+  upsertModel(monaco, generatedUri, generatedType.content)
+
+  const ready = await waitForTypeScriptReady(monaco, inputUri)
+  if (!ready) {
     return {
       status: "error",
       diagnostics: [],
-      message: "Unable to prepare playground input for typechecking.",
+      message: "TypeScript worker is not ready.",
     }
   }
 
+  const worker = await monaco.typescript.getTypeScriptWorker()
+  const client = await worker(inputUri)
+  const [syntacticDiagnostics, semanticDiagnostics] = await Promise.all([
+    client.getSyntacticDiagnostics(inputUri.toString()),
+    client.getSemanticDiagnostics(inputUri.toString()),
+  ])
   const diagnostics = [
-    ...program.getSyntacticDiagnostics(sourceFile),
-    ...program.getSemanticDiagnostics(sourceFile),
-  ]
+    ...syntacticDiagnostics,
+    ...semanticDiagnostics,
+  ] as MonacoTypecheckDiagnostic[]
 
   return {
     status: "ready",
-    diagnostics: diagnostics.map((diagnostic) =>
-      toEditorDiagnostic(typescript, diagnostic, inputSource),
-    ),
+    diagnostics: diagnostics.map((diagnostic) => toEditorDiagnostic(diagnostic, inputSource)),
   }
 }
 
-function createVirtualProgram(
-  typescript: typeof ts,
-  inputText: string,
-  generatedText: string,
-): ts.Program {
-  const files = new Map([
-    [inputFileName, inputText],
-    [generatedFileName, generatedText],
-    [libFileName, clientLibDts],
-  ])
-  const options: ts.CompilerOptions = {
-    target: typescript.ScriptTarget.ESNext,
-    module: typescript.ModuleKind.ESNext,
-    moduleResolution: typescript.ModuleResolutionKind.Bundler,
-    strict: false,
-    skipLibCheck: true,
-    noEmit: true,
-    noLib: true,
-  }
-  const host = typescript.createCompilerHost(options, true)
-
-  host.getSourceFile = (fileName, languageVersion) => {
-    const text = files.get(normalizeFileName(fileName))
-    return text === undefined
-      ? undefined
-      : typescript.createSourceFile(fileName, text, languageVersion, true)
-  }
-  host.fileExists = (fileName) => files.has(normalizeFileName(fileName))
-  host.readFile = (fileName) => files.get(normalizeFileName(fileName))
-  host.writeFile = () => {}
-  host.getDefaultLibFileName = () => libFileName
-  host.getCurrentDirectory = () => "/"
-  host.getCanonicalFileName = normalizeFileName
-  host.useCaseSensitiveFileNames = () => true
-  host.getNewLine = () => "\n"
-  host.resolveModuleNames = (moduleNames) =>
-    moduleNames.map((moduleName) =>
-      moduleName === "./playground.schema.gen"
-        ? {
-            resolvedFileName: generatedFileName,
-            extension: typescript.Extension.Ts,
-            isExternalLibraryImport: false,
-          }
-        : undefined,
-    )
-
-  return typescript.createProgram([inputFileName], options, host)
+export function createTypecheckInputText(inputSource: string): string {
+  return `${inputPrefix}${inputSource}${inputSuffix}`
 }
 
-function toEditorDiagnostic(
-  typescript: typeof ts,
-  diagnostic: ts.Diagnostic,
+export function toEditorDiagnostic(
+  diagnostic: MonacoTypecheckDiagnostic,
   inputSource: string,
 ): InputTypecheckDiagnostic {
   const inputStart = inputPrefix.length
   const inputEnd = inputStart + inputSource.length
   const fallbackStart = firstNonWhitespaceOffset(inputSource)
+  const message = flattenDiagnosticMessage(diagnostic)
   const rawStart = diagnostic.start ?? inputStart + fallbackStart
   const mappedStartOffset =
     rawStart >= inputStart && rawStart <= inputEnd ? rawStart - inputStart : fallbackStart
-  const startOffset = valueStartForTypeMismatch(
-    inputSource,
-    mappedStartOffset,
-    flattenDiagnosticMessage(typescript, diagnostic),
-  )
+  const startOffset = valueStartForTypeMismatch(inputSource, mappedStartOffset, message)
   const endOffset = Math.min(expandDiagnosticEnd(inputSource, startOffset), inputSource.length)
   const start = offsetToPosition(inputSource, startOffset)
   const end = offsetToPosition(inputSource, endOffset)
 
   return {
     code: diagnostic.code,
-    category: diagnosticCategory(typescript, diagnostic.category),
-    message: flattenDiagnosticMessage(typescript, diagnostic),
+    category: diagnosticCategory(diagnostic.category),
+    message,
     startOffset,
     endOffset,
     line: start.line,
@@ -220,12 +173,69 @@ function toEditorDiagnostic(
   }
 }
 
-function diagnosticCategory(typescript: typeof ts, category: ts.DiagnosticCategory): string {
-  return typescript.DiagnosticCategory[category]?.toLowerCase() ?? "error"
+function configureMonacoTypeScript(monaco: MonacoModule): void {
+  if (hasConfiguredMonacoTypeScript) return
+
+  monaco.typescript.typescriptDefaults.setCompilerOptions({
+    target: monaco.typescript.ScriptTarget.ESNext,
+    module: monaco.typescript.ModuleKind.ESNext,
+    moduleResolution: monaco.typescript.ModuleResolutionKind.NodeJs,
+    strict: false,
+    noEmit: true,
+    skipLibCheck: true,
+    noImplicitAny: false,
+    strictNullChecks: false,
+    esModuleInterop: true,
+  })
+  monaco.typescript.typescriptDefaults.setEagerModelSync(true)
+  hasConfiguredMonacoTypeScript = true
 }
 
-function flattenDiagnosticMessage(typescript: typeof ts, diagnostic: ts.Diagnostic): string {
-  return typescript.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
+function upsertModel(
+  monaco: MonacoModule,
+  uri: monacoTypes.Uri,
+  text: string,
+): monacoTypes.editor.ITextModel {
+  const current = monaco.editor.getModel(uri)
+  if (current) {
+    if (current.getValue() !== text) current.setValue(text)
+    return current
+  }
+  return monaco.editor.createModel(text, "typescript", uri)
+}
+
+async function waitForTypeScriptReady(
+  monaco: MonacoModule,
+  uri: monacoTypes.Uri,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      const worker = await monaco.typescript.getTypeScriptWorker()
+      await worker(uri)
+      return true
+    } catch (error) {
+      if (!String(error).includes("TypeScript not registered")) {
+        throw error
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 50))
+    }
+  }
+  return false
+}
+
+function diagnosticCategory(category: number): string {
+  return category === 0 ? "warning" : category === 1 ? "error" : "info"
+}
+
+function flattenDiagnosticMessage(diagnostic: MonacoTypecheckDiagnostic): string {
+  if (typeof diagnostic.message === "string") return diagnostic.message
+  return flattenMessageText(diagnostic.messageText)
+}
+
+function flattenMessageText(messageText: string | DiagnosticMessageChain): string {
+  if (typeof messageText === "string") return messageText
+  const next = messageText.next?.map(flattenMessageText) ?? []
+  return [messageText.messageText, ...next].join("\n")
 }
 
 function valueStartForTypeMismatch(text: string, startOffset: number, message: string): number {
@@ -295,8 +305,4 @@ function offsetToPosition(
     line: lines.length - 1,
     column: lines[lines.length - 1]?.length ?? 0,
   }
-}
-
-function normalizeFileName(fileName: string): string {
-  return fileName.startsWith("/") ? fileName : `/${fileName}`
 }

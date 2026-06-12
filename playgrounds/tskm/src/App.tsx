@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { Button } from "./components/Button.tsx"
-import { CodeEditor } from "./components/CodeEditor.tsx"
+import { MonacoEditor } from "./components/MonacoEditor.tsx"
 import { Pane } from "./components/Pane.tsx"
 import { ResultView } from "./components/ResultView.tsx"
 import { SegmentedControl } from "./components/SegmentedControl.tsx"
@@ -171,11 +171,10 @@ export function App() {
               </div>
             }
           >
-            <CodeEditor
+            <MonacoEditor
               label="tskm schema expression"
               value={schemaSource}
               language="typescript"
-              highlighter={highlighter}
               onChange={setSchemaSource}
               minLines={19}
             />
@@ -190,11 +189,10 @@ export function App() {
               </div>
             }
           >
-            <CodeEditor
+            <MonacoEditor
               label="JSON input"
               value={inputSource}
               language="json"
-              highlighter={highlighter}
               diagnostics={inputTypecheck.diagnostics}
               onChange={setInputSource}
               minLines={19}

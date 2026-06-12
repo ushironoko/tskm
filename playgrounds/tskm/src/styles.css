@@ -196,6 +196,7 @@ button {
 .ui-button:focus-visible,
 .segmented-control__item:focus-visible,
 .checkbox-control:focus-within,
+.monaco-code-editor:focus-within,
 .code-editor:focus-within,
 .highlighted-code:focus-visible {
   outline: var(--focus-ring);
@@ -396,6 +397,23 @@ button {
   border-color: #b9c0b7;
   background: #f4f6f1;
   color: #535b52;
+}
+
+.monaco-code-editor {
+  height: 100%;
+  min-height: 240px;
+  overflow: hidden;
+  background: #fffefb;
+}
+
+.monaco-code-editor .monaco-editor,
+.monaco-code-editor .monaco-editor-background,
+.monaco-code-editor .margin {
+  background: #fffefb;
+}
+
+.monaco-code-editor .monaco-editor .view-line {
+  font-family: var(--code-font-family);
 }
 
 .code-editor {
