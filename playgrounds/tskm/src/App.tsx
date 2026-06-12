@@ -4,7 +4,6 @@ import { CodeEditor } from "./components/CodeEditor.tsx"
 import { Pane } from "./components/Pane.tsx"
 import { ResultView } from "./components/ResultView.tsx"
 import { SegmentedControl } from "./components/SegmentedControl.tsx"
-import { StatusBadge } from "./components/StatusBadge.tsx"
 import { examples } from "./examples.ts"
 import {
   fetchGeneratedType,
@@ -188,7 +187,6 @@ export function App() {
             meta={
               <div className="input-meta">
                 <span className="pane-note">JSON</span>
-                {typecheckBadge(inputTypecheck)}
               </div>
             }
           >
@@ -210,12 +208,4 @@ export function App() {
       </div>
     </main>
   )
-}
-
-function typecheckBadge(state: InputTypecheckState) {
-  if (state.status === "error") return <StatusBadge variant="error">typecheck error</StatusBadge>
-  if (state.diagnostics.length > 0) {
-    return <StatusBadge variant="error">typecheck {state.diagnostics.length}</StatusBadge>
-  }
-  return null
 }
