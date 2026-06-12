@@ -1,23 +1,28 @@
 import { expect, test } from "bun:test"
-import { typecheckInputInBrowser } from "./typecheck.ts"
+import { createTypecheckInputText, toEditorDiagnostic } from "./typecheck.ts"
 
-test("typechecks playground input with the browser fallback compiler", async () => {
+test("maps Monaco TypeScript diagnostics back to playground input", () => {
   const inputSource = `{
   "role": "guest",
   "count": "1"
 }`
-  const result = await typecheckInputInBrowser(
-    `object({
-  role: picklist(["owner", "viewer"]),
-  count: number(),
-})`,
+  const inputText = createTypecheckInputText(inputSource)
+
+  const diagnostic = toEditorDiagnostic(
+    {
+      start: inputText.indexOf('"guest"'),
+      length: '"guest"'.length,
+      messageText: 'Type \'"guest"\' is not assignable to type \'"owner" | "viewer"\'.',
+      category: 1,
+      code: 2322,
+    },
     inputSource,
   )
 
-  expect(result.status).toBe("ready")
-  expect(result.diagnostics).toHaveLength(2)
-  expect(result.diagnostics[0]?.message).toContain('"guest"')
-  expect(result.diagnostics[0]?.startOffset).toBe(inputSource.indexOf('"guest"'))
-  expect(result.diagnostics[1]?.message).toContain("string")
-  expect(result.diagnostics[1]?.startOffset).toBe(inputSource.indexOf('"1"'))
+  expect(inputText).toContain(inputSource)
+  expect(diagnostic.category).toBe("error")
+  expect(diagnostic.code).toBe(2322)
+  expect(diagnostic.message).toContain('"guest"')
+  expect(diagnostic.startOffset).toBe(inputSource.indexOf('"guest"'))
+  expect(diagnostic.endOffset).toBe(inputSource.indexOf('"guest"') + '"guest"'.length)
 })
