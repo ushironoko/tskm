@@ -10,16 +10,16 @@
   },
   "dependencies": {
     "@tskm/core": "workspace:*",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "shiki": "^1.24.0"
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "shiki": "1.24.0"
   },
   "devDependencies": {
     "@tskm/compiler": "workspace:*",
-    "@types/react": "^19.2.0",
-    "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^5.1.1",
-    "typescript": "^6.0.3",
+    "@types/react": "19.2.0",
+    "@types/react-dom": "19.2.0",
+    "@vitejs/plugin-react": "5.1.1",
+    "typescript": "6.0.3",
     "vite": "8.0.16"
   }
 }
