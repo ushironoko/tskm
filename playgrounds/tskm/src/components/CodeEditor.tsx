@@ -30,6 +30,7 @@ interface HighlightedCodeProps {
   readonly selection?: EditorSelection | null
   readonly caretOffset?: number | null
   readonly className?: string
+  readonly ariaHidden?: boolean
 }
 
 export interface EditorDiagnostic {
@@ -127,10 +128,7 @@ export function CodeEditor({
   }
 
   return (
-    <div
-      className={cx("code-editor", focused && "code-editor--focused")}
-      onPointerDownCapture={handlePointerDown}
-    >
+    <div className="code-editor" onPointerDownCapture={handlePointerDown}>
       <HighlightedCode
         ref={highlightRef}
         value={value}
@@ -140,6 +138,7 @@ export function CodeEditor({
         selection={visibleSelection}
         caretOffset={caretOffset}
         className="code-editor__highlight"
+        ariaHidden
       />
       <textarea
         ref={textareaRef}
@@ -176,6 +175,7 @@ export const HighlightedCode = forwardRef<HTMLPreElement, HighlightedCodeProps>(
       selection = null,
       caretOffset = null,
       className,
+      ariaHidden = false,
     },
     ref,
   ) {
@@ -190,7 +190,11 @@ export const HighlightedCode = forwardRef<HTMLPreElement, HighlightedCodeProps>(
     }, [highlighter, language, value])
 
     return (
-      <pre ref={ref} className={cx("highlighted-code", className)} aria-hidden="true">
+      <pre
+        ref={ref}
+        className={cx("highlighted-code", className)}
+        aria-hidden={ariaHidden || undefined}
+      >
         <code>
           {lines.map((line) => {
             const caretAtLineEnd = caretOffset === line.offset + line.length

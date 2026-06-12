@@ -33,26 +33,29 @@ export function ResultView({ result, generatedType, highlighter }: ResultViewPro
       <GeneratedTypeBlock generatedType={generatedType} highlighter={highlighter} />
 
       {result.status === "failure" ? (
-        <table className="issue-table">
-          <thead>
-            <tr>
-              <th scope="col">Path</th>
-              <th scope="col">Kind</th>
-              <th scope="col">Type</th>
-              <th scope="col">Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            {result.issues.map((issue) => (
-              <tr key={issueKey(issue)}>
-                <td>{issue.path}</td>
-                <td>{issue.kind}</td>
-                <td>{issue.type}</td>
-                <td>{issue.message}</td>
+        <div className="output-block">
+          <p className="output-block__label">Validation errors</p>
+          <table className="issue-table">
+            <thead>
+              <tr>
+                <th scope="col">Path</th>
+                <th scope="col">Kind</th>
+                <th scope="col">Type</th>
+                <th scope="col">Message</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {result.issues.map((issue) => (
+                <tr key={issueKey(issue)}>
+                  <td>{issue.path}</td>
+                  <td>{issue.kind}</td>
+                  <td>{issue.type}</td>
+                  <td>{issue.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : null}
 
       {result.warnings.length > 0 ? (
