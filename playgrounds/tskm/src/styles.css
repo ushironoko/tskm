@@ -15,6 +15,8 @@
   --interactive-active-border: #202428;
   --interactive-active-fg: #fffefb;
   --interactive-focus: #2d6f6d;
+  --focus-ring: 2px solid var(--interactive-focus);
+  --focus-ring-offset: 2px;
   font-family:
     "Yu Gothic", "YuGothic", "游ゴシック", "游ゴシック体", "Hiragino Kaku Gothic ProN", "Meiryo",
     system-ui, sans-serif;
@@ -193,9 +195,11 @@ button {
 
 .ui-button:focus-visible,
 .segmented-control__item:focus-visible,
-.checkbox-control:focus-within {
-  outline: 2px solid var(--interactive-focus);
-  outline-offset: 2px;
+.checkbox-control:focus-within,
+.code-editor:focus-within,
+.highlighted-code:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .ui-button:disabled {
@@ -402,11 +406,6 @@ button {
   background: #fffefb;
 }
 
-.code-editor--focused {
-  outline: 2px solid #2d6f6d;
-  outline-offset: -2px;
-}
-
 .code-editor__input,
 .highlighted-code {
   margin: 0;
@@ -440,6 +439,10 @@ button {
   caret-color: transparent;
   background: transparent;
   -webkit-text-fill-color: transparent;
+}
+
+.code-editor__input:focus {
+  outline: none;
 }
 
 .code-editor__input::selection {
