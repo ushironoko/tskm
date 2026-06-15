@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsgo -b && vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "deploy": "bun run build && bunx wrangler pages deploy dist --project-name=tskm-playground --commit-dirty=true"
   },
   "dependencies": {
     "@tskm/core": "workspace:*",
