@@ -161,6 +161,10 @@ button {
   overflow: hidden;
 }
 
+.pane:has(.monaco-code-editor) .pane__body {
+  overflow: visible;
+}
+
 .pane-note {
   color: #667064;
   font-size: 0.78rem;
@@ -402,7 +406,7 @@ button {
 .monaco-code-editor {
   height: 100%;
   min-height: 240px;
-  overflow: hidden;
+  overflow: visible;
   background: #fffefb;
 }
 
