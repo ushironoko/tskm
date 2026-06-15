@@ -50,8 +50,8 @@
 
   </g>
 
-  <g transform="translate(650 144)">
-    <rect x="0" y="0" width="430" height="236" rx="14" fill="#FFFEFB" stroke="#CCD2C8"/>
+  <g transform="translate(650 132)">
+    <rect x="0" y="0" width="430" height="188" rx="14" fill="#FFFEFB" stroke="#CCD2C8"/>
     <rect x="0" y="0" width="430" height="42" rx="14" fill="#F2F4EE" stroke="#CCD2C8"/>
     <path d="M0 42H430" stroke="#CCD2C8"/>
     <text class="sans" x="18" y="27" fill="#4D544B" font-size="15" font-weight="700" letter-spacing="0">Schema</text>
@@ -61,17 +61,17 @@
     <text class="mono" x="44" y="144" fill="#202428" font-size="19" letter-spacing="0">email: pipe(string(), email()),</text>
     <text class="mono" x="24" y="178" fill="#202428" font-size="19" letter-spacing="0">})</text>
 
-    <rect x="0" y="260" width="430" height="126" rx="14" fill="#FFFEFB" stroke="#CCD2C8"/>
-    <rect x="0" y="260" width="430" height="42" rx="14" fill="#F2F4EE" stroke="#CCD2C8"/>
-    <path d="M0 302H430" stroke="#CCD2C8"/>
-    <text class="sans" x="18" y="287" fill="#4D544B" font-size="15" font-weight="700" letter-spacing="0">Generated type</text>
-    <text class="mono code-keyword" x="24" y="327" font-size="18" font-weight="600" letter-spacing="0">type</text>
-    <text class="mono code-type" x="77" y="327" font-size="18" font-weight="600" letter-spacing="0">User</text>
-    <text class="mono" x="127" y="327" fill="#202428" font-size="18" letter-spacing="0">= {</text>
-    <text class="mono" x="44" y="353" fill="#202428" font-size="18" letter-spacing="0">name: string;</text>
-    <text class="mono" x="44" y="379" fill="#202428" font-size="18" letter-spacing="0">email: string }</text>
+    <rect x="0" y="212" width="430" height="188" rx="14" fill="#FFFEFB" stroke="#CCD2C8"/>
+    <rect x="0" y="212" width="430" height="42" rx="14" fill="#F2F4EE" stroke="#CCD2C8"/>
+    <path d="M0 254H430" stroke="#CCD2C8"/>
+    <text class="sans" x="18" y="239" fill="#4D544B" font-size="15" font-weight="700" letter-spacing="0">Generated type</text>
+    <text class="mono code-keyword" x="24" y="282" font-size="18" font-weight="600" letter-spacing="0">type</text>
+    <text class="mono code-type" x="77" y="282" font-size="18" font-weight="600" letter-spacing="0">User</text>
+    <text class="mono" x="127" y="282" fill="#202428" font-size="18" letter-spacing="0">= {</text>
+    <text class="mono" x="44" y="312" fill="#202428" font-size="18" letter-spacing="0">name: string;</text>
+    <text class="mono" x="44" y="342" fill="#202428" font-size="18" letter-spacing="0">email: string }</text>
 
-    <g transform="translate(0 412)">
+    <g transform="translate(0 426)">
       <rect x="0" y="0" width="430" height="58" rx="14" fill="#202428"/>
       <circle cx="30" cy="29" r="11" fill="#2D6F6D"/>
       <path d="M25 29L29 33L36 25" stroke="#FFFEFB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
