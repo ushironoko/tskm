@@ -55,11 +55,11 @@
     <path d="M0 42V14C0 6.268 6.268 0 14 0H416C423.732 0 430 6.268 430 14V42Z" fill="#F2F4EE"/>
     <path d="M0 42H430" stroke="#CCD2C8"/>
     <text class="sans" x="18" y="27" fill="#4D544B" font-size="15" font-weight="700" letter-spacing="0">Schema</text>
-    <text class="mono code-keyword" x="24" y="76" font-size="19" font-weight="600" letter-spacing="0">const</text>
-    <text class="mono" x="92" y="76" fill="#202428" font-size="19" letter-spacing="0">user = object({</text>
-    <text class="mono" x="44" y="110" fill="#202428" font-size="19" letter-spacing="0">name: string(),</text>
-    <text class="mono" x="44" y="144" fill="#202428" font-size="19" letter-spacing="0">email: pipe(string(), email()),</text>
-    <text class="mono" x="24" y="178" fill="#202428" font-size="19" letter-spacing="0">})</text>
+    <text class="mono code-keyword" x="24" y="82" font-size="19" font-weight="600" letter-spacing="0">const</text>
+    <text class="mono" x="92" y="82" fill="#202428" font-size="19" letter-spacing="0">user = object({</text>
+    <text class="mono" x="44" y="116" fill="#202428" font-size="19" letter-spacing="0">name: string(),</text>
+    <text class="mono" x="44" y="150" fill="#202428" font-size="19" letter-spacing="0">email: pipe(string(), email()),</text>
+    <text class="mono" x="24" y="184" fill="#202428" font-size="19" letter-spacing="0">})</text>
 
     <rect x="0" y="212" width="430" height="188" rx="14" fill="#FFFEFB" stroke="#CCD2C8"/>
     <path d="M0 254V226C0 218.268 6.268 212 14 212H416C423.732 212 430 218.268 430 226V254Z" fill="#F2F4EE"/>
