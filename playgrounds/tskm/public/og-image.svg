@@ -53,14 +53,6 @@
     <text class="sans" x="2" y="312" fill="#4D544B" font-size="29" font-weight="450" letter-spacing="0">Try schemas, generated types,</text>
     <text class="sans" x="2" y="350" fill="#4D544B" font-size="29" font-weight="450" letter-spacing="0">and parse results side by side.</text>
 
-    <g transform="translate(0 360)">
-      <rect x="0" y="0" width="166" height="42" rx="21" fill="#E7F1EF" stroke="#93B7B4"/>
-      <text class="sans" x="22" y="28" fill="#184C4B" font-size="17" font-weight="650" letter-spacing="0">Standard Schema</text>
-      <rect x="184" y="0" width="116" height="42" rx="21" fill="#FFF6DB" stroke="#D3B768"/>
-      <text class="sans" x="206" y="28" fill="#6F5313" font-size="17" font-weight="650" letter-spacing="0">AOT types</text>
-      <rect x="318" y="0" width="134" height="42" rx="21" fill="#EDF1F5" stroke="#AAB8C8"/>
-      <text class="sans" x="340" y="28" fill="#2F4F68" font-size="17" font-weight="650" letter-spacing="0">Live parsing</text>
-    </g>
   </g>
 
   <g transform="translate(650 144)">
@@ -70,16 +62,9 @@
     <text class="sans" x="18" y="27" fill="#4D544B" font-size="15" font-weight="700" letter-spacing="0">Schema</text>
     <text class="mono code-keyword" x="24" y="76" font-size="19" font-weight="600" letter-spacing="0">const</text>
     <text class="mono" x="92" y="76" fill="#202428" font-size="19" letter-spacing="0">user = object({</text>
-    <text class="mono" x="44" y="110" fill="#202428" font-size="19" letter-spacing="0">id: templateLiteral([</text>
-    <text class="mono code-string" x="275" y="110" font-size="19" letter-spacing="0">&quot;usr_&quot;</text>
-    <text class="mono" x="344" y="110" fill="#202428" font-size="19" letter-spacing="0">, string()]),</text>
+    <text class="mono" x="44" y="110" fill="#202428" font-size="19" letter-spacing="0">name: string(),</text>
     <text class="mono" x="44" y="144" fill="#202428" font-size="19" letter-spacing="0">email: pipe(string(), email()),</text>
-    <text class="mono" x="44" y="178" fill="#202428" font-size="19" letter-spacing="0">role: picklist([</text>
-    <text class="mono code-string" x="217" y="178" font-size="19" letter-spacing="0">&quot;admin&quot;</text>
-    <text class="mono" x="296" y="178" fill="#202428" font-size="19" letter-spacing="0">, </text>
-    <text class="mono code-string" x="321" y="178" font-size="19" letter-spacing="0">&quot;user&quot;</text>
-    <text class="mono" x="385" y="178" fill="#202428" font-size="19" letter-spacing="0">]),</text>
-    <text class="mono" x="24" y="212" fill="#202428" font-size="19" letter-spacing="0">})</text>
+    <text class="mono" x="24" y="178" fill="#202428" font-size="19" letter-spacing="0">})</text>
 
     <rect x="0" y="260" width="430" height="126" rx="14" fill="#FFFEFB" stroke="#CCD2C8"/>
     <rect x="0" y="260" width="430" height="42" rx="14" fill="#F2F4EE" stroke="#CCD2C8"/>
@@ -88,12 +73,8 @@
     <text class="mono code-keyword" x="24" y="327" font-size="18" font-weight="600" letter-spacing="0">type</text>
     <text class="mono code-type" x="77" y="327" font-size="18" font-weight="600" letter-spacing="0">User</text>
     <text class="mono" x="127" y="327" fill="#202428" font-size="18" letter-spacing="0">= {</text>
-    <text class="mono" x="44" y="353" fill="#202428" font-size="18" letter-spacing="0">id: `usr_${string}`; email: string;</text>
-    <text class="mono" x="44" y="379" fill="#202428" font-size="18" letter-spacing="0">role: </text>
-    <text class="mono code-string" x="111" y="379" font-size="18" letter-spacing="0">&quot;admin&quot;</text>
-    <text class="mono" x="189" y="379" fill="#202428" font-size="18" letter-spacing="0"> | </text>
-    <text class="mono code-string" x="220" y="379" font-size="18" letter-spacing="0">&quot;user&quot;</text>
-    <text class="mono" x="281" y="379" fill="#202428" font-size="18" letter-spacing="0"> }</text>
+    <text class="mono" x="44" y="353" fill="#202428" font-size="18" letter-spacing="0">name: string;</text>
+    <text class="mono" x="44" y="379" fill="#202428" font-size="18" letter-spacing="0">email: string }</text>
 
     <g transform="translate(0 412)">
       <rect x="0" y="0" width="430" height="58" rx="14" fill="#202428"/>
