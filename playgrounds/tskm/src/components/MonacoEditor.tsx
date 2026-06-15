@@ -28,6 +28,7 @@ export function MonacoEditor({
   const initialValueRef = useRef(value)
   const onChangeRef = useRef(onChange)
   const lastValueRef = useRef(value)
+  const hoverPointerClientYRef = useRef<number | null>(null)
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -50,6 +51,9 @@ export function MonacoEditor({
         'ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Yu Gothic", "YuGothic", monospace',
       fontLigatures: false,
       fontSize: 13,
+      hover: {
+        above: false,
+      },
       lineDecorationsWidth: 10,
       lineHeight: 20,
       lineNumbers: "off",
@@ -72,11 +76,61 @@ export function MonacoEditor({
       lastValueRef.current = nextValue
       onChangeRef.current(nextValue)
     })
+    const hoverBelowOffset = editor.getOption(monaco.editor.EditorOption.lineHeight)
+    let hoverAnimationFrame = 0
+    let adjustedHoverWidget: HTMLElement | null = null
+    const getVisibleHoverWidget = () => {
+      const hover = container.querySelector<HTMLElement>(".monaco-hover:not(.hidden)")
+      return hover?.closest<HTMLElement>(".monaco-resizable-hover") ?? null
+    }
+    const placeHoverBelowPointer = () => {
+      hoverAnimationFrame = 0
+      const pointerClientY = hoverPointerClientYRef.current
+      if (pointerClientY === null) return
+
+      const hoverWidget = getVisibleHoverWidget()
+      if (!hoverWidget) {
+        adjustedHoverWidget = null
+        return
+      }
+      if (hoverWidget === adjustedHoverWidget) return
+
+      const hoverRect = hoverWidget.getBoundingClientRect()
+      if (hoverRect.height === 0 || hoverRect.bottom > pointerClientY + 1) return
+      if (window.innerHeight - pointerClientY < hoverRect.height + hoverBelowOffset) return
+
+      const containerRect = container.getBoundingClientRect()
+      const nextTop = pointerClientY - containerRect.top + hoverBelowOffset
+      hoverWidget.style.top = `${Math.max(0, Math.ceil(nextTop))}px`
+      adjustedHoverWidget = hoverWidget
+    }
+    const scheduleHoverPlacement = () => {
+      if (hoverAnimationFrame !== 0) return
+      hoverAnimationFrame = window.requestAnimationFrame(placeHoverBelowPointer)
+    }
+    const handlePointerMove = (event: PointerEvent) => {
+      hoverPointerClientYRef.current = event.clientY
+      if (getVisibleHoverWidget()) return
+      scheduleHoverPlacement()
+    }
+    container.addEventListener("pointermove", handlePointerMove, true)
+    const hoverObserver = new MutationObserver(scheduleHoverPlacement)
+    hoverObserver.observe(container, {
+      attributeFilter: ["class", "style"],
+      attributes: true,
+      childList: true,
+      subtree: true,
+    })
 
     modelRef.current = model
     editorRef.current = editor
 
     return () => {
+      container.removeEventListener("pointermove", handlePointerMove, true)
+      hoverObserver.disconnect()
+      if (hoverAnimationFrame !== 0) {
+        window.cancelAnimationFrame(hoverAnimationFrame)
+      }
       subscription.dispose()
       editor.dispose()
       model.dispose()
