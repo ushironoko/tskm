@@ -69,7 +69,8 @@
     <text class="mono code-type" x="77" y="282" font-size="18" font-weight="600" letter-spacing="0">User</text>
     <text class="mono" x="127" y="282" fill="#202428" font-size="18" letter-spacing="0">= {</text>
     <text class="mono" x="44" y="312" fill="#202428" font-size="18" letter-spacing="0">name: string;</text>
-    <text class="mono" x="44" y="342" fill="#202428" font-size="18" letter-spacing="0">email: string }</text>
+    <text class="mono" x="44" y="342" fill="#202428" font-size="18" letter-spacing="0">email: string;</text>
+    <text class="mono" x="24" y="372" fill="#202428" font-size="18" letter-spacing="0">}</text>
 
     <g transform="translate(0 426)">
       <rect x="0" y="0" width="430" height="58" rx="14" fill="#202428"/>
