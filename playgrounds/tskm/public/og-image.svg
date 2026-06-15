@@ -42,16 +42,11 @@
     <circle cx="156" cy="99" r="7" fill="#2D6F6D"/>
   </g>
 
-  <g transform="translate(120 174)">
-    <rect x="0" y="0" width="108" height="108" rx="24" fill="#202428"/>
-    <path d="M29 36H79" stroke="#F7F8F4" stroke-width="7" stroke-linecap="square"/>
-    <path d="M54 36V78" stroke="#F7F8F4" stroke-width="7" stroke-linecap="square"/>
-    <path d="M33 79H75" stroke="#2D6F6D" stroke-width="7" stroke-linecap="square"/>
-
-    <text class="sans" x="0" y="178" fill="#202428" font-size="88" font-weight="760" letter-spacing="0">tskm</text>
-    <text class="sans" x="0" y="254" fill="#202428" font-size="68" font-weight="650" letter-spacing="0">playground</text>
-    <text class="sans" x="2" y="312" fill="#4D544B" font-size="29" font-weight="450" letter-spacing="0">Try schemas, generated types,</text>
-    <text class="sans" x="2" y="350" fill="#4D544B" font-size="29" font-weight="450" letter-spacing="0">and parse results side by side.</text>
+  <g transform="translate(120 146)">
+    <text class="sans" x="0" y="112" fill="#202428" font-size="88" font-weight="760" letter-spacing="0">tskm</text>
+    <text class="sans" x="0" y="188" fill="#202428" font-size="68" font-weight="650" letter-spacing="0">playground</text>
+    <text class="sans" x="2" y="256" fill="#4D544B" font-size="29" font-weight="450" letter-spacing="0">Try schemas, generated types,</text>
+    <text class="sans" x="2" y="294" fill="#4D544B" font-size="29" font-weight="450" letter-spacing="0">and parse results side by side.</text>
 
   </g>
 
