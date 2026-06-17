@@ -1,5 +1,12 @@
 # @tskm/example-ssot
 
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies [dfcb2a7]
+  - @tskm/core@0.2.1
+
 ## 0.0.2
 
 ### Patch Changes
