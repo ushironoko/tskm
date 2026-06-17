@@ -51,6 +51,10 @@ button {
   color: inherit;
 }
 
+a {
+  color: inherit;
+}
+
 .app-shell {
   min-height: 100vh;
   display: grid;
@@ -92,6 +96,18 @@ button {
   justify-content: flex-end;
   gap: 16px;
   flex-wrap: wrap;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .workbench {
@@ -184,7 +200,15 @@ button {
     color 120ms ease;
 }
 
-:is(.ui-button:not(:disabled), .segmented-control__item, .checkbox-control):hover {
+:where(.github-link) {
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+:is(.ui-button:not(:disabled), .segmented-control__item, .checkbox-control, .github-link):hover {
   border-color: var(--control-border-hover, var(--interactive-border-hover));
   background: var(--control-bg-hover, var(--interactive-bg-hover));
   color: var(--control-fg-hover, var(--control-fg, var(--interactive-fg)));
@@ -198,6 +222,7 @@ button {
 }
 
 .ui-button:focus-visible,
+.github-link:focus-visible,
 .segmented-control__item:focus-visible,
 .checkbox-control:focus-within,
 .monaco-code-editor:focus-within,
@@ -244,6 +269,28 @@ button {
   --control-fg: var(--interactive-fg);
   --control-border-hover: var(--interactive-border-hover);
   --control-bg-hover: var(--interactive-bg-hover);
+}
+
+.github-link {
+  --control-border: var(--interactive-border);
+  --control-bg: var(--interactive-bg);
+  --control-fg: var(--interactive-fg);
+  --control-border-hover: var(--interactive-border-hover);
+  --control-bg-hover: var(--interactive-bg-hover);
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--control-border);
+  background: var(--control-bg);
+  color: var(--control-fg);
+  text-decoration: none;
+}
+
+.github-link svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
 }
 
 .example-list {
