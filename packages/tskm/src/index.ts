@@ -18,6 +18,8 @@ export { type RegexAction, regex } from "./actions/regex.ts"
 export { type TransformAction, type TransformContext, transform } from "./actions/transform.ts"
 export { type TransformActionAsync, transformAsync } from "./actions/transformAsync.ts"
 export { type UrlAction, url } from "./actions/url.ts"
+// ---- Compiled fast path (Tier-0, no-eval; opt-in, experimental) ----
+export { type Cursor, getCompiledValidate, type Step, safeParseCompiled } from "./compile.ts"
 // ---- Methods ----
 export { assert } from "./methods/assert.ts"
 export { type FallbackSchema, fallback } from "./methods/fallback.ts"
