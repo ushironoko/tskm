@@ -19,6 +19,7 @@ import {
   union,
 } from "../src/index.ts"
 import type { OutputDataset } from "../src/types/dataset.ts"
+import type { Issue } from "../src/types/issue.ts"
 
 /**
  * STRYKER ORACLE (wiring deferred). This battery is the mutation oracle for `compile.ts`.
@@ -28,9 +29,11 @@ import type { OutputDataset } from "../src/types/dataset.ts"
  * the unmerged `test/stryker-mutation` branch, so its config is not touched here), wire it as:
  *   1. add `packages/tskm/src/compile.ts` to Stryker's `mutate` targets;
  *   2. require this file to KILL every mutant on these survival-critical sites: the `.pipe` /
- *      `async` fallback guard, each primitive inline fast-path branch, the `prefixIssuePaths`
- *      index range, the faithful-optional drop condition, and the `hasErrorIssueFrom`/`isReject`
- *      abort condition;
+ *      `async` fallback guard, the `schema.reference` factory-identity dispatch in `compile()`
+ *      AND the reference-identity branches in `primitiveCode()` (mutating either back to a
+ *      `.type`-string check reintroduces the type-collision bypass — see the collision battery
+ *      below), each primitive inline fast-path branch, the `prefixIssuePaths` index range, the
+ *      faithful-optional drop condition, and the `hasErrorIssueFrom`/`isReject` abort condition;
  *   3. a surviving mutant on any of those is a release blocker.
  *
  * The compiled fast path MUST be byte-identical to the interpreter on success AND error
@@ -201,6 +204,99 @@ describe("safeParseCompiled — fast-path-only-for-bare-leaf invariant", () => {
 })
 
 /**
+ * Type-string collision battery (the router-bypass regression). `BaseSchema.type` is a public
+ * structural string, so a FOREIGN schema can carry a built-in `type` (e.g. "string") with a
+ * stricter `~run`. The disqualified router specialized on that string and silently bypassed the
+ * foreign `~run`, accepting input the interpreter rejects. The compiler must specialize ONLY
+ * genuine native factory outputs (keyed on `schema.reference` identity) and fall back to `~run`
+ * for everything else. Each case here uses an input the matching BUILT-IN fast path would
+ * ACCEPT while the probe's `~run` REJECTS, so it fails against the old `.type` router and passes
+ * once dispatch is narrowed to factory identity.
+ */
+describe("safeParseCompiled — specializes only native factory outputs (type-string collision)", () => {
+  // One case per top-level type `compile()` specializes. `structural` supplies the field each
+  // `compileX` requires before it specializes (`entries`/`item`/`wrapped`); `input` is a value
+  // the genuine built-in would accept.
+  const cases: ReadonlyArray<{
+    readonly type: string
+    readonly structural: ProbeStructural
+    readonly input: unknown
+  }> = [
+    { type: "string", structural: {}, input: "ok" },
+    { type: "number", structural: {}, input: 42 },
+    { type: "boolean", structural: {}, input: true },
+    { type: "object", structural: { entries: {} }, input: {} },
+    { type: "array", structural: { item: string() }, input: [] },
+    { type: "optional", structural: { wrapped: string() }, input: undefined },
+    { type: "nullish", structural: { wrapped: string() }, input: null },
+  ]
+
+  for (const { type, structural, input } of cases) {
+    it(`a foreign "${type}" schema runs its own ~run, not the built-in fast path`, () => {
+      const schema = collisionProbe(type, structural)
+      // The probe always rejects; if the router specialized it by `.type`, the built-in fast
+      // path would ACCEPT `input` and report success — the bypass. It must reject instead.
+      expect(safeParseCompiled(schema, input).success).toBe(false)
+      expectParity(schema, input)
+    })
+  }
+
+  it("child-level collision: an object child and an array element route through ~run", () => {
+    // Pins `primitiveCode`'s child-inline guard (it shares the same native-identity check).
+    const objChild = object({ x: collisionProbe("string", {}) })
+    expect(safeParseCompiled(objChild, { x: "ok" }).success).toBe(false)
+    expectParity(objChild, { x: "ok" })
+    const arrElem = array(collisionProbe("number", {}))
+    expect(safeParseCompiled(arrElem, [42]).success).toBe(false)
+    expectParity(arrElem, [42])
+  })
+})
+
+describe("safeParseCompiled — `reference` factory identity is the documented trust boundary", () => {
+  it("a schema that FORGES a native `reference` is treated as native (accepted non-goal, not a guarantee)", () => {
+    // DOCUMENTED CONTRACT (see the TRUST BOUNDARY note in `compile`): specialization keys on
+    // factory identity (`schema.reference`), the strongest non-symbol native-provenance signal.
+    // A schema built through tskm's public factory API always carries BOTH the native `reference`
+    // AND the matching `~run`, so the compiled path is byte-identical for every honest schema.
+    // A schema that DELIBERATELY imports a native factory and assigns it to `reference` while
+    // supplying a divergent `~run` is lying about its provenance; the compiled path trusts the
+    // declared identity and specializes it, so it can diverge from `safeParse` here. That is an
+    // accepted non-goal — forging `reference` is unsupported — not a bypass of the honest
+    // contract. This test pins the boundary so narrowing it later (e.g. a module-private brand)
+    // is a deliberate contract change, not an accidental regression.
+    const forged: BaseSchema<unknown, unknown> = {
+      kind: "schema",
+      type: "string",
+      reference: string, // forged native identity (real factory ref + divergent ~run below)
+      expects: "string",
+      async: false,
+      get "~standard"(): never {
+        throw new Error("~standard is unused in this test")
+      },
+      "~run"(dataset) {
+        const out = dataset as { value: unknown; typed?: boolean; issues?: Issue[] }
+        out.typed = false
+        out.issues = [
+          {
+            kind: "schema",
+            type: "string",
+            expected: "never",
+            received: String(out.value),
+            message: "forged ~run rejects",
+            input: out.value,
+          },
+        ]
+        return out as OutputDataset<unknown>
+      },
+    }
+    // Interpreter honors the forged `~run` (rejects); compiled trusts the declared native
+    // identity and specializes (accepts). Documented, accepted divergence.
+    expect(safeParse(forged, "x").success).toBe(false)
+    expect(safeParseCompiled(forged, "x").success).toBe(true)
+  })
+})
+
+/**
  * A custom schema whose `~run` reads `this.expects` (a real BaseSchema field) to carry the
  * expected JS `typeof`. Used only to prove the compiled fallback preserves `this` binding.
  */
@@ -217,6 +313,53 @@ function thisProbe(): BaseSchema<unknown, unknown> {
     "~run"(dataset) {
       const out = dataset as { value: unknown; typed?: boolean }
       out.typed = typeof out.value === this.expects
+      return out as OutputDataset<unknown>
+    },
+  }
+  return schema
+}
+
+/** The structural fields a `compileX` path reads before specializing — supplied per collision. */
+interface ProbeStructural {
+  readonly entries?: Record<string, BaseSchema<unknown, unknown>>
+  readonly item?: BaseSchema<unknown, unknown>
+  readonly wrapped?: BaseSchema<unknown, unknown>
+}
+
+/**
+ * Builds a FOREIGN schema whose public `.type` collides with a built-in but whose `reference`
+ * is NOT a native tskm factory. `structural` carries the field the matching `compileX` path
+ * requires before it would specialize, so the disqualified `.type`-keyed router would take the
+ * built-in fast path. The `~run` always rejects, so if the compiler ever specialized this
+ * schema it would accept a built-in-valid input and diverge from the interpreter.
+ */
+function collisionProbe(
+  type: string,
+  structural: ProbeStructural,
+): BaseSchema<unknown, unknown> & ProbeStructural {
+  const schema: BaseSchema<unknown, unknown> & ProbeStructural = {
+    kind: "schema",
+    type,
+    reference: collisionProbe,
+    expects: "never",
+    async: false,
+    ...structural,
+    get "~standard"(): never {
+      throw new Error("~standard is unused in this test")
+    },
+    "~run"(dataset) {
+      const out = dataset as { value: unknown; typed?: boolean; issues?: Issue[] }
+      out.typed = false
+      out.issues = [
+        {
+          kind: "schema",
+          type,
+          expected: "never",
+          received: String(out.value),
+          message: "collision probe always rejects",
+          input: out.value,
+        },
+      ]
       return out as OutputDataset<unknown>
     },
   }

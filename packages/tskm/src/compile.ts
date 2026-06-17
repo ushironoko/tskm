@@ -1,5 +1,11 @@
 import type { SafeParseResult } from "./methods/safeParse.ts"
-import { _applyRest, type ObjectEntries, type RestMode } from "./schemas/object.ts"
+import { array } from "./schemas/array.ts"
+import { boolean } from "./schemas/boolean.ts"
+import { nullish } from "./schemas/nullish.ts"
+import { number } from "./schemas/number.ts"
+import { _applyRest, type ObjectEntries, object, type RestMode } from "./schemas/object.ts"
+import { optional } from "./schemas/optional.ts"
+import { string } from "./schemas/string.ts"
 import type { Config } from "./types/config.ts"
 import { defaultConfig, isReject } from "./types/config.ts"
 import type { OutputDataset, UnknownDataset } from "./types/dataset.ts"
@@ -51,6 +57,12 @@ export function getCompiledValidate<const TSchema extends BaseSchema<unknown, un
  * {@link safeParse} (byte-identical value and issues — see `bench/validator/conformance.ts`).
  * No `eval`/codegen, so it runs unchanged under a strict CSP and on edge runtimes.
  *
+ * The byte-identical guarantee covers every schema built through tskm's public factory API.
+ * Specialization keys on factory identity (`schema.reference`), so an honest foreign/custom
+ * schema with a colliding `type` string still runs its own `~run` (no bypass). A schema that
+ * DELIBERATELY forges a native `reference` while diverging in `~run` is out of contract — see
+ * the TRUST BOUNDARY note in {@link compile}.
+ *
  * Intended for CONTAINER schemas (object/array and their nestings), where it removes the
  * megamorphic per-node dispatch and the per-value dataset allocation and wins ~1.8-3x on
  * object/array-heavy payloads (primitive leaves inside a container are inlined here with no
@@ -95,20 +107,34 @@ function compile(schema: CompilableSchema): Step {
   if ((schema as { readonly async: boolean }).async === true || schema.pipe !== undefined) {
     return compileFallback(schema)
   }
-  switch (schema.type) {
-    case "object":
+  // Specialize ONLY genuine native tskm factory outputs, keyed on factory identity
+  // (`schema.reference`) — NEVER on the public `schema.type` string. `BaseSchema` is
+  // structural and `type` is public, so an honest foreign/custom schema can carry a colliding
+  // `type` (e.g. "string") together with a stricter `~run`; dispatching on the string would
+  // specialize it and silently bypass that `~run`, accepting input the interpreter rejects. A
+  // value-only `type` collision cannot reach a specialized path here (factory identity differs),
+  // so honest foreign schemas fall through to `compileFallback`, which runs their own `~run`.
+  //
+  // TRUST BOUNDARY: `reference` is itself a public, copyable field, so a schema can DELIBERATELY
+  // impersonate a native factory's identity while diverging in `~run`. Such a forgery is OUT of
+  // the byte-identical contract — an accepted non-goal, not an honest-code bypass: every schema
+  // built through tskm's public factory API has BOTH the native `reference` AND the matching
+  // `~run`. Closing even the forgery would require a module-private brand registered by each
+  // native factory, coupling the core factories to this opt-in compiler; intentionally not done.
+  switch (schema.reference) {
+    case object:
       return compileObject(schema)
-    case "array":
+    case array:
       return compileArray(schema)
-    case "string":
+    case string:
       return compileString(schema)
-    case "number":
+    case number:
       return compileNumber(schema)
-    case "boolean":
+    case boolean:
       return compileBoolean(schema)
-    case "optional":
+    case optional:
       return compileOptional(schema)
-    case "nullish":
+    case nullish:
       return compileNullish(schema)
     default:
       return compileFallback(schema)
@@ -853,13 +879,17 @@ function primitiveCode(schema: CompilableSchema): number {
   if ((schema as { readonly async: boolean }).async === true || schema.pipe !== undefined) {
     return 0
   }
-  if (schema.type === "string") {
+  // Inline a bare-primitive `typeof` check ONLY for genuine native primitives, keyed on
+  // factory identity — not on `schema.type`. A foreign child with `type: "string"` and a
+  // stricter `~run` must NOT take the inline path (that would bypass its `~run`); returning 0
+  // routes it to its compiled child Step, which falls back to `~run` (see `compile`).
+  if (schema.reference === string) {
     return 1
   }
-  if (schema.type === "number") {
+  if (schema.reference === number) {
     return 2
   }
-  if (schema.type === "boolean") {
+  if (schema.reference === boolean) {
     return 3
   }
   return 0
