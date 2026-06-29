@@ -174,17 +174,7 @@ export function App() {
         </Pane>
 
         <div className="editor-grid">
-          <Pane
-            title="Schema"
-            variant="source"
-            meta={
-              <div className="legend">
-                <span className="legend__item legend__item--schema">schema</span>
-                <span className="legend__item legend__item--action">action</span>
-                <span className="legend__item legend__item--method">method</span>
-              </div>
-            }
-          >
+          <Pane title="Schema" variant="source">
             <MonacoEditor
               label="tskm schema expression"
               value={schemaSource}

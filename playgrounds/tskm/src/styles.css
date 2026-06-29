@@ -225,8 +225,6 @@ a {
 .github-link:focus-visible,
 .segmented-control__item:focus-visible,
 .checkbox-control:focus-within,
-.monaco-code-editor:focus-within,
-.code-editor:focus-within,
 .highlighted-code:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-ring-offset);
@@ -379,41 +377,6 @@ a {
   margin: 0;
   accent-color: #2d6f6d;
   cursor: pointer;
-}
-
-.legend {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.legend__item {
-  display: inline-flex;
-  align-items: center;
-  min-height: 20px;
-  padding: 0 6px;
-  border: 1px solid;
-  font-size: 0.7rem;
-  line-height: 1;
-}
-
-.legend__item--schema {
-  border-color: #74a8c9;
-  color: #235578;
-  background: #eaf5fb;
-}
-
-.legend__item--action {
-  border-color: #9abd72;
-  color: #3c6124;
-  background: #edf7e2;
-}
-
-.legend__item--method {
-  border-color: #cfab63;
-  color: #765214;
-  background: #fff6df;
 }
 
 .status-badge {
