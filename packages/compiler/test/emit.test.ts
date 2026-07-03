@@ -53,6 +53,22 @@ describe("reindentType — single line / leaf", () => {
   it("keeps a Record with empty-object inline portions correct", () => {
     expect(reindentType("Record<string, {}>")).toBe("Record<string, {}>")
   })
+
+  it("emits an index-signature key inline (its `[…]` is not broken like a tuple)", () => {
+    // `{ [key: string]: number }` — the `[key: string]` head is detected via a matching
+    // `]` immediately followed by `:` and kept on one line; only the object breaks.
+    expect(reindentType("{ [key: string]: number }")).toBe("{\n  [key: string]: number\n}")
+    // The index value still reindents normally.
+    expect(reindentType("{ [k: string]: { n: number } }")).toBe(
+      "{\n  [k: string]: {\n    n: number\n  }\n}",
+    )
+  })
+
+  it("preserves a string literal (with escaped quote) inside an index-signature head verbatim", () => {
+    // The literal's escaped `\"` must not be treated as the closing quote, and the `]` inside
+    // the string (if any) must not close the bracket — the scanner skips string bodies.
+    expect(reindentType('{ [k: "a\\"b"]: number }')).toBe('{\n  [k: "a\\"b"]: number\n}')
+  })
 })
 
 describe("reindentType — nested objects", () => {

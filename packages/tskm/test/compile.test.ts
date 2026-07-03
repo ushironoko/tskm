@@ -8,6 +8,7 @@ import {
   check,
   minLength,
   minValue,
+  nullish,
   number,
   object,
   optional,
@@ -365,3 +366,118 @@ function collisionProbe(
   }
   return schema
 }
+
+/**
+ * The GENERAL object step (the closure `compileObject` returns when a child is NOT an
+ * inlineable native primitive — here a nested `object` child forces code 0) is a distinct
+ * code path from the specialized primitive-strip fast paths the parity battery above already
+ * exercises. Its inline `string`/`number`/`boolean` mismatch arms and its non-object guard
+ * must stay byte-identical to the interpreter too.
+ */
+describe("safeParseCompiled — general object path parity", () => {
+  const mixed = object({
+    s: string(),
+    n: number(),
+    b: boolean(),
+    nested: object({ x: string() }),
+  })
+
+  it("inline primitive leaves reject with interpreter-identical issues", () => {
+    // All three inline arms take their else branch at once: wrong string, wrong number
+    // (NaN counts as non-number), wrong boolean — each must emit its own typed issue.
+    expectParity(mixed, { s: 5, n: "x", b: "no", nested: { x: 9 } })
+    expectParity(mixed, { s: "ok", n: Number.NaN, b: true, nested: { x: "y" } })
+    expectParity(mixed, { s: "ok", n: 1, b: true, nested: { x: "y" } })
+  })
+
+  it("non-object roots hit the object guard, not a primitive arm", () => {
+    expectParity(mixed, 42)
+    expectParity(mixed, null)
+    expectParity(mixed, [])
+    expectParity(mixed, "str")
+  })
+
+  it("optionalKeys + passthrough rest keeps the faithful-drop and rest merge byte-identical", () => {
+    const schema = object(
+      { name: string(), meta: object({ v: number() }), bio: optional(string()) },
+      { optionalKeys: true, rest: "passthrough" },
+    )
+    // bio missing → faithfully dropped (not written as undefined); `extra` survives via passthrough.
+    expectParity(schema, { name: "a", meta: { v: 1 }, extra: 99 })
+    // bio present as undefined is distinct from missing under the faithful-optional contract.
+    expectParity(schema, { name: "a", meta: { v: 1 }, bio: undefined })
+    expectParity(schema, { name: "a", meta: { v: 2 }, bio: "hi", extra: [1, 2] })
+  })
+})
+
+/**
+ * Bare top-level `string`/`number`/`boolean` with a CUSTOM message compile to the
+ * message-carrying closure (not the shared message-less `*Step`), and `nullish` roots go
+ * through `compileNullish`. `safeParseCompiled` supports these roots even though the fast path
+ * is meant for containers, so the compiled result must still match the interpreter exactly.
+ */
+describe("safeParseCompiled — top-level primitive & nullish parity", () => {
+  it("custom-message primitives carry the message into the compiled issue", () => {
+    expectParity(number("must be a number"), "nope")
+    expectParity(number("must be a number"), 7)
+    expectParity(string("must be a string"), 123)
+    expectParity(string("must be a string"), "ok")
+    expectParity(boolean("must be a boolean"), "x")
+    expectParity(boolean("must be a boolean"), false)
+  })
+
+  it("nullish passes null/undefined through and defers to the wrapped schema otherwise", () => {
+    const bare = nullish(string())
+    expectParity(bare, null)
+    expectParity(bare, undefined)
+    expectParity(bare, "hi")
+    expectParity(bare, 5)
+  })
+
+  it("nullish default (static and factory) fills only for null/undefined", () => {
+    expectParity(nullish(string(), "fallback"), null)
+    expectParity(nullish(string(), "fallback"), undefined)
+    expectParity(nullish(string(), "fallback"), "kept")
+    const dynamic = nullish(string(), () => "computed")
+    expectParity(dynamic, null)
+    expectParity(dynamic, undefined)
+    expectParity(dynamic, "kept")
+  })
+})
+
+/**
+ * Prototype-pollution defense on the GENERAL compiled object path: an own `__proto__` input
+ * key (only constructible via `JSON.parse`) copied into the fresh output must land as an own
+ * data property via `_safeAssign`, never mutate the output's prototype — byte-identical to the
+ * interpreter. A nested (non-primitive) child forces the general path rather than the
+ * specialized primitive-strip fast paths, which have their own proto handling.
+ */
+describe("safeParseCompiled — general path __proto__ safety", () => {
+  const withOwnProto = (
+    base: Record<string, BaseSchema<unknown, unknown>>,
+    value: BaseSchema<unknown, unknown>,
+  ): Record<string, BaseSchema<unknown, unknown>> => {
+    Object.defineProperty(base, "__proto__", {
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    return base
+  }
+
+  it("writes an own __proto__ key without polluting the prototype (general path)", () => {
+    const entries = withOwnProto({ meta: object({ v: number() }) }, string())
+    const schema = object(entries)
+    const input = JSON.parse('{"__proto__": "x", "meta": {"v": 1}}')
+
+    expectParity(schema, input)
+
+    const compiled = safeParseCompiled(schema, input)
+    expect(compiled.success).toBe(true)
+    const out = compiled.output as Record<string, unknown>
+    // Own data property, not a prototype mutation.
+    expect(Object.hasOwn(out, "__proto__")).toBe(true)
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+  })
+})
