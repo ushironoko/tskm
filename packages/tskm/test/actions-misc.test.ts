@@ -3,6 +3,8 @@ import {
   brand,
   check,
   checkAsync,
+  description,
+  minLength,
   number,
   parse,
   parseAsync,
@@ -235,6 +237,38 @@ describe("brand", () => {
     const sym = Symbol("Id")
     const action = brand<string, typeof sym>(sym)
     expect(action.name).toBe(sym)
+  })
+})
+
+describe("description", () => {
+  it("builds an action with the expected static shape", () => {
+    const action = description<string>("user-visible name")
+    expect(action.kind).toBe("transformation")
+    expect(action.type).toBe("description")
+    expect(action.reference).toBe(description)
+    expect(action.async).toBe(false)
+    expect(action.requirement).toBe("user-visible name")
+  })
+
+  it("passes the runtime value through unchanged", () => {
+    const schema = pipe(string(), description<string>("a plain string"))
+    expect(parse(schema, "abc")).toBe("abc")
+  })
+
+  it("preserves the object reference produced by a prior transform", () => {
+    const obj = { a: 1 }
+    const schema = pipe(
+      string(),
+      transform(() => obj),
+      description<{ a: number }>("wrapped object"),
+    )
+    expect(parse(schema, "x")).toBe(obj)
+  })
+
+  it("composes with validations without affecting them", () => {
+    const schema = pipe(string(), minLength(2), description<string>("at least two chars"))
+    expect(parse(schema, "ab")).toBe("ab")
+    expect(safeParse(schema, "a").success).toBe(false)
   })
 })
 
