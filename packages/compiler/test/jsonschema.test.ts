@@ -154,7 +154,7 @@ describe("schemaToJsonSchema — pipe refinements", () => {
 
 describe("schemaToJsonSchema — description metadata", () => {
   const desc = (requirement: string) => ({
-    kind: "transformation",
+    kind: "metadata",
     type: "description",
     requirement,
   })
@@ -205,7 +205,7 @@ describe("schemaToJsonSchema — description metadata", () => {
 
   it("ignores a non-string requirement instead of emitting garbage", () => {
     const schema = pipe(s.string(), {
-      kind: "transformation",
+      kind: "metadata",
       type: "description",
       requirement: 42,
     })

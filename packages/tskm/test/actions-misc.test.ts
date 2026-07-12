@@ -242,16 +242,15 @@ describe("brand", () => {
 
 describe("description", () => {
   it("builds an action with the expected static shape", () => {
-    const action = description<string>("user-visible name")
-    expect(action.kind).toBe("transformation")
+    const action = description("user-visible name")
+    expect(action.kind).toBe("metadata")
     expect(action.type).toBe("description")
     expect(action.reference).toBe(description)
-    expect(action.async).toBe(false)
     expect(action.requirement).toBe("user-visible name")
   })
 
   it("passes the runtime value through unchanged", () => {
-    const schema = pipe(string(), description<string>("a plain string"))
+    const schema = pipe(string(), description("a plain string"))
     expect(parse(schema, "abc")).toBe("abc")
   })
 
@@ -260,15 +259,28 @@ describe("description", () => {
     const schema = pipe(
       string(),
       transform(() => obj),
-      description<{ a: number }>("wrapped object"),
+      description("wrapped object"),
     )
     expect(parse(schema, "x")).toBe(obj)
   })
 
   it("composes with validations without affecting them", () => {
-    const schema = pipe(string(), minLength(2), description<string>("at least two chars"))
+    const schema = pipe(string(), minLength(2), description("at least two chars"))
     expect(parse(schema, "ab")).toBe("ab")
     expect(safeParse(schema, "a").success).toBe(false)
+  })
+
+  it("is skipped by pipeAsync while surrounding async actions still run", async () => {
+    const schema = pipeAsync(
+      string(),
+      description("query text"),
+      checkAsync(async (s: string) => s.length > 1, "too short"),
+      transformAsync(async (s: string) => s.length),
+      description("character count"),
+    )
+    expect(await parseAsync(schema, "abcd")).toBe(4)
+    const r = await safeParseAsync(schema, "a")
+    expect(r.success).toBe(false)
   })
 })
 

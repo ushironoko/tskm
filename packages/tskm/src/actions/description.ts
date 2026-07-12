@@ -1,7 +1,6 @@
-import type { OutputDataset } from "../types/dataset.ts"
-import type { BaseTransformation } from "../types/schema.ts"
+import type { BaseMetadata } from "../types/schema.ts"
 
-export interface DescriptionAction<TInput> extends BaseTransformation<TInput, TInput> {
+export interface DescriptionAction<TInput> extends BaseMetadata<TInput> {
   readonly type: "description"
   readonly reference: typeof description
   readonly requirement: string
@@ -10,14 +9,9 @@ export interface DescriptionAction<TInput> extends BaseTransformation<TInput, TI
 // @__NO_SIDE_EFFECTS__
 export function description<TInput>(requirement: string): DescriptionAction<TInput> {
   return {
-    kind: "transformation",
+    kind: "metadata",
     type: "description",
     reference: description,
-    async: false,
     requirement,
-    "~run"(dataset) {
-      // `description` is metadata-only; the runtime value is unchanged.
-      return dataset as OutputDataset<TInput>
-    },
   }
 }

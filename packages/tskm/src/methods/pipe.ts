@@ -2,16 +2,24 @@ import type { Config } from "../types/config.ts"
 import { isReject } from "../types/config.ts"
 import type { OutputDataset, SuccessDataset, UnknownDataset } from "../types/dataset.ts"
 import type { InferInput, InferOutput } from "../types/infer.ts"
-import type { BaseSchema, BaseTransformation, BaseValidation } from "../types/schema.ts"
+import type {
+  BaseMetadata,
+  BaseSchema,
+  BaseTransformation,
+  BaseValidation,
+} from "../types/schema.ts"
 import { _getStandardProps } from "../utils/_getStandardProps.ts"
 import { hasErrorIssue } from "../utils/_severity.ts"
 
 type AnyPipeItem = BaseValidation<any> | BaseTransformation<any, any>
 
+/** Items `pipe` accepts: runnable actions plus inert metadata (dropped at construction). */
+type AnyPipeItemOrMeta = AnyPipeItem | BaseMetadata<unknown>
+
 /** Folds the item tuple, threading the type through each transformation. */
-type PipeOutput<TItems extends readonly AnyPipeItem[], TAcc> = TItems extends readonly [
+type PipeOutput<TItems extends readonly AnyPipeItemOrMeta[], TAcc> = TItems extends readonly [
   infer THead,
-  ...infer TTail extends readonly AnyPipeItem[],
+  ...infer TTail extends readonly AnyPipeItemOrMeta[],
 ]
   ? THead extends BaseTransformation<any, infer TOut>
     ? PipeOutput<TTail, TOut>
@@ -20,7 +28,7 @@ type PipeOutput<TItems extends readonly AnyPipeItem[], TAcc> = TItems extends re
 
 export type SchemaWithPipe<
   TSchema extends BaseSchema<unknown, unknown>,
-  TItems extends readonly AnyPipeItem[],
+  TItems extends readonly AnyPipeItemOrMeta[],
 > = BaseSchema<InferInput<TSchema>, PipeOutput<TItems, InferOutput<TSchema>>> & {
   readonly pipe: readonly [TSchema, ...TItems]
 }
@@ -32,18 +40,21 @@ export type SchemaWithPipe<
 // @__NO_SIDE_EFFECTS__
 export function pipe<
   const TSchema extends BaseSchema<unknown, unknown>,
-  const TItems extends readonly AnyPipeItem[],
+  const TItems extends readonly AnyPipeItemOrMeta[],
 >(schema: TSchema, ...items: TItems): SchemaWithPipe<TSchema, TItems> {
   // The item kinds are fixed at construction time, so classify each item once here
-  // instead of re-comparing `item.kind` against the string on every parse. Each step
+  // instead of re-comparing `item.kind` against the string on every parse. Metadata
+  // items have no `~run` and are dropped from the run list entirely. Each remaining step
   // carries a precomputed `isTransform` boolean the hot loop reads directly, paired with
   // the item already narrowed to its concrete action type so the loop keeps the original
   // discriminated `~run` signatures (no per-parse re-narrowing, no widening cast).
-  const steps = items.map((item) =>
-    item.kind === "transformation"
-      ? ({ isTransform: true, item } as const)
-      : ({ isTransform: false, item } as const),
-  )
+  const steps = items
+    .filter((item): item is AnyPipeItem => item.kind !== "metadata")
+    .map((item) =>
+      item.kind === "transformation"
+        ? ({ isTransform: true, item } as const)
+        : ({ isTransform: false, item } as const),
+    )
 
   const result = {
     ...schema,

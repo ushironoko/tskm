@@ -128,7 +128,7 @@ import type { User } from "./user.schema.gen"
 ```
 
 Schemas: `string number boolean bigint date literal templateLiteral null_ undefined_ any unknown never_ picklist object exactObject array record tuple union discriminatedUnion optional nullable nullish lazy recursive` (+ async `objectAsync` `exactObjectAsync` `arrayAsync` `unionAsync` `discriminatedUnionAsync` `recordAsync`).
-Actions (via `pipe`): `minLength maxLength length minValue maxValue integer multipleOf email url regex nonEmpty check transform brand readonly` (+ `checkAsync` `transformAsync`).
+Actions (via `pipe`): `minLength maxLength length minValue maxValue integer multipleOf email url regex nonEmpty check transform brand readonly description` (+ `checkAsync` `transformAsync`).
 Methods: `pipe parse safeParse is assert fallback` (+ `parseAsync safeParseAsync pipeAsync`).
 
 ## Issue severity and warnings
@@ -300,6 +300,7 @@ The **experimental JSON Schema** emitter is different: it walks the runtime sche
 | pipe `minLength`/`maxLength`/`length`/`nonEmpty` | unchanged | `minLength`/`maxLength` (or `minItems`/`maxItems`) |
 | pipe `minValue`/`maxValue`/`integer`/`multipleOf` | unchanged | `minimum`/`maximum`/`"type":"integer"`/`multipleOf` (numeric bases only) |
 | pipe `email`/`url`/`regex` | unchanged | `format: "email"`/`format: "uri"`/`pattern` |
+| pipe `description` | unchanged (metadata; never executed) | `description` (last-wins when piped repeatedly) |
 | pipe `transform`/`brand`/`check`/`readonly` (+ `checkAsync`/`transformAsync`) | **output type** (resolved) | ⚠ not representable: warns, keeps the base constraints |
 
 ⚠ = lossy or unrepresentable in JSON Schema; the emitter records a warning.

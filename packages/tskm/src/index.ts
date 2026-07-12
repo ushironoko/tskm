@@ -110,6 +110,7 @@ export type {
 export type { Infer, InferInput, InferOutput } from "./types/infer.ts"
 export type { Issue, IssuePathItem, IssueSeverity } from "./types/issue.ts"
 export type {
+  BaseMetadata,
   BaseSchema,
   BaseSchemaAsync,
   BaseTransformation,

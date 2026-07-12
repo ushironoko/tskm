@@ -71,4 +71,30 @@ export interface BaseTransformation<TInput, TOutput> {
   readonly "~run": (dataset: SuccessDataset<TInput>, config: Config) => OutputDataset<TOutput>
 }
 
-export type PipeItem<TInput, TOutput> = BaseValidation<TInput> | BaseTransformation<TInput, TOutput>
+/**
+ * A metadata action: annotates a schema without validating or transforming. It is
+ * never executed — `pipe`/`pipeAsync` drop metadata items from the run list at
+ * construction time, so there is no `~run` (and no `async` flag, which only exists
+ * to pick the awaiting strategy for `~run`).
+ *
+ * HAZARD: `~types` is type-level ONLY, mirroring `StandardProps.types`. No runtime
+ * field is added, so reading `action["~types"]` yields `undefined`. It exists so
+ * `TInput` is anchored without a value-level carrier; use it only as a type.
+ */
+export interface BaseMetadata<TInput> {
+  readonly kind: "metadata"
+  readonly type: string
+  /**
+   * Self-reference to the factory, for identity checks without `instanceof`.
+   * `never[]`/`unknown` instead of the `any` idiom above: `TInput` only occurs
+   * covariantly here (no `~run`), so contravariant `never` params and the
+   * `BaseMetadata<unknown>` top type admit every concrete factory without `any`.
+   */
+  readonly reference: (...args: never[]) => BaseMetadata<unknown>
+  readonly "~types"?: { readonly input: TInput; readonly output: TInput } | undefined
+}
+
+export type PipeItem<TInput, TOutput> =
+  | BaseValidation<TInput>
+  | BaseTransformation<TInput, TOutput>
+  | BaseMetadata<TInput>
