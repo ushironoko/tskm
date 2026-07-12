@@ -5,6 +5,7 @@ import { isReject } from "../types/config.ts"
 import type { OutputDataset, SuccessDataset, UnknownDataset } from "../types/dataset.ts"
 import type { InferInput, InferOutput } from "../types/infer.ts"
 import type {
+  BaseMetadata,
   BaseSchema,
   BaseSchemaAsync,
   BaseTransformation,
@@ -21,10 +22,13 @@ type AnyPipeItemAsync =
   | CheckActionAsync<any>
   | TransformActionAsync<any, any>
 
+/** Items `pipeAsync` accepts: runnable actions plus inert metadata (dropped at construction). */
+type AnyPipeItemAsyncOrMeta = AnyPipeItemAsync | BaseMetadata<unknown>
+
 /** Folds the item tuple, threading the type through each (sync or async) transformation. */
-type PipeOutput<TItems extends readonly AnyPipeItemAsync[], TAcc> = TItems extends readonly [
+type PipeOutput<TItems extends readonly AnyPipeItemAsyncOrMeta[], TAcc> = TItems extends readonly [
   infer THead,
-  ...infer TTail extends readonly AnyPipeItemAsync[],
+  ...infer TTail extends readonly AnyPipeItemAsyncOrMeta[],
 ]
   ? THead extends TransformActionAsync<any, infer TOut>
     ? PipeOutput<TTail, TOut>
@@ -35,7 +39,7 @@ type PipeOutput<TItems extends readonly AnyPipeItemAsync[], TAcc> = TItems exten
 
 export type SchemaWithPipeAsync<
   TSchema extends AnyBaseSchema,
-  TItems extends readonly AnyPipeItemAsync[],
+  TItems extends readonly AnyPipeItemAsyncOrMeta[],
 > = BaseSchemaAsync<InferInput<TSchema>, PipeOutput<TItems, InferOutput<TSchema>>> & {
   readonly pipe: readonly [TSchema, ...TItems]
 }
@@ -48,8 +52,11 @@ export type SchemaWithPipeAsync<
 // @__NO_SIDE_EFFECTS__
 export function pipeAsync<
   const TSchema extends AnyBaseSchema,
-  const TItems extends readonly AnyPipeItemAsync[],
+  const TItems extends readonly AnyPipeItemAsyncOrMeta[],
 >(schema: TSchema, ...items: TItems): SchemaWithPipeAsync<TSchema, TItems> {
+  // Metadata items have no `~run`; drop them from the run list at construction time,
+  // mirroring the sync `pipe`.
+  const steps = items.filter((item): item is AnyPipeItemAsync => item.kind !== "metadata")
   const result = {
     ...schema,
     async: true,
@@ -61,7 +68,7 @@ export function pipeAsync<
     },
     async "~run"(dataset: UnknownDataset, config: Config) {
       let current = (await schema["~run"](dataset, config)) as OutputDataset<unknown>
-      for (const item of items) {
+      for (const item of steps) {
         // Bail only on an ERROR-severity issue; a transform `"warning"` is non-fatal.
         if (hasErrorIssue(current.issues) && (isReject(config) || config.abortPipeEarly)) break
         if (item.kind === "transformation") {

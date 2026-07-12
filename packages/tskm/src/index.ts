@@ -4,6 +4,7 @@
 export { type Brand, type BrandAction, brand } from "./actions/brand.ts"
 export { type CheckAction, check } from "./actions/check.ts"
 export { type CheckActionAsync, checkAsync } from "./actions/checkAsync.ts"
+export { type DescriptionAction, description } from "./actions/description.ts"
 export { type EmailAction, email } from "./actions/email.ts"
 export { type IntegerAction, integer } from "./actions/integer.ts"
 export { type LengthAction, length } from "./actions/length.ts"
@@ -109,6 +110,7 @@ export type {
 export type { Infer, InferInput, InferOutput } from "./types/infer.ts"
 export type { Issue, IssuePathItem, IssueSeverity } from "./types/issue.ts"
 export type {
+  BaseMetadata,
   BaseSchema,
   BaseSchemaAsync,
   BaseTransformation,

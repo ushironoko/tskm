@@ -20,9 +20,9 @@ import { resolveWorker, runWorker, type SchemaWorkerEnvelope } from "./worker-ha
  * exported schema objects, walks them, and writes `*.schema.json`.
  *
  * Refinements that JSON Schema can express (min/max length, min/max value, integer,
- * multipleOf, email/url format, regex pattern) are mapped; `transform`/`brand` and
- * other non-representable actions are dropped with a warning. `lazy` becomes
- * `$ref`/`$defs`.
+ * multipleOf, email/url format, regex pattern, description metadata) are mapped;
+ * `transform`/`brand` and other non-representable actions are dropped with a
+ * warning. `lazy` becomes `$ref`/`$defs`.
  */
 
 export type JsonSchema = { [key: string]: unknown }
@@ -303,6 +303,11 @@ function applyItem(
     case "regex":
       if (isObject(requirement) && typeof requirement.source === "string") {
         out.pattern = requirement.source
+      }
+      return
+    case "description":
+      if (typeof requirement === "string") {
+        out.description = requirement
       }
       return
     default:

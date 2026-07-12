@@ -152,6 +152,67 @@ describe("schemaToJsonSchema — pipe refinements", () => {
   })
 })
 
+describe("schemaToJsonSchema — description metadata", () => {
+  const desc = (requirement: string) => ({
+    kind: "metadata",
+    type: "description",
+    requirement,
+  })
+
+  it("description on a string -> description keyword, no warning", () => {
+    const result = schemaToJsonSchema(pipe(s.string(), desc("a plain string")))
+    expect(result.schema).toEqual({ type: "string", description: "a plain string" })
+    expect(result.warnings).toEqual([])
+  })
+
+  it("description on a property lands on the property, not the parent", () => {
+    const schema = s.object({
+      id: pipe(s.string(), desc("unique identifier")),
+      name: s.string(),
+    })
+    const { schema: out } = schemaToJsonSchema(schema)
+    expect(out).toEqual({
+      type: "object",
+      properties: {
+        id: { type: "string", description: "unique identifier" },
+        name: { type: "string" },
+      },
+      required: ["id", "name"],
+      additionalProperties: false,
+    })
+  })
+
+  it("composes with constraint actions in the same pipe", () => {
+    const schema = pipe(
+      s.string(),
+      { kind: "validation", type: "min_length", requirement: 1 },
+      desc("non-empty text"),
+    )
+    expect(schemaToJsonSchema(schema).schema).toEqual({
+      type: "string",
+      minLength: 1,
+      description: "non-empty text",
+    })
+  })
+
+  it("stacks last-wins when piped multiple times", () => {
+    const schema = pipe(s.string(), desc("first"), desc("second"))
+    expect(schemaToJsonSchema(schema).schema).toEqual({
+      type: "string",
+      description: "second",
+    })
+  })
+
+  it("ignores a non-string requirement instead of emitting garbage", () => {
+    const schema = pipe(s.string(), {
+      kind: "metadata",
+      type: "description",
+      requirement: 42,
+    })
+    expect(schemaToJsonSchema(schema).schema).toEqual({ type: "string" })
+  })
+})
+
 describe("schemaToJsonSchema — lazy recursion", () => {
   it("terminates a self-referential lazy and emits $ref/$defs", () => {
     // A node referencing itself through a lazy getter — the classic recursive shape.

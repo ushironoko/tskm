@@ -2,12 +2,15 @@ import { describe, test } from "bun:test"
 import { expectTypeOf } from "expect-type"
 import {
   array,
+  type DescriptionAction,
+  description,
   type InferInput,
   type InferOutput,
   number,
   object,
   objectAsync,
   optional,
+  type PipeItem,
   parse,
   pipe,
   string,
@@ -40,6 +43,26 @@ describe("type inference", () => {
   test("optional widens the output with undefined", () => {
     const schema = object({ nick: optional(string()) })
     expectTypeOf<InferOutput<typeof schema>>().toEqualTypeOf<{ nick: string | undefined }>()
+  })
+})
+
+describe("description metadata", () => {
+  test("description without explicit type args keeps the pipe output type", () => {
+    const schema = pipe(string(), description("the query"))
+    expectTypeOf<InferOutput<typeof schema>>().toEqualTypeOf<string>()
+  })
+
+  test("description after a transform preserves the accumulated output type", () => {
+    const schema = pipe(
+      string(),
+      transform((s: string) => s.length),
+      description("character count"),
+    )
+    expectTypeOf<InferOutput<typeof schema>>().toEqualTypeOf<number>()
+  })
+
+  test("DescriptionAction is a member of the public PipeItem union", () => {
+    expectTypeOf<DescriptionAction<string>>().toExtend<PipeItem<string, string>>()
   })
 })
 
