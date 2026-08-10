@@ -291,6 +291,17 @@ describe("rootLevelKeys", () => {
     const keys = rootLevelKeys("{ a: 1 } & { b: 2 } | { c: 3 }")
     expect([keys.has("a"), keys.has("b"), keys.has("c")]).toEqual([true, true, true])
   })
+
+  it("treats string spans as opaque, even across escaped quotes and braces", () => {
+    // The `}` lives inside a string literal whose closing quote is escaped once (`\"`), so the
+    // span scanner must consume the escape and keep going — otherwise it would close the object
+    // early and drop `b`. Verifies the backslash-skip in the string scanner.
+    const keys = rootLevelKeys('{ a: "x\\"}"; b: string }')
+    expect([...keys].sort()).toEqual(["a", "b"])
+    // An escaped backslash inside a value must not swallow the following character either.
+    const keys2 = rootLevelKeys('{ label: "a\\\\b"; id: string }')
+    expect([...keys2].sort()).toEqual(["id", "label"])
+  })
 })
 
 describe("applyTier1 — non-object roots bearing a brand (the attack7 hole)", () => {

@@ -430,3 +430,39 @@ describe("jsonSchemaOutputPath", () => {
     )
   })
 })
+
+describe("schemaToJsonSchema — template literals", () => {
+  it("emits an anchored pattern plus the vendor extension when the schema carries one", () => {
+    const withPattern = {
+      kind: "schema",
+      type: "templateLiteral",
+      expects: "`id-${string}`",
+      pattern: "^id-.*$",
+    }
+    expect(schemaToJsonSchema(withPattern).schema).toEqual({
+      type: "string",
+      pattern: "^id-.*$",
+      "x-tskm-template": "`id-${string}`",
+    })
+  })
+
+  it("falls back to a bare string type (no pattern) when none is present", () => {
+    // A template-literal schema whose runtime `pattern` is absent still maps to a string; the
+    // structural `expects` is preserved as the vendor extension so richer consumers keep it.
+    const noPattern = {
+      kind: "schema",
+      type: "templateLiteral",
+      expects: "`id-${string}`",
+    }
+    expect(schemaToJsonSchema(noPattern).schema).toEqual({
+      type: "string",
+      "x-tskm-template": "`id-${string}`",
+    })
+    // When even `expects` is not a string, the extension degrades to `true`.
+    const bare = { kind: "schema", type: "templateLiteral" }
+    expect(schemaToJsonSchema(bare).schema).toEqual({
+      type: "string",
+      "x-tskm-template": true,
+    })
+  })
+})

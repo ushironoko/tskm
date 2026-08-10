@@ -721,3 +721,32 @@ describe("discoverSchemas — recursive self-annotation capture", () => {
     expect(alias?.recursiveAnnotation).toEqual({ name: "CatT", exported: false })
   })
 })
+
+describe("discoverSchemas — imports and callees that are not schema sources", () => {
+  it("ignores imports from modules that are not a schema source", () => {
+    // `./utils` and the default import are unrelated to any schema source, so the walker
+    // records nothing for them and they cannot turn a later call into a discovered schema.
+    const src = `
+      import { object, string } from "@tskm/core"
+      import { helper } from "./utils"
+      import defaultThing from "./other"
+      export const userSchema = object({ name: string() })
+    `
+    const { schemas, diagnostics } = discoverSchemas("a.ts", src)
+    expect(diagnostics).toHaveLength(0)
+    expect(schemas.map((s) => s.name)).toEqual(["userSchema"])
+  })
+
+  it("does not discover a call whose root identifier is not an imported schema factory", () => {
+    // `unknownFactory` is never imported, so its `.object(...)` call resolves to no source and
+    // is skipped; the genuine `object(...)` schema in the same file is still discovered.
+    const src = `
+      import { object } from "@tskm/core"
+      export const notASchema = unknownFactory.object({ n: 1 })
+      export const real = object({ id: object({}) })
+    `
+    const { schemas, diagnostics } = discoverSchemas("b.ts", src)
+    expect(diagnostics).toHaveLength(0)
+    expect(schemas.map((s) => s.name)).toEqual(["real"])
+  })
+})
