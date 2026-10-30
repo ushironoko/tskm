@@ -93,6 +93,42 @@ describe("tskm vite plugin", () => {
     }
   })
 
+  it("buildStart skips generate when the dev watcher owns the initial pass", async () => {
+    for (const watch of [undefined, true] as const) {
+      const fake = makeDeps()
+      const plugin = createTskmPlugin({ watch }, fake.deps)
+
+      callHook(plugin.configResolved, { root: "/abs/project", command: "serve" } as ResolvedConfig)
+      await callHook<Promise<void>>(plugin.buildStart)
+
+      expect(fake.generateCalls).toEqual([])
+    }
+  })
+
+  it("buildStart still generates in dev when the watcher is disabled", async () => {
+    const fake = makeDeps()
+    const plugin = createTskmPlugin({ watch: false }, fake.deps)
+
+    callHook(plugin.configResolved, { root: "/abs/project", command: "serve" } as ResolvedConfig)
+    await callHook<Promise<void>>(plugin.buildStart)
+
+    expect(fake.generateCalls).toEqual([
+      { root: "/abs/project", mode: undefined, pretty: undefined },
+    ])
+  })
+
+  it("buildStart generates for a production build", async () => {
+    const fake = makeDeps()
+    const plugin = createTskmPlugin({ watch: true }, fake.deps)
+
+    callHook(plugin.configResolved, { root: "/abs/project", command: "build" } as ResolvedConfig)
+    await callHook<Promise<void>>(plugin.buildStart)
+
+    expect(fake.generateCalls).toEqual([
+      { root: "/abs/project", mode: undefined, pretty: undefined },
+    ])
+  })
+
   it("buildStart calls generate with the resolved root/mode/pretty", async () => {
     const fake = makeDeps()
     const options: TskmPluginOptions = { mode: "inplace", pretty: false }
