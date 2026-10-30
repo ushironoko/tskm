@@ -10,6 +10,12 @@ import { tskmError } from "../utils/errors.ts"
  * rest of the scope. Throws a {@link tskmError} on failure. Sync-only — async
  * schemas are a compile-time error (use the async surface instead). A warning-only
  * parse is a success and does not throw.
+ *
+ * The assertion narrows the original value to `InferOutput`. That is unsound
+ * for a schema that transforms the value (`preprocess`, `coerce`, `transform`):
+ * `assert(coerce.number(), "8080")` types the string as `number` while the
+ * runtime value is still `"8080"`. For schemas that contain a transformation,
+ * use the output of `parse` / `safeParse`, not the original value.
  */
 export function assert<const TSchema extends BaseSchema<unknown, unknown>>(
   schema: TSchema,

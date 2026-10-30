@@ -213,6 +213,33 @@ describe("schemaToJsonSchema — description metadata", () => {
   })
 })
 
+describe("schemaToJsonSchema — preprocess", () => {
+  it("emits the inner output shape and warns that the input accepts any value", () => {
+    const result = schemaToJsonSchema({
+      kind: "schema",
+      type: "preprocess",
+      wrapped: s.number(),
+    })
+    expect(result.schema).toEqual({ type: "number" })
+    expect(result.warnings).toEqual([
+      "tskm: preprocess changes the value before validation; emitted the output shape; input accepts any value.",
+    ])
+  })
+
+  it("folds pipe constraints onto the inner output shape", () => {
+    const schema = pipe(
+      { kind: "schema", type: "preprocess", wrapped: s.number() },
+      { kind: "validation", type: "min_value", requirement: 1 },
+      { kind: "validation", type: "max_value", requirement: 65535 },
+    )
+    const result = schemaToJsonSchema(schema)
+    expect(result.schema).toEqual({ type: "number", minimum: 1, maximum: 65535 })
+    expect(result.warnings.some((warning) => warning.includes("emitted the output shape"))).toBe(
+      true,
+    )
+  })
+})
+
 describe("schemaToJsonSchema — lazy recursion", () => {
   it("terminates a self-referential lazy and emits $ref/$defs", () => {
     // A node referencing itself through a lazy getter — the classic recursive shape.

@@ -127,9 +127,26 @@ export type User = {
 import type { User } from "./user.schema.gen"
 ```
 
-Schemas: `string number boolean bigint date literal templateLiteral null_ undefined_ any unknown never_ picklist object exactObject array record tuple union discriminatedUnion optional nullable nullish lazy recursive` (+ async `objectAsync` `exactObjectAsync` `arrayAsync` `unionAsync` `discriminatedUnionAsync` `recordAsync`).
+Schemas: `string number boolean bigint date literal templateLiteral null_ undefined_ any unknown never_ picklist object exactObject array record tuple union discriminatedUnion optional nullable nullish lazy recursive preprocess` (+ async `objectAsync` `exactObjectAsync` `arrayAsync` `unionAsync` `discriminatedUnionAsync` `recordAsync` `preprocessAsync`). `coerce.string` / `number` / `boolean` / `bigint` / `date` are `preprocess` helpers.
 Actions (via `pipe`): `minLength maxLength length minValue maxValue integer multipleOf email url regex nonEmpty check transform brand readonly description` (+ `checkAsync` `transformAsync`).
 Methods: `pipe parse safeParse is assert fallback` (+ `parseAsync safeParseAsync pipeAsync`).
+
+**Coerce and preprocess.** `transform` runs only after validation has succeeded. To convert a value *before* validation (CLI flags, environment variables), wrap the schema with `preprocess`, or use the Zod-compatible `coerce` helpers. The input type is `unknown`. The output type is the inner schema's output. `is` / `assert` still narrow the original value to that output type; when the schema transforms, read the output of `parse` / `safeParse` instead.
+
+```ts
+import { boolean, coerce, maxValue, minValue, pipe, preprocess, parse } from "@tskm/core"
+
+const port = pipe(coerce.number(), minValue(1), maxValue(65535))
+parse(port, "8080") // 8080
+
+// coerce.boolean() is Boolean(value). Boolean("false") === true.
+// String flags need an explicit preprocess:
+const verbose = preprocess((value) => {
+  if (typeof value !== "string") return value
+  return value === "true" || value === "1"
+}, boolean())
+parse(verbose, "false") // false
+```
 
 ## Issue severity and warnings
 
