@@ -122,6 +122,8 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
       // it has never built (sequential client-then-ssr, even after `buildEnd`)
       // or the wave is still open (the other environment has not `buildEnd`ed,
       // so a shared-file rebuild can share one generate).
+      // A never-built environment also joins a closed wave. If buildApp builds client,
+      // rewrites schema sources, then builds ssr for the first time, ssr shares that stale pass.
       if (wave && !wave.consumed.has(env) && (firstTime || !wave.closed)) {
         wave.consumed.add(env)
         seen.add(env)
