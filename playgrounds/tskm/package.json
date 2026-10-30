@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "@tskm/compiler": "workspace:*",
-    "@typescript/native-preview": "7.0.0-dev.20260601.1",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "@types/react": "19.2.0",
     "@types/react-dom": "19.2.0",
     "@vitejs/plugin-react": "5.1.1",

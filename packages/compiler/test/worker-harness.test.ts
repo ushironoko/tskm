@@ -196,19 +196,30 @@ describe("runSchemaWorker — guard branches (in-process)", () => {
     const savedExit = process.exitCode
     const savedWrite = process.stderr.write
     let captured = ""
+    // Read after the worker runs and before restore, so the assertion still sees the
+    // non-zero code this branch is required to set.
+    let exitCode: number | undefined
     try {
+      // Known baseline. Bun (1.3.13) ignores `process.exitCode = undefined`, so a prior
+      // non-zero code would otherwise survive into this case and make the assertion tautological.
+      process.exitCode = 0
       process.argv = [savedArgv[0] as string, savedArgv[1] as string]
       process.stderr.write = ((chunk: string | Uint8Array) => {
         captured += String(chunk)
         return true
       }) as typeof process.stderr.write
       await runSchemaWorker((name) => ({ name }))
+      exitCode = process.exitCode
     } finally {
       process.argv = savedArgv
       process.stderr.write = savedWrite
-      process.exitCode = savedExit
+      // Bun (1.3.13) does NOT clear a previously-set exitCode via `= undefined` (the
+      // property stays 1 and the process exits 1). Only a numeric assignment resets it.
+      // `savedExit` is undefined on a clean run, so fall back to 0.
+      process.exitCode = savedExit ?? 0
     }
     expect(captured).toContain("requires an envelope output path")
+    expect(exitCode).toBe(1)
   })
 
   it("reports a throwing user module through the envelope (exit stays 0)", async () => {
