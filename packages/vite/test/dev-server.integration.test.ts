@@ -4,7 +4,15 @@ import { tmpdir } from "node:os"
 import { dirname, join, relative } from "node:path"
 import { fileURLToPath } from "node:url"
 import { type GenerateResult, generate, watch } from "@tskm/compiler"
-import { build, createServer, type InlineConfig, type ViteDevServer } from "vite"
+import {
+  build,
+  createBuilder,
+  createServer,
+  type InlineConfig,
+  type Plugin,
+  type ViteBuilder,
+  type ViteDevServer,
+} from "vite"
 import { createTskmPlugin, type TskmPluginDeps, type TskmPluginOptions } from "../src/index.ts"
 
 // Counts real compiler passes through Vite's own `createServer` / `build`.
@@ -152,8 +160,14 @@ async function waitFor(predicate: () => boolean, budgetMs = 10_000): Promise<boo
   return predicate()
 }
 
-function devConfig(root: string, options: TskmPluginOptions, deps: TskmPluginDeps): InlineConfig {
+function devConfig(
+  root: string,
+  options: TskmPluginOptions,
+  deps: TskmPluginDeps,
+  extra: InlineConfig = {},
+): InlineConfig {
   return {
+    ...extra,
     root,
     configFile: false,
     logLevel: "silent",
@@ -169,6 +183,48 @@ function devConfig(root: string, options: TskmPluginOptions, deps: TskmPluginDep
       preTransformRequests: false,
     },
   }
+}
+
+function entry(root: string): string {
+  return join(root, "src/main.ts")
+}
+
+function multiEnvConfig(
+  root: string,
+  plugin: Plugin,
+  buildApp?: (builder: ViteBuilder) => Promise<void>,
+): InlineConfig {
+  const input = entry(root)
+  const environment = (outDir: string, ssr: boolean) => ({
+    build: {
+      outDir,
+      write: false as const,
+      minify: false as const,
+      ssr,
+      rolldownOptions: { input },
+    },
+  })
+  return {
+    root,
+    configFile: false,
+    logLevel: "silent",
+    plugins: [plugin],
+    environments: {
+      client: environment("dist/client", false),
+      ssr: environment("dist/ssr", true),
+    },
+    ...(buildApp ? { builder: { buildApp } } : {}),
+  }
+}
+
+function isWatcher(value: unknown): value is { close(): Promise<void> } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "on" in value &&
+    "close" in value &&
+    typeof value.close === "function"
+  )
 }
 
 async function listen(config: InlineConfig): Promise<ViteDevServer> {
@@ -239,6 +295,120 @@ describe("vite dev and build (real vite, real compiler)", () => {
     expect(observed.passes.map((pass) => pass.via)).toEqual(["generate"])
     expect(observed.closed()).toBe(0)
     expect(observed.passes[0]?.result.diagnostics).toEqual([])
+    expect(sidecarText(observed.passes[0])).toContain("age: number")
+  }, 20_000)
+
+  it("build generates again on the next build() in the same process", async () => {
+    const root = prepareFixture()
+    const observed = observeCompiler()
+    const plugin = createTskmPlugin({}, observed.deps)
+    const config: InlineConfig = {
+      root,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [plugin],
+      build: { write: false, outDir: join(root, "dist"), rolldownOptions: { input: entry(root) } },
+    }
+    await build(config)
+    await build(config)
+
+    expect(observed.passes.map((pass) => pass.via)).toEqual(["generate", "generate"])
+    expect(observed.passes.every((pass) => pass.result.diagnostics.length === 0)).toBe(true)
+  }, 20_000)
+
+  it("build --watch generates on the initial build and again after a module change", async () => {
+    const root = prepareFixture()
+    const observed = observeCompiler()
+    const built = await build({
+      root,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [createTskmPlugin({}, observed.deps)],
+      build: {
+        write: false,
+        watch: {},
+        rolldownOptions: { input: entry(root) },
+      },
+    })
+    if (!isWatcher(built)) {
+      throw new Error("expected vite build --watch to return a watcher")
+    }
+    disposers.push(async () => {
+      await built.close()
+    })
+
+    const started = await waitFor(() => observed.passes.length >= 1)
+    expect(started).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(observed.passes.map((pass) => pass.via)).toEqual(["generate"])
+
+    const before = observed.passes.length
+    const mainPath = entry(root)
+    const rebuilt = await waitFor(() => {
+      if (observed.passes.length > before) {
+        return true
+      }
+      writeFileSync(mainPath, `export const ready = ${Date.now()}\n`)
+      return false
+    })
+
+    expect(rebuilt).toBe(true)
+    expect(observed.passes.slice(before).every((pass) => pass.via === "generate")).toBe(true)
+    expect(observed.passes.at(-1)?.result.diagnostics).toEqual([])
+  }, 20_000)
+
+  it("createBuilder buildApp generates once for client and ssr", async () => {
+    const root = prepareFixture()
+    const observed = observeCompiler()
+    const plugin = createTskmPlugin({}, observed.deps)
+    const builder = await createBuilder(multiEnvConfig(root, plugin))
+    expect(Object.keys(builder.environments).sort()).toEqual(["client", "ssr"])
+    await builder.buildApp()
+
+    expect(observed.passes.map((pass) => pass.via)).toEqual(["generate"])
+    expect(observed.closed()).toBe(0)
+    expect(observed.passes[0]?.result.diagnostics).toEqual([])
+    expect(sidecarText(observed.passes[0])).toContain("age: number")
+
+    const again = await createBuilder(multiEnvConfig(root, plugin))
+    await again.buildApp()
+    expect(observed.passes.map((pass) => pass.via)).toEqual(["generate", "generate"])
+  }, 30_000)
+
+  it("builder.buildApp generates once when client and ssr build together", async () => {
+    const root = prepareFixture()
+    const observed = observeCompiler()
+    const builder = await createBuilder(
+      multiEnvConfig(root, createTskmPlugin({}, observed.deps), async (b) => {
+        const client = b.environments.client
+        const ssr = b.environments.ssr
+        if (!client || !ssr) {
+          throw new Error("expected client and ssr environments")
+        }
+        await Promise.all([b.build(client), b.build(ssr)])
+      }),
+    )
+    await builder.buildApp()
+
+    expect(observed.passes.map((pass) => pass.via)).toEqual(["generate"])
+    expect(sidecarText(observed.passes[0])).toContain("age: number")
+  }, 20_000)
+
+  it("dev with client and ssr environments generates once", async () => {
+    const root = prepareFixture()
+    const observed = observeCompiler()
+    const server = await listen(
+      devConfig(root, {}, observed.deps, {
+        environments: { client: {}, ssr: {} },
+      }),
+    )
+    await server.ssrLoadModule("/src/main.ts")
+    await server.environments.ssr?.pluginContainer.buildStart()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(Object.keys(server.environments).sort()).toEqual(["client", "ssr"])
+    expect(observed.passes.map((pass) => pass.via)).toEqual(["watch"])
+    expect(observed.closed()).toBe(0)
     expect(sidecarText(observed.passes[0])).toContain("age: number")
   }, 20_000)
 })

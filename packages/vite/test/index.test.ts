@@ -87,7 +87,9 @@ describe("tskm vite plugin", () => {
   it("returns a plugin named tskm with function hooks", () => {
     for (const plugin of [tskm(), createTskmPlugin({}, makeDeps().deps)]) {
       expect(plugin.name).toBe("tskm")
+      expect(plugin.sharedDuringBuild).toBe(true)
       expect(typeof plugin.buildStart).toBe("function")
+      expect(typeof plugin.buildApp).toBe("function")
       expect(typeof plugin.configResolved).toBe("function")
       expect(typeof plugin.configureServer).toBe("function")
     }
@@ -127,6 +129,107 @@ describe("tskm vite plugin", () => {
     expect(fake.generateCalls).toEqual([
       { root: "/abs/project", mode: undefined, pretty: undefined },
     ])
+  })
+
+  it("a single-environment build generates again after buildEnd", async () => {
+    const fake = makeDeps()
+    const plugin = createTskmPlugin({}, fake.deps)
+
+    callHook(plugin.configResolved, { root: "/abs/project", command: "build" } as ResolvedConfig)
+    await callHook<Promise<void>>(plugin.buildStart)
+    await callHook<Promise<void>>(plugin.buildEnd)
+    await callHook<Promise<void>>(plugin.buildStart)
+
+    expect(fake.generateCalls).toHaveLength(2)
+  })
+
+  it("buildApp shares one generate across sequential environment builds", async () => {
+    const fake = makeDeps()
+    const plugin = createTskmPlugin({}, fake.deps)
+    const resolved = { root: "/abs/project", command: "build" } as ResolvedConfig
+    // createBuilder resolves config once for the app and once per environment
+    // before buildApp. None of those may compile.
+    callHook(plugin.configResolved, resolved)
+    callHook(plugin.configResolved, resolved)
+    callHook(plugin.configResolved, resolved)
+    callHook(plugin.buildApp, { environments: { client: {}, ssr: {} } })
+
+    await callHook<Promise<void>>(plugin.buildStart)
+    await callHook<Promise<void>>(plugin.buildEnd)
+    await callHook<Promise<void>>(plugin.buildStart)
+    expect(fake.generateCalls).toHaveLength(1)
+
+    await callHook<Promise<void>>(plugin.buildEnd)
+    await callHook<Promise<void>>(plugin.buildStart)
+    expect(fake.generateCalls).toHaveLength(2)
+  })
+
+  it("overlapping environment buildStarts share one generate", async () => {
+    const fake = makeDeps()
+    const plugin = createTskmPlugin({}, fake.deps)
+    callHook(plugin.buildApp, { environments: { client: {}, ssr: {} } })
+
+    await Promise.all([
+      callHook<Promise<void>>(plugin.buildStart),
+      callHook<Promise<void>>(plugin.buildStart),
+    ])
+    expect(fake.generateCalls).toHaveLength(1)
+
+    await Promise.all([
+      callHook<Promise<void>>(plugin.buildEnd),
+      callHook<Promise<void>>(plugin.buildEnd),
+    ])
+    await callHook<Promise<void>>(plugin.buildStart)
+    expect(fake.generateCalls).toHaveLength(2)
+  })
+
+  it("configResolved starts a new generate after a partial multi-environment build", async () => {
+    const fake = makeDeps()
+    const plugin = createTskmPlugin({}, fake.deps)
+
+    callHook(plugin.buildApp, { environments: { client: {}, ssr: {} } })
+    await callHook<Promise<void>>(plugin.buildStart)
+    expect(fake.generateCalls).toHaveLength(1)
+
+    callHook(plugin.configResolved, { root: "/abs/project", command: "build" } as ResolvedConfig)
+    await callHook<Promise<void>>(plugin.buildStart)
+    expect(fake.generateCalls).toHaveLength(2)
+  })
+
+  it("a failed generate is not reused by the next build", async () => {
+    let calls = 0
+    const plugin = createTskmPlugin(
+      {},
+      {
+        generate: async () => {
+          calls += 1
+          if (calls === 1) {
+            throw new Error("tsgo failed")
+          }
+          return emptyResult
+        },
+        watch: async () => ({ close: async () => {} }),
+      },
+    )
+
+    callHook(plugin.configResolved, { root: "/abs/project", command: "build" } as ResolvedConfig)
+    await expect(callHook<Promise<void>>(plugin.buildStart)).rejects.toThrow("tsgo failed")
+    await callHook<Promise<void>>(plugin.buildEnd)
+    await callHook<Promise<void>>(plugin.buildStart)
+    expect(calls).toBe(2)
+  })
+
+  it("dev shutdown does not consume a later production generate", async () => {
+    const fake = makeDeps()
+    const plugin = createTskmPlugin({}, fake.deps)
+
+    callHook(plugin.configResolved, { root: "/abs/project", command: "serve" } as ResolvedConfig)
+    await callHook<Promise<void>>(plugin.buildStart)
+    await callHook<Promise<void>>(plugin.buildEnd)
+
+    callHook(plugin.configResolved, { root: "/abs/project", command: "build" } as ResolvedConfig)
+    await callHook<Promise<void>>(plugin.buildStart)
+    expect(fake.generateCalls).toHaveLength(1)
   })
 
   it("buildStart calls generate with the resolved root/mode/pretty", async () => {

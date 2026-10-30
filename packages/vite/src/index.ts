@@ -1,6 +1,6 @@
 import type { GenerateResult, TskmMode, WatchController } from "@tskm/compiler"
 import { generate, watch } from "@tskm/compiler"
-import type { Plugin, ResolvedConfig } from "vite"
+import type { Plugin, ResolvedConfig, ViteBuilder } from "vite"
 
 export interface TskmPluginOptions {
   readonly root?: string
@@ -48,6 +48,15 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
   let command: ResolvedConfig["command"] | undefined
   let controller: WatchController | undefined
 
+  // `buildApp` calls `buildStart` once per environment (client, ssr, …). Those
+  // calls share one in-flight `generate()` until every environment has reached
+  // `buildEnd`. `sharedDuringBuild` keeps this closure shared; Vite still invokes
+  // the hooks per environment. A single-environment build expects one `buildEnd`,
+  // which drops the pass so `build --watch` compiles again on the next rebuild.
+  // The next `build()` also drops it from `configResolved`.
+  let environmentsThisBuild = 1
+  let wave: { readonly pass: Promise<void>; finished: number } | undefined
+
   const resolveRoot = (): string | undefined => options.root ?? viteRoot
 
   // `vite dev` runs both hooks. The compiler watcher generates once as it starts
@@ -56,6 +65,11 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
   // never calls `configureServer`, and still generates from `buildStart`.
   const devWatcherOwnsInitialGenerate = (): boolean =>
     command === "serve" && options.watch !== false
+
+  const clearWave = (): void => {
+    wave = undefined
+    environmentsThisBuild = 1
+  }
 
   const closeWatcher = async (): Promise<void> => {
     if (!controller) {
@@ -66,24 +80,49 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
     await current.close()
   }
 
+  const generateOnce = (): Promise<void> => {
+    if (!wave) {
+      wave = {
+        finished: 0,
+        pass: deps
+          .generate({
+            root: resolveRoot(),
+            mode: options.mode,
+            pretty: options.pretty,
+          })
+          .then(logResult),
+      }
+    }
+    return wave.pass
+  }
+
   return {
     name: "tskm",
+    // Share this instance across environments. The flag does not skip the
+    // per-environment `buildStart`; `generateOnce` does.
+    sharedDuringBuild: true,
 
     configResolved(config: ResolvedConfig) {
       viteRoot = config.root
       command = config.command
+      // Each `build()` / dev server resolves config before `buildStart`.
+      // Multi-environment `createBuilder` also resolves once per environment,
+      // still before `buildApp`.
+      clearWave()
+    },
+
+    // Plain hook (not `order: 'post'`). Vite runs `builder.buildApp` — the
+    // code that actually builds each environment — before post hooks.
+    async buildApp(builder: ViteBuilder) {
+      clearWave()
+      environmentsThisBuild = Math.max(1, Object.keys(builder.environments).length)
     },
 
     async buildStart() {
       if (devWatcherOwnsInitialGenerate()) {
         return
       }
-      const result = await deps.generate({
-        root: resolveRoot(),
-        mode: options.mode,
-        pretty: options.pretty,
-      })
-      logResult(result)
+      await generateOnce()
     },
 
     async configureServer(server) {
@@ -108,6 +147,12 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
     },
 
     async buildEnd() {
+      if (wave) {
+        wave.finished += 1
+        if (wave.finished >= environmentsThisBuild) {
+          clearWave()
+        }
+      }
       await closeWatcher()
     },
 
