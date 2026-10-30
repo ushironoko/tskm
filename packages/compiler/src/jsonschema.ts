@@ -191,6 +191,15 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): JsonSchema {
     case "optional":
       // The object walker drops the key from `required`; the value type is the wrapped one.
       return walk(schema.wrapped, ctx)
+    case "preprocess":
+      // Output shape only. The coercion function is not representable, and the
+      // input side accepts any value (`unknown`).
+      // When StandardJSONSchemaV1 (Standard Schema 1.1) input-direction support is
+      // implemented, preprocess must emit `{}` for input.
+      ctx.warnings.push(
+        "tskm: preprocess changes the value before validation; emitted the output shape; input accepts any value.",
+      )
+      return walk(schema.wrapped, ctx)
     case "nullable":
       return { anyOf: [walk(schema.wrapped, ctx), { type: "null" }] }
     case "nullish":
