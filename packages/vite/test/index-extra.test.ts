@@ -130,17 +130,18 @@ describe("tskm vite plugin — lifecycle teardown", () => {
     expect(fake.controller.closed).toBe(0)
   })
 
-  it("the configureServer teardown function closes the watcher", async () => {
+  it("configureServer does not return a startup hook that closes the watcher", async () => {
     const fake = makeDeps()
     const plugin = createTskmPlugin({}, fake.deps)
     const { server } = makeServer()
 
-    const teardown = await callHook<Promise<() => Promise<void>>>(plugin.configureServer, server)
-    expect(typeof teardown).toBe("function")
+    // Vite runs this return value during startup, after internal middleware is
+    // installed. Leave it unset so the watcher stays up until httpServer close,
+    // buildEnd, or closeBundle.
+    const postHook = await callHook<Promise<unknown>>(plugin.configureServer, server)
+    expect(postHook).toBeUndefined()
+    expect(fake.watchCalls()).toBe(1)
     expect(fake.controller.closed).toBe(0)
-
-    await teardown()
-    await waitFor(() => expect(fake.controller.closed).toBe(1))
   })
 
   it("configureServer returns undefined (no teardown) when watch is disabled", async () => {
