@@ -217,6 +217,92 @@ function multiEnvConfig(
   }
 }
 
+function writeSplitEntries(root: string): {
+  clientOnly: string
+  ssrOnly: string
+  shared: string
+} {
+  const clientOnly = join(root, "src/client-only.ts")
+  const ssrOnly = join(root, "src/ssr-only.ts")
+  const shared = join(root, "src/shared.ts")
+  writeFileSync(clientOnly, "export const clientMark = 1\n")
+  writeFileSync(ssrOnly, "export const ssrMark = 1\n")
+  writeFileSync(shared, "export const shared = 1\n")
+  writeFileSync(
+    join(root, "src/client-entry.ts"),
+    `import { clientMark } from "./client-only.ts"\nimport { shared } from "./shared.ts"\nexport const client = clientMark + shared\n`,
+  )
+  writeFileSync(
+    join(root, "src/ssr-entry.ts"),
+    `import { ssrMark } from "./ssr-only.ts"\nimport { shared } from "./shared.ts"\nexport const ssr = ssrMark + shared\n`,
+  )
+  return { clientOnly, ssrOnly, shared }
+}
+
+async function watchClientAndSsr(root: string, plugin: Plugin): Promise<void> {
+  const watched = (name: "client" | "ssr", file: string) => ({
+    build: {
+      outDir: `dist/${name}`,
+      write: false as const,
+      minify: false as const,
+      emptyOutDir: false,
+      ssr: name === "ssr",
+      watch: {},
+      rolldownOptions: { input: join(root, file) },
+    },
+  })
+  const builder = await createBuilder({
+    root,
+    configFile: false,
+    logLevel: "silent",
+    plugins: [plugin],
+    environments: {
+      client: watched("client", "src/client-entry.ts"),
+      ssr: watched("ssr", "src/ssr-entry.ts"),
+    },
+    builder: {
+      async buildApp(b) {
+        const client = b.environments.client
+        const ssr = b.environments.ssr
+        if (!client || !ssr) {
+          throw new Error("expected client and ssr environments")
+        }
+        const results = await Promise.all([b.build(client), b.build(ssr)])
+        for (const result of results) {
+          if (!isWatcher(result)) {
+            throw new Error("expected each environment watch build to return a watcher")
+          }
+          disposers.push(async () => {
+            await result.close()
+          })
+        }
+      },
+    },
+  })
+  await builder.buildApp()
+}
+
+async function changeUntilGenerate(
+  file: string,
+  observed: { passes: readonly unknown[] },
+  source: (tick: number) => string,
+): Promise<number> {
+  const before = observed.passes.length
+  let tick = 0
+  const fired = await waitFor(() => {
+    if (observed.passes.length > before) {
+      return true
+    }
+    tick += 1
+    writeFileSync(file, source(tick))
+    return false
+  })
+  if (!fired) {
+    throw new Error(`timed out waiting for a generate after editing ${file}`)
+  }
+  return observed.passes.length
+}
+
 function isWatcher(value: unknown): value is { close(): Promise<void> } {
   return (
     typeof value === "object" &&
@@ -411,4 +497,91 @@ describe("vite dev and build (real vite, real compiler)", () => {
     expect(observed.closed()).toBe(0)
     expect(sidecarText(observed.passes[0])).toContain("age: number")
   }, 20_000)
+
+  it("buildApp that builds only client still generates on the next client build", async () => {
+    const root = prepareFixture()
+    const observed = observeCompiler()
+    const input = entry(root)
+    const environment = (outDir: string, ssr: boolean) => ({
+      build: {
+        outDir,
+        write: false as const,
+        minify: false as const,
+        ssr,
+        rolldownOptions: { input },
+      },
+    })
+    const builder = await createBuilder({
+      root,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [createTskmPlugin({}, observed.deps)],
+      environments: {
+        client: environment("dist/client", false),
+        ssr: environment("dist/ssr", true),
+      },
+      builder: {
+        async buildApp(b) {
+          const client = b.environments.client
+          if (!client) {
+            throw new Error("expected a client environment")
+          }
+          await b.build(client)
+          await b.build(client)
+        },
+      },
+    })
+    await builder.buildApp()
+
+    expect(observed.passes.map((pass) => pass.via)).toEqual(["generate", "generate"])
+    expect(observed.passes.every((pass) => pass.result.diagnostics.length === 0)).toBe(true)
+  }, 20_000)
+
+  it("multi-env watch regenerates when only the client module changes, twice", async () => {
+    const root = prepareFixture()
+    const observed = observeCompiler()
+    const files = writeSplitEntries(root)
+    await watchClientAndSsr(root, createTskmPlugin({}, observed.deps))
+
+    const started = await waitFor(() => observed.passes.length >= 1)
+    expect(started).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(observed.passes.map((pass) => pass.via)).toEqual(["generate"])
+
+    const afterFirst = await changeUntilGenerate(files.clientOnly, observed, (tick) => {
+      return `export const clientMark = ${tick}\n`
+    })
+    expect(afterFirst).toBeGreaterThan(1)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const settled = observed.passes.length
+
+    const afterSecond = await changeUntilGenerate(files.clientOnly, observed, (tick) => {
+      return `export const clientMark = ${1000 + tick}\n`
+    })
+    expect(afterSecond).toBeGreaterThan(settled)
+    expect(observed.passes.every((pass) => pass.via === "generate")).toBe(true)
+    expect(observed.passes.at(-1)?.result.diagnostics).toEqual([])
+  }, 30_000)
+
+  it("a shared module change rebuilds client and ssr with one generate", async () => {
+    const root = prepareFixture()
+    const observed = observeCompiler()
+    const files = writeSplitEntries(root)
+    await watchClientAndSsr(root, createTskmPlugin({}, observed.deps))
+
+    const started = await waitFor(() => observed.passes.length >= 1)
+    expect(started).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const before = observed.passes.length
+    expect(before).toBe(1)
+
+    const after = await changeUntilGenerate(files.shared, observed, (tick) => {
+      return `export const shared = ${tick}\n`
+    })
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    expect(after).toBe(before + 1)
+    expect(observed.passes.length).toBe(before + 1)
+    expect(observed.passes.every((pass) => pass.via === "generate")).toBe(true)
+  }, 30_000)
 })
