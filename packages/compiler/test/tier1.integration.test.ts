@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
 import { createTsgoClient } from "../src/tsgo-client.ts"
 import { verifyFixpoint } from "../src/verify-splice.ts"
+import { testTsgoExecutable, withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
 // Tier-1 end-to-end: transform-bearing recursive roots run sentinel unroll ->
@@ -42,12 +43,12 @@ describe.skipIf(!bun)("Tier-1 sentinel splice (real tsgo + real worker)", () => 
   it("splices checker-resolved transform outputs into recursive aliases (S2-S5)", async () => {
     const result = await generate({
       root: fixtureRoot,
-      config: {
+      config: withTestTsgo({
         mode: "sidecar",
         include: ["src/*.schema.ts"],
         tsconfig: "tsconfig.json",
         worker: { execPath: bun },
-      },
+      }),
     })
     expect(result.files.length).toBe(7)
 
@@ -131,6 +132,7 @@ export const probes = [s2, s3a, s3b] as const
     const client = createTsgoClient({
       cwd: fixtureRoot,
       tsconfigPath: `${fixtureRoot}/tsconfig.json`,
+      executable: testTsgoExecutable(),
     })
     try {
       const source = src("s2.schema.ts")

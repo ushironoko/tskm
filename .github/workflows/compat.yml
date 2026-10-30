@@ -1,0 +1,326 @@
+# Checker compatibility. Not triggered by pull_request or push, so a failure
+# cannot block a merge.
+#
+# `@typescript/native-preview@latest` is frozen (7.0.0-dev.20260707.2 as of
+# 2026-10-30). A daily @latest run would not notice breakage. The matrix
+# tracks `@corsa-bind/napi@beta` against three tsgo lines: the lockfile pin,
+# `typescript@beta` (the 7.1 RC / stable line), and `typescript@next` (protocol
+# changes show up here first). A pinned baseline cell stays so a beta-only
+# failure is distinguishable from a broken suite. Pin cells keep the lockfile's
+# native-preview and do not float `@latest`.
+#
+# Schedule failure mail goes only to the person who last modified this file
+# (GitHub's schedule notification rule). This workflow does not open issues or
+# take any write permission.
+name: Compat
+
+on:
+  schedule:
+    # Daily, off the hour, so it does not land on the same minute as other jobs.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+# A manual run can replace an in-flight daily run on the same ref.
+concurrency:
+  group: compat-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compat:
+    name: ${{ matrix.title }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: corsa-beta-pin
+            title: corsa beta x pinned native-preview
+            corsa: beta
+            tsgo: pin
+            typescript_tag: ""
+          # 7.1 RC (2026-11-10) and stable (2026-11-24) follow this dist-tag.
+          - id: corsa-beta-ts-beta
+            title: corsa beta x typescript beta
+            corsa: beta
+            tsgo: typescript
+            typescript_tag: beta
+          # Nightly. Picks up protocol changes before they reach beta.
+          - id: corsa-beta-ts-next
+            title: corsa beta x typescript next
+            corsa: beta
+            tsgo: typescript
+            typescript_tag: next
+          - id: pin
+            title: pinned baseline
+            corsa: pin
+            tsgo: pin
+            typescript_tag: ""
+    env:
+      COMPAT_CELL: ${{ matrix.id }}
+      COMPAT_CORSA: ${{ matrix.corsa }}
+      COMPAT_TSGO: ${{ matrix.tsgo }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      # bun-version is read from package.json "packageManager" (bun@1.3.13) automatically.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      # --ignore-scripts blocks dependency lifecycle scripts (the preinstall/postinstall
+      # vector used by Shai-Hulud-class worms). Safe here: the native deps ship prebuilt
+      # binaries via os/cpu-constrained optionalDependencies with no lifecycle scripts.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      # Fail if install mutated the lockfile (frozen install already forbids it; this
+      # makes a tampered/desynced bun.lock an explicit, visible failure). Later steps
+      # may rewrite the lockfile; that rewrite stays on the runner.
+      - name: Verify lockfile is unchanged
+        run: git diff --exit-code bun.lock
+
+      # @corsa-bind/napi is the Corsa client (CorsaApiClient). `beta` is the
+      # dist-tag (2.x), not `latest` (1.15, which matches the pin's generation).
+      # Only the compiler manifest is updated; resolution starts there.
+      - name: Swap in @corsa-bind/napi@beta
+        if: matrix.corsa == 'beta'
+        run: |
+          set -euo pipefail
+          echo "npm dist-tag beta @corsa-bind/napi=$(npm view @corsa-bind/napi@beta version)"
+          bun add --exact --ignore-scripts @corsa-bind/napi@beta --cwd packages/compiler
+
+      # typescript@beta and typescript@next ship the 7.1 tsgo. The native binary
+      # is NOT lib/tsgo: getExePath names the bin `tsc` and loads
+      # `@typescript/typescript-<platform>-<arch>/lib/tsc`. Installed outside the
+      # workspace so the repo's typescript pin and lockfile stay put. The dist-tag
+      # is the only difference between those two cells. Integration tests read
+      # TSKM_TEST_TSGO_EXECUTABLE and pass it to resolveTsgoExecutable.
+      - name: Install typescript tsgo
+        if: matrix.tsgo == 'typescript'
+        env:
+          TYPESCRIPT_DIST_TAG: ${{ matrix.typescript_tag }}
+        run: |
+          set -euo pipefail
+          tag="$TYPESCRIPT_DIST_TAG"
+          echo "npm dist-tag ${tag} typescript=$(npm view "typescript@${tag}" version)"
+          probe="${RUNNER_TEMP}/typescript-${tag}"
+          mkdir -p "$probe"
+          printf '%s\n' '{"name":"tsgo-probe","private":true}' > "$probe/package.json"
+          bun add --exact --ignore-scripts "typescript@${tag}" --cwd "$probe"
+          bun --cwd "$probe" - <<'EOF'
+          import { spawnSync } from "node:child_process"
+          import { appendFileSync, existsSync } from "node:fs"
+          import { createRequire } from "node:module"
+          import { dirname, join } from "node:path"
+
+          const tag = process.env.TYPESCRIPT_DIST_TAG
+          const dir = process.cwd()
+          const require = createRequire(join(dir, "package.json"))
+          const typescript = require("typescript/package.json")
+          const metaRequire = createRequire(require.resolve("typescript/package.json"))
+          const platName = `@typescript/typescript-${process.platform}-${process.arch}`
+          const platPath = metaRequire.resolve(`${platName}/package.json`)
+          const exe = join(dirname(platPath), "lib", "tsc")
+          if (!existsSync(exe)) {
+            console.error(`typescript@${tag} native binary not found at ${exe}`)
+            process.exit(1)
+          }
+          const ver = spawnSync(exe, ["--version"], { encoding: "utf8", timeout: 30_000 })
+          const text = `${ver.stdout ?? ""}${ver.stderr ?? ""}`.trim()
+          if (ver.status !== 0) {
+            console.error(`tsgo --version exited ${ver.status}: ${text}`)
+            process.exit(1)
+          }
+          console.log(`typescript@${tag} ${typescript.version}`)
+          console.log(`tsgo binary ${exe}`)
+          console.log(`tsgo --version: ${text}`)
+          const envFile = process.env.GITHUB_ENV
+          if (!envFile) {
+            console.error("GITHUB_ENV is not set")
+            process.exit(1)
+          }
+          appendFileSync(
+            envFile,
+            `TSKM_TEST_TSGO_EXECUTABLE=${exe}\nTYPESCRIPT_PROBE_DIR=${dir}\nTYPESCRIPT_VERSION=${typescript.version}\nTYPESCRIPT_DIST_TAG=${tag}\n`,
+          )
+          EOF
+
+      # Versions require() actually returns for @tskm/compiler, plus the tsgo
+      # path the integration tests will spawn. Printed before the tests so a
+      # failing log and the step summary both name the resolved versions.
+      - name: Record resolved checker versions
+        id: versions
+        run: |
+          bun - <<'EOF'
+          import { spawnSync } from "node:child_process"
+          import { appendFileSync, existsSync } from "node:fs"
+          import { createRequire } from "node:module"
+          import { dirname, join } from "node:path"
+          import { pathToFileURL } from "node:url"
+
+          const require = createRequire(join(process.cwd(), "packages/compiler/package.json"))
+
+          function resolvePkg(req, name) {
+            const path = req.resolve(`${name}/package.json`)
+            const pkg = req(path)
+            return { name, version: String(pkg.version), path }
+          }
+
+          function oneLine(value) {
+            return String(value).replace(/\r?\n/g, " ").trim()
+          }
+
+          const np = resolvePkg(require, "@typescript/native-preview")
+          const metaRequire = createRequire(np.path)
+          const platName = `@typescript/native-preview-${process.platform}-${process.arch}`
+          const plat = resolvePkg(metaRequire, platName)
+          const pinnedExe = join(dirname(plat.path), "lib", "tsgo")
+
+          const override = process.env.TSKM_TEST_TSGO_EXECUTABLE
+          const exe = override && override.trim() ? override.trim() : pinnedExe
+          const exeSource = override && override.trim() ? "TSKM_TEST_TSGO_EXECUTABLE" : "pinned native-preview"
+
+          const corsa = resolvePkg(require, "@corsa-bind/napi")
+          const corsaRequire = createRequire(corsa.path)
+          const corsaManifest = corsaRequire(corsa.path)
+
+          function preferredNative() {
+            const { platform, arch } = process
+            if (platform === "win32") return `@corsa-bind/napi-win32-${arch}-msvc`
+            if (platform === "linux") {
+              const ldd = spawnSync("ldd", ["--version"], { encoding: "utf8" })
+              const text = `${ldd.stdout ?? ""}\n${ldd.stderr ?? ""}`
+              const libc = /musl/i.test(text) ? "musl" : "gnu"
+              return `@corsa-bind/napi-linux-${arch}-${libc}`
+            }
+            return `@corsa-bind/napi-${platform}-${arch}`
+          }
+
+          const nativeName = preferredNative()
+          let corsaNative = `${nativeName}@unresolved`
+          try {
+            const native = resolvePkg(corsaRequire, nativeName)
+            corsaNative = `${native.name}@${native.version}`
+          } catch (error) {
+            const optional = Object.keys(corsaManifest.optionalDependencies ?? {})
+            corsaNative = `${nativeName}@unresolved (${oneLine(error instanceof Error ? error.message : error)}; optional: ${optional.join(", ") || "none"})`
+          }
+
+          let tsgoVersion = "unavailable"
+          let runtimeVersion = "unavailable"
+          const errors = []
+          if (!existsSync(exe)) {
+            errors.push(`tsgo binary not found at ${exe}`)
+          } else {
+            const ver = spawnSync(exe, ["--version"], { encoding: "utf8", timeout: 30_000 })
+            tsgoVersion = oneLine(`${ver.stdout ?? ""}${ver.stderr ?? ""}`) || "empty"
+            if (ver.status !== 0) errors.push(`tsgo --version exited ${ver.status}: ${tsgoVersion}`)
+          }
+          try {
+            const entry = require.resolve("@corsa-bind/napi")
+            const imported = await import(pathToFileURL(entry).href)
+            runtimeVersion =
+              typeof imported.version === "function" ? oneLine(imported.version()) : "no version() export"
+          } catch (error) {
+            errors.push(`failed to load @corsa-bind/napi: ${oneLine(error instanceof Error ? error.message : error)}`)
+          }
+
+          const cell = process.env.COMPAT_CELL ?? "unknown"
+          const typescriptTag = process.env.TYPESCRIPT_DIST_TAG || "n/a"
+          const typescriptVersion = process.env.TYPESCRIPT_VERSION || "n/a"
+          const report = [
+            `cell ${cell} corsa=${process.env.COMPAT_CORSA ?? "?"} tsgo=${process.env.COMPAT_TSGO ?? "?"}`,
+            `@corsa-bind/napi ${corsa.version}`,
+            `corsa native: ${corsaNative}`,
+            `corsa version(): ${runtimeVersion}`,
+            `@typescript/native-preview ${np.version}`,
+            `${plat.name} ${plat.version}`,
+            `pinned tsgo ${pinnedExe}`,
+            `tsgo used by tests (${exeSource}): ${exe}`,
+            `tsgo --version: ${tsgoVersion}`,
+            `typescript@${typescriptTag} ${typescriptVersion}`,
+          ]
+          for (const line of report) console.log(line)
+
+          const output = process.env.GITHUB_OUTPUT
+          if (output) {
+            const fields = {
+              cell,
+              native_preview: np.version,
+              platform: `${plat.name}@${plat.version}`,
+              pinned_exe: pinnedExe,
+              tsgo_path: exe,
+              tsgo_source: exeSource,
+              tsgo: tsgoVersion,
+              corsa: corsa.version,
+              corsa_native: corsaNative,
+              corsa_runtime: runtimeVersion,
+              typescript_tag: typescriptTag,
+              typescript_version: typescriptVersion,
+            }
+            appendFileSync(
+              output,
+              `${Object.entries(fields)
+                .map(([key, value]) => `${key}=${oneLine(value)}`)
+                .join("\n")}\n`,
+            )
+          }
+
+          const summary = process.env.GITHUB_STEP_SUMMARY
+          if (summary) {
+            const table = [
+              `### ${cell}`,
+              "",
+              "Resolved from `@tskm/compiler`, except the tsgo path below, which is what the integration tests spawn.",
+              "",
+              "| | resolved |",
+              "| --- | --- |",
+              `| \`@corsa-bind/napi\` | \`${corsa.version}\` |`,
+              `| corsa native addon | \`${corsaNative}\` |`,
+              `| \`version()\` | \`${runtimeVersion}\` |`,
+              `| \`@typescript/native-preview\` | \`${np.version}\` |`,
+              `| \`${plat.name}\` | \`${plat.version}\` |`,
+              `| pinned \`lib/tsgo\` | \`${pinnedExe}\` |`,
+              `| tsgo used by tests | \`${exe}\` |`,
+              `| tsgo source | \`${exeSource}\` |`,
+              `| \`tsgo --version\` | \`${tsgoVersion}\` |`,
+              `| \`typescript@${typescriptTag}\` | \`${typescriptVersion}\` |`,
+              "",
+            ].join("\n")
+            appendFileSync(summary, table)
+          }
+
+          if (errors.length > 0) {
+            for (const error of errors) console.error(error)
+            process.exit(1)
+          }
+          EOF
+
+      # `bun test integration` is the real-tsgo suite (compiler *.integration.test.ts).
+      # Vite tests stub generate/watch and do not exercise the checker.
+      # JSON Schema integration tests do not spawn tsgo.
+      - name: Integration tests
+        id: tests
+        run: |
+          echo "cell ${{ matrix.id }}: @corsa-bind/napi@${{ steps.versions.outputs.corsa }} (${{ steps.versions.outputs.corsa_native }}, version() ${{ steps.versions.outputs.corsa_runtime }})"
+          echo "tsgo ${{ steps.versions.outputs.tsgo_source }}: ${{ steps.versions.outputs.tsgo_path }} (${{ steps.versions.outputs.tsgo }})"
+          bun run test:integration
+
+      - name: Record test outcome
+        if: always()
+        run: |
+          {
+            echo "### Result (${{ matrix.id }})"
+            echo ""
+            echo "- outcome: \`${{ steps.tests.outcome }}\`"
+            echo "- \`@corsa-bind/napi\`: \`${{ steps.versions.outputs.corsa }}\` (\`${{ steps.versions.outputs.corsa_native }}\`, version() \`${{ steps.versions.outputs.corsa_runtime }}\`)"
+            echo "- tsgo: \`${{ steps.versions.outputs.tsgo_path }}\` (\`${{ steps.versions.outputs.tsgo }}\`, ${{ steps.versions.outputs.tsgo_source }})"
+            echo "- \`@typescript/native-preview\`: \`${{ steps.versions.outputs.native_preview }}\`"
+            echo "- \`typescript@${{ steps.versions.outputs.typescript_tag }}\`: \`${{ steps.versions.outputs.typescript_version }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
