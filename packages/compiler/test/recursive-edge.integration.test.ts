@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
+import { withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
 // Edge contracts of the structural path, end-to-end over the real pipeline:
@@ -57,12 +58,12 @@ describe.skipIf(!bun)("structural edge contracts (real tsgo + real worker)", () 
   it("fails closed instead of dangling, and keeps keys required", async () => {
     const result = await generate({
       root: fixtureRoot,
-      config: {
+      config: withTestTsgo({
         mode: "sidecar",
         include: ["src/*.schema.ts"],
         tsconfig: "tsconfig.json",
         worker: { execPath: bun },
-      },
+      }),
     })
 
     // Only the sound roots emit: Leaf, OptNull, SpecNode, User (dupname),

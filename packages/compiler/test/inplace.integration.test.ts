@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
+import { withTestTsgo } from "./tsgo-test-executable.ts"
 
 // A throwaway schema written INTO the fixture's `src/` (so it sits under the tsconfig
 // include) carrying a first-run `Infer` marker for inplace to convert.
@@ -33,7 +34,7 @@ describe("compiler generate — inplace mode (real tsgo)", () => {
     const result = await generate({
       root: fixtureRoot,
       mode: "inplace",
-      config: { include: ["src/widget.schema.ts"], tsconfig: "tsconfig.json" },
+      config: withTestTsgo({ include: ["src/widget.schema.ts"], tsconfig: "tsconfig.json" }),
     })
 
     expect(result.files).toHaveLength(1)
@@ -55,7 +56,7 @@ describe("compiler generate — inplace mode (real tsgo)", () => {
     const result = await generate({
       root: fixtureRoot,
       mode: "inplace",
-      config: { include: ["src/widget.schema.ts"], tsconfig: "tsconfig.json" },
+      config: withTestTsgo({ include: ["src/widget.schema.ts"], tsconfig: "tsconfig.json" }),
     })
     expect(result.files[0]?.changed).toBe(false)
     expect(readFileSync(source, "utf8")).toBe(before)

@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test"
 import { existsSync, readFileSync, rmSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
+import { withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
 /**
@@ -33,7 +34,11 @@ describe("standard schema interop (real tsgo) — resolution smoke", () => {
   it("resolves a zod schema to a fully-expanded sidecar type", async () => {
     const result = await generate({
       root: fixtureRoot,
-      config: { mode: "sidecar", include: ["src/zod-basic.schema.ts"], tsconfig: "tsconfig.json" },
+      config: withTestTsgo({
+        mode: "sidecar",
+        include: ["src/zod-basic.schema.ts"],
+        tsconfig: "tsconfig.json",
+      }),
     })
 
     expect(result.files.length).toBe(1)
@@ -91,7 +96,11 @@ describe("standard schema interop (real tsgo) — post-resolution compile gate",
 
     const result = await generate({
       root: fixtureRoot,
-      config: { mode: "sidecar", include: ["src/zod-leak.schema.ts"], tsconfig: "tsconfig.json" },
+      config: withTestTsgo({
+        mode: "sidecar",
+        include: ["src/zod-leak.schema.ts"],
+        tsconfig: "tsconfig.json",
+      }),
     })
 
     // (iii) diagnostics: the gate names the failure, the unresolved identifier
@@ -131,7 +140,7 @@ describe("standard schema interop (real tsgo) — per-library scenarios", () => 
   const gen = (include: string) =>
     generate({
       root: fixtureRoot,
-      config: { mode: "sidecar", include: [include], tsconfig: "tsconfig.json" },
+      config: withTestTsgo({ mode: "sidecar", include: [include], tsconfig: "tsconfig.json" }),
     })
 
   it("valibot: basic + pipe transform + GenericSchema recursion + brand", async () => {
@@ -229,12 +238,12 @@ describe("standard schema interop (real tsgo) — per-library scenarios", () => 
   it("opt-out (schemaSources: []) discovers no external schemas", async () => {
     const result = await generate({
       root: fixtureRoot,
-      config: {
+      config: withTestTsgo({
         mode: "sidecar",
         include: ["src/zod-basic.schema.ts"],
         tsconfig: "tsconfig.json",
         schemaSources: [],
-      },
+      }),
     })
     expect(result.files).toHaveLength(0)
   }, 60_000)
@@ -265,7 +274,11 @@ describe("standard schema interop (real tsgo) — annotation-free recursion boun
   it("emits the degraded (self-truncated) type zod infers, without failing", async () => {
     const result = await generate({
       root: badRoot,
-      config: { mode: "sidecar", include: ["src/*.schema.ts"], tsconfig: "tsconfig.json" },
+      config: withTestTsgo({
+        mode: "sidecar",
+        include: ["src/*.schema.ts"],
+        tsconfig: "tsconfig.json",
+      }),
     })
     expect(result.files).toHaveLength(1)
     expect(result.diagnostics).toHaveLength(0)
@@ -294,7 +307,11 @@ describe("standard schema interop — inplace gating", () => {
 
     const result = await generate({
       root: fixtureRoot,
-      config: { mode: "inplace", include: ["src/inplace-ext.ts"], tsconfig: "tsconfig.json" },
+      config: withTestTsgo({
+        mode: "inplace",
+        include: ["src/inplace-ext.ts"],
+        tsconfig: "tsconfig.json",
+      }),
     })
 
     // (iii) explicit diagnostic, never silent staleness

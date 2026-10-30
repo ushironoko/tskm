@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
+import { withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
 // End-to-end over the REAL pipeline: discovery -> split -> structural worker (real
@@ -65,12 +66,12 @@ describe.skipIf(!bun)("recursive structural codegen (real tsgo + real worker)", 
   it("materializes self-recursive, mutual and mixed schemas into sidecars", async () => {
     const result = await generate({
       root: fixtureRoot,
-      config: {
+      config: withTestTsgo({
         mode: "sidecar",
         include: ["src/*.schema.ts"],
         tsconfig: "tsconfig.json",
         worker: { execPath: bun },
-      },
+      }),
     })
 
     expect(result.files.length).toBe(4)
@@ -131,11 +132,11 @@ export type TreeNode = Infer<typeof nodeSchema>
     const first = await generate({
       root: fixtureRoot,
       mode: "inplace",
-      config: {
+      config: withTestTsgo({
         include: ["src/node.schema.ts"],
         tsconfig: "tsconfig.json",
         worker: { execPath: bun },
-      },
+      }),
     })
     expect(first.files).toHaveLength(1)
     expect(first.files[0]?.changed).toBe(true)
@@ -153,11 +154,11 @@ export type TreeNode = Infer<typeof nodeSchema>
     const second = await generate({
       root: fixtureRoot,
       mode: "inplace",
-      config: {
+      config: withTestTsgo({
         include: ["src/node.schema.ts"],
         tsconfig: "tsconfig.json",
         worker: { execPath: bun },
-      },
+      }),
     })
     expect(second.files[0]?.changed).toBe(false)
     expect(readFileSync(src("node.schema.ts"), "utf8")).toBe(before)
