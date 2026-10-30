@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { existsSync, rmSync } from "node:fs"
+import { existsSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { main } from "../src/cli-core.ts"
+import { testTsgoExecutable } from "./tsgo-test-executable.ts"
 
 // Drives the real `gen` / `json-schema` command paths in cli-core's `main()` end to end
 // (real tsgo for gen, the real isolated worker subprocess for json-schema), exercising
@@ -17,6 +18,17 @@ const queryGlob = fileURLToPath(
 const jsonOutput = fileURLToPath(
   new URL("./fixtures/basic/src/account.schema.json", import.meta.url),
 )
+// main() -> generate() loads tskm.config.* from the fixture. The CLI has no
+// executable flag, so the override is passed through the existing config field.
+const tsgoConfig = fileURLToPath(new URL("./fixtures/basic/tskm.config.mjs", import.meta.url))
+let wroteTsgoOverride = false
+
+function writeTsgoOverride(): void {
+  const executable = testTsgoExecutable()
+  if (!executable) return
+  writeFileSync(tsgoConfig, `export default { executable: ${JSON.stringify(executable)} }\n`)
+  wroteTsgoOverride = true
+}
 
 function findBun(): string | undefined {
   const which = spawnSync("/bin/sh", ["-c", "command -v bun"], { encoding: "utf8" })
@@ -59,9 +71,12 @@ describe("cli-core main() — real command execution", () => {
     for (const f of [sidecar, queryGlob, jsonOutput]) {
       if (existsSync(f)) rmSync(f)
     }
+    if (wroteTsgoOverride && existsSync(tsgoConfig)) rmSync(tsgoConfig)
+    wroteTsgoOverride = false
   })
 
   it("`gen` materializes a sidecar and reports the written file with its type names", async () => {
+    writeTsgoOverride()
     install(["gen", "--root", fixtureRoot])
     await main()
 
