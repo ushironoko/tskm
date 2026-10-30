@@ -206,7 +206,9 @@ describe("runSchemaWorker — guard branches (in-process)", () => {
     } finally {
       process.argv = savedArgv
       process.stderr.write = savedWrite
-      process.exitCode = savedExit
+      // Bun 1.3.13 does not clear exitCode when assigned `undefined`. A numeric
+      // reset is required or this file makes `bun test` exit 1 after a green run.
+      process.exitCode = savedExit ?? 0
     }
     expect(captured).toContain("requires an envelope output path")
   })

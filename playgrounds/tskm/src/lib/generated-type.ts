@@ -143,6 +143,8 @@ function renderSchema(schema: unknown, seen = new WeakSet<object>()): string {
       return renderRecord(schema, seen)
     case "optional":
       return joinUnion([renderSchema(schema.wrapped, seen), "undefined"])
+    case "preprocess":
+      return renderSchema(schema.wrapped, seen)
     case "nullable":
       return joinUnion([renderSchema(schema.wrapped, seen), "null"])
     case "nullish":

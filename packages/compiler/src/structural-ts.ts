@@ -307,6 +307,11 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): string {
     }
     case "optional":
       return `${walkChild(schema.wrapped, ".wrapped", ctx)} | undefined`
+    case "preprocess":
+      // Output type is the wrapped schema's output. The operation is not a
+      // structural type, and this walker emits InferOutput only, so the input
+      // `unknown` is not rendered. Unlike `transform`, this does not go opaque.
+      return walkChild(schema.wrapped, ".wrapped", ctx)
     case "nullable":
       return `${walkChild(schema.wrapped, ".wrapped", ctx)} | null`
     case "nullish":

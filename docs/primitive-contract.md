@@ -28,6 +28,7 @@ The emitter is a duck-typed walker (`packages/compiler/src/jsonschema.ts`). The 
 | key-typed `record(key, value)` | `propertyNames` constraining the key (a pattern for a `templateLiteral` key, an enum for a `picklist` key) plus `additionalProperties` for the value |
 | exact (closed) object | `additionalProperties: false` (already the `object` default) |
 | discriminated union | `oneOf` with `const` on the discriminant, the discriminant key surfaced as an option or vendor extension |
+| `preprocess` / `coerce` | the inner schema (the output shape), plus a warning that the input accepts any value. Input-direction emission (`{}`) waits on StandardJSONSchemaV1 |
 
 Two walkers read the same runtime schema graph: the JSON Schema walker and the structural TypeScript walker (`packages/compiler/src/structural-ts.ts`). A primitive that introduces a new `schema.type` case must add it to both walkers in the same change. If only one walker learns a case, the other falls through to its default branch and silently emits `{}` or `unknown` or `additionalProperties: false`.
 
