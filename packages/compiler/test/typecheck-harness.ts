@@ -11,7 +11,7 @@ import { testTsgoExecutable } from "./tsgo-test-executable.ts"
  * its declared alias name fails HERE (TS2304), not silently downstream.
  */
 export function runTsgoNoEmit(projectRoot: string): { ok: boolean; output: string } {
-  // Unset env: resolveTsgoExecutable(undefined) keeps the native-preview default.
+  // Unset env: resolveTsgoExecutable(undefined) uses the typescript package's lib/tsc.
   const executable = resolveTsgoExecutable(testTsgoExecutable())
   const child = spawnSync(executable, ["--noEmit", "-p", "tsconfig.json"], {
     cwd: projectRoot,

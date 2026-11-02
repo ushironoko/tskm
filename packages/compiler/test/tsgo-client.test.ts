@@ -1,14 +1,16 @@
 import { describe, expect, it } from "bun:test"
 import { existsSync } from "node:fs"
+import { withBunSyncChannelFds } from "../src/bun-sync-fds.ts"
 import {
   FAILURE_TYPE_FLAGS,
   resolveTsgoExecutable,
   TYPE_TO_STRING_FLAGS,
+  toFileDiagnostics,
 } from "../src/tsgo-client.ts"
 
-// Whether the real tsgo binary resolves in this environment. The no-override branch
-// reaches into @typescript/native-preview, which may be absent on unsupported
-// platforms; guard those cases with skipIf rather than letting them hard-fail.
+// Whether the real checker binary resolves in this environment. The no-override
+// branch reaches into the typescript platform package, which may be absent on
+// unsupported platforms; guard those cases with skipIf rather than letting them hard-fail.
 const tsgoAvailable = (() => {
   try {
     return existsSync(resolveTsgoExecutable())
@@ -62,11 +64,54 @@ describe("resolveTsgoExecutable — override branch", () => {
 })
 
 describe("resolveTsgoExecutable — no override branch", () => {
-  it.skipIf(!tsgoAvailable)("returns a non-empty path to an existing binary", () => {
+  it.skipIf(!tsgoAvailable)("returns the native tsc binary shipped with typescript", () => {
     const exe = resolveTsgoExecutable()
     expect(typeof exe).toBe("string")
     expect(exe.length).toBeGreaterThanOrEqual(1)
-    expect(exe).toContain("tsgo")
+    expect(exe.endsWith(`${process.platform === "win32" ? "tsc.exe" : "tsc"}`)).toBe(true)
+    expect(exe).toContain(`${process.platform}-${process.arch}`)
     expect(existsSync(exe)).toBe(true)
+  })
+})
+
+describe("toFileDiagnostics", () => {
+  it("fails closed when the payload is not an array", () => {
+    expect(toFileDiagnostics(undefined, "/proj/q.ts")).toEqual([
+      { code: -1, fileName: "/proj/q.ts" },
+    ])
+    expect(toFileDiagnostics({ code: 2322 }, "/proj/q.ts")).toEqual([
+      { code: -1, fileName: "/proj/q.ts" },
+    ])
+  })
+
+  it("keeps the probe file's diagnostics and their message text", () => {
+    expect(
+      toFileDiagnostics(
+        [
+          { code: 2304, fileName: "/proj/q.ts", text: "Cannot find name 'Missing'." },
+          { code: 2322, fileName: "/proj/other.ts", text: "elsewhere" },
+          { code: 1, text: "no file" },
+          null,
+        ],
+        "/proj/q.ts",
+      ),
+    ).toEqual([
+      { code: 2304, fileName: "/proj/q.ts", text: "Cannot find name 'Missing'." },
+      { code: 1, fileName: "/proj/q.ts", text: "no file" },
+    ])
+  })
+})
+
+describe("withBunSyncChannelFds", () => {
+  it("returns the callback result and installs the prototype wrapper once", () => {
+    const { ChildProcess } = process.getBuiltinModule("node:child_process")
+    const prototype = ChildProcess.prototype as unknown as { spawn: { name: string } }
+    expect(withBunSyncChannelFds(() => 7)).toBe(7)
+    const wrapped = prototype.spawn
+    expect(withBunSyncChannelFds(() => 0)).toBe(0)
+    expect(prototype.spawn).toBe(wrapped)
+    if (process.versions.bun !== undefined && process.platform !== "win32") {
+      expect(wrapped.name).toBe("spawnWithFds")
+    }
   })
 })
