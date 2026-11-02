@@ -1,5 +1,21 @@
 # @tskm/compiler
 
+## 0.5.0
+
+### Minor Changes
+
+- 6e76ac7: Pin `@typescript/native-preview` to exactly `7.0.0-dev.20260707.2` and bump `@corsa-bind/napi` to `1.15.0`.
+
+  The peerDependency was an open lower bound (`>=7.0.0-dev.20260601.1`), which allowed installs to resolve `7.0.0-dev.20260604.1` and later builds where `openProject` fails. The peer is now an exact version so those builds cannot be selected. `@corsa-bind/napi` moves from `0.35.0` to `1.15.0`.
+
+  Exact peer makes npm ERESOLVE for installs still on `7.0.0-dev.20260601.1` through `7.0.0-dev.20260603.1`, so this is a minor bump in 0.x. Upgrade `@typescript/native-preview` to `7.0.0-dev.20260707.2`.
+
+- 1b60eb8: Add `preprocess` / `preprocessAsync`.
+
+  `preprocess(fn, schema)` maps an untrusted value before the inner schema validates it. The caller writes the conversion. The input type is `unknown`. The output type stays the inner schema's output (`PreprocessSchema<TWrapped>`). A throw or rejection becomes a `type: "preprocess"` issue and the inner schema does not run. Non-`Error` throws use `String(error)`.
+
+  The compiler's structural TypeScript walker and JSON Schema walker both unwrap `type: "preprocess"` to the inner output shape. JSON Schema warns that the emitted schema is the output shape and that the input accepts any value.
+
 ## 0.4.1
 
 ### Patch Changes
