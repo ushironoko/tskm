@@ -3,6 +3,7 @@ import { existsSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import type { GenerateResult, WatchController } from "../src/index.ts"
 import { watch } from "../src/index.ts"
+import { withTestTsgo } from "./tsgo-test-executable.ts"
 
 // The fixture dir carries a tsconfig that resolves the "tskm" import; a throwaway
 // schema written into its `src/` therefore type-checks under the same project.
@@ -82,7 +83,7 @@ describe("compiler watch (real tsgo) — runtime", () => {
       await watch({
         root: fixtureRoot,
         mode: "inplace",
-        config: { include: ["src/watchtarget.schema.ts"], tsconfig: "tsconfig.json" },
+        config: withTestTsgo({ include: ["src/watchtarget.schema.ts"], tsconfig: "tsconfig.json" }),
         debounceMs: 30,
         onGenerate: (r) => calls.push(r),
       }),
@@ -121,7 +122,7 @@ describe("compiler watch (real tsgo) — runtime", () => {
       await watch({
         root: fixtureRoot,
         mode: "sidecar",
-        config: { include: ["src/watchtarget.schema.ts"], tsconfig: "tsconfig.json" },
+        config: withTestTsgo({ include: ["src/watchtarget.schema.ts"], tsconfig: "tsconfig.json" }),
         debounceMs: 30,
         onGenerate: (r) => calls.push(r),
       }),
@@ -155,7 +156,7 @@ describe("compiler watch (real tsgo) — runtime", () => {
     const controller = await watch({
       root: fixtureRoot,
       mode: "sidecar",
-      config: { include: ["src/watchtarget.schema.ts"], tsconfig: "tsconfig.json" },
+      config: withTestTsgo({ include: ["src/watchtarget.schema.ts"], tsconfig: "tsconfig.json" }),
       debounceMs: 30,
     })
 
@@ -172,7 +173,7 @@ describe("compiler watch (real tsgo) — runtime", () => {
       await watch({
         root: fixtureRoot,
         mode: "sidecar",
-        config: { include: ["src/watchtarget.schema.ts"], tsconfig: "tsconfig.json" },
+        config: withTestTsgo({ include: ["src/watchtarget.schema.ts"], tsconfig: "tsconfig.json" }),
         debounceMs: 30,
         signal: ac.signal,
       }),
@@ -195,7 +196,7 @@ describe("compiler watch (real tsgo) — runtime", () => {
       await watch({
         root: fixtureRoot,
         mode: "sidecar",
-        config: { include: ["src/watchtarget.schema.ts"], tsconfig: "tsconfig.json" },
+        config: withTestTsgo({ include: ["src/watchtarget.schema.ts"], tsconfig: "tsconfig.json" }),
         debounceMs: 30,
         signal: ac.signal,
         onGenerate: (r) => calls.push(r),
@@ -243,7 +244,7 @@ describe("compiler watch (real tsgo) — external schema smoke", () => {
       await watch({
         root: stdRoot,
         mode: "sidecar",
-        config: { include: ["src/watchext.schema.ts"], tsconfig: "tsconfig.json" },
+        config: withTestTsgo({ include: ["src/watchext.schema.ts"], tsconfig: "tsconfig.json" }),
         debounceMs: 30,
         onGenerate: (r) => calls.push(r),
       }),

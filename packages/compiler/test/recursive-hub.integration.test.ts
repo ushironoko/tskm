@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
+import { withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
 // Anti-corruption layer (re-export hub) contracts, end-to-end over the real pipeline.
@@ -50,13 +51,13 @@ describe.skipIf(!bun)("anti-corruption-layer hub recursive (real tsgo + real wor
   it("routes hub-imported recursive() roots to the walker; keeps cross-file fail-closed", async () => {
     const result = await generate({
       root: fixtureRoot,
-      config: {
+      config: withTestTsgo({
         mode: "sidecar",
         include: ["src/*.schema.ts"],
         tsconfig: "tsconfig.json",
         schemaSources: ["@validator", "@foreign"],
         worker: { execPath: bun },
-      },
+      }),
     })
 
     // Scenario A — self-recursive union root via the hub: the walker materializes the

@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test"
 import { existsSync, readFileSync, rmSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
+import { withTestTsgo } from "./tsgo-test-executable.ts"
 
 // Real-tsgo gate for TOP-LEVEL nullability. The existing `account` gate only exercises
 // `nullable`/`optional` *inside* an `object`, where the `& {}` of the `__P` query wrapper
@@ -30,7 +31,11 @@ describe("top-level nullable/nullish/union-with-null survive __P (real tsgo)", (
   it("keeps null and undefined members in the emitted sidecar", async () => {
     await generate({
       root: fixtureRoot,
-      config: { mode: "sidecar", include: ["src/*.schema.ts"], tsconfig: "tsconfig.json" },
+      config: withTestTsgo({
+        mode: "sidecar",
+        include: ["src/*.schema.ts"],
+        tsconfig: "tsconfig.json",
+      }),
     })
 
     const gen = readFileSync(sidecar, "utf8")

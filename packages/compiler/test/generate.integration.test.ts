@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test"
 import { existsSync, readFileSync, rmSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
+import { withTestTsgo } from "./tsgo-test-executable.ts"
 
 const fixtureRoot = fileURLToPath(new URL("./fixtures/basic", import.meta.url))
 const sidecar = fileURLToPath(
@@ -21,7 +22,11 @@ describe("compiler generate (real tsgo) — the gate", () => {
   it("materializes fully-expanded output types into a sidecar", async () => {
     const result = await generate({
       root: fixtureRoot,
-      config: { mode: "sidecar", include: ["src/*.schema.ts"], tsconfig: "tsconfig.json" },
+      config: withTestTsgo({
+        mode: "sidecar",
+        include: ["src/*.schema.ts"],
+        tsconfig: "tsconfig.json",
+      }),
     })
 
     expect(result.files.length).toBe(1)

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
+import { withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
 // End-to-end for the opt-in named-sibling-alias mode (issue #22). A shared non-recursive
@@ -32,13 +33,13 @@ afterAll(() => {
 const run = (nameSharedSchemas: boolean, include = "src/union.schema.ts") =>
   generate({
     root: fixtureRoot,
-    config: {
+    config: withTestTsgo({
       mode: "sidecar",
       include: [include],
       tsconfig: "tsconfig.json",
       worker: { execPath: bun },
       codegen: { nameSharedSchemas },
-    },
+    }),
   })
 
 describe.skipIf(!bun)("named sibling aliases (#22, real worker + tsgo)", () => {

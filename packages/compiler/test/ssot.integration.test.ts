@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
+import { withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
 // End-to-end SSoT proof (meta-issue #24): a single RECURSIVE schema composing a templateLiteral
@@ -35,12 +36,12 @@ describe.skipIf(!bun)("SSoT composition emits a faithful type (#24, real worker 
   it("emits the faithful optional, templated id, keyed record, and recursive self-reference", async () => {
     await generate({
       root: fixtureRoot,
-      config: {
+      config: withTestTsgo({
         mode: "sidecar",
         include: ["src/node.schema.ts"],
         tsconfig: "tsconfig.json",
         worker: { execPath: bun },
-      },
+      }),
     })
     const gen = readFileSync(genFile, "utf8")
     expect(gen).toContain("export type Node = {")
