@@ -10,4 +10,8 @@ export default {
   reporters: ["clear-text", "progress", "json"],
   thresholds: { high: 90, low: 80, break: 80 },
   mutate: ["src/**/*.ts"],
+  // The real-vite/real-tsgo integration test stays in `bun test`. It is not
+  // copied into the Stryker sandbox: each covering mutant re-runs it, and that
+  // dominated the vite mutation job (about 14s, almost all of it this file).
+  ignorePatterns: ["test/dev-server.integration.test.ts"],
 }

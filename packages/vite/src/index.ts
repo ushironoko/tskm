@@ -45,9 +45,17 @@ function logResult(result: GenerateResult): void {
 export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDeps): Plugin {
   // Captured from `configResolved` so `options.root` can default to Vite's root.
   let viteRoot: string | undefined
+  let command: ResolvedConfig["command"] | undefined
   let controller: WatchController | undefined
 
   const resolveRoot = (): string | undefined => options.root ?? viteRoot
+
+  // `vite dev` runs both hooks. The compiler watcher generates once as it starts
+  // (`watch` → `session.generateAll` before the controller resolves), so `buildStart`
+  // must not call `generate()` again or startup compiles the project twice. `vite build`
+  // never calls `configureServer`, and still generates from `buildStart`.
+  const devWatcherOwnsInitialGenerate = (): boolean =>
+    command === "serve" && options.watch !== false
 
   const closeWatcher = async (): Promise<void> => {
     if (!controller) {
@@ -63,9 +71,13 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
 
     configResolved(config: ResolvedConfig) {
       viteRoot = config.root
+      command = config.command
     },
 
     async buildStart() {
+      if (devWatcherOwnsInitialGenerate()) {
+        return
+      }
       const result = await deps.generate({
         root: resolveRoot(),
         mode: options.mode,
@@ -85,10 +97,14 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
         debounceMs: options.debounceMs,
         onGenerate: logResult,
       })
+      // Vite calls a function returned from `configureServer` while the dev server
+      // is still starting (after internal middleware is installed), not when it
+      // closes. Returning `closeWatcher` here stopped the watcher before `listen`,
+      // so later edits never regenerated. Shutdown is the http server's `close`
+      // plus `buildEnd` / `closeBundle`.
       server.httpServer?.once("close", () => {
         void closeWatcher()
       })
-      return () => closeWatcher()
     },
 
     async buildEnd() {
