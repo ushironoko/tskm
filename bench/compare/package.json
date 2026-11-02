@@ -1,0 +1,17 @@
+{
+  "name": "@tskm/bench-compare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "bun src/run.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "arktype": "2.2.9",
+    "effect": "4.1.2",
+    "esbuild": "0.28.2",
+    "typebox": "1.4.3",
+    "valibot": "1.5.0",
+    "zod": "4.6.7"
+  }
+}
