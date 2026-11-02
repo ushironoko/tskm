@@ -38,6 +38,7 @@ export { type ArraySchema, array } from "./schemas/array.ts"
 export { type ArraySchemaAsync, arrayAsync } from "./schemas/arrayAsync.ts"
 export { type BigintSchema, bigint } from "./schemas/bigint.ts"
 export { type BooleanSchema, boolean } from "./schemas/boolean.ts"
+export { coerce } from "./schemas/coerce.ts"
 export { type DateSchema, date } from "./schemas/date.ts"
 export {
   type DiscriminatedUnionMembers,
@@ -73,6 +74,12 @@ export {
 } from "./schemas/objectAsync.ts"
 export { type Default, type OptionalSchema, optional } from "./schemas/optional.ts"
 export { type PicklistOptions, type PicklistSchema, picklist } from "./schemas/picklist.ts"
+export {
+  type PreprocessContext,
+  type PreprocessSchema,
+  preprocess,
+} from "./schemas/preprocess.ts"
+export { type PreprocessSchemaAsync, preprocessAsync } from "./schemas/preprocessAsync.ts"
 export { type RecordSchema, record } from "./schemas/record.ts"
 export { type RecordKeyAsync, type RecordSchemaAsync, recordAsync } from "./schemas/recordAsync.ts"
 export { type RecursiveBuild, type RecursiveSchema, recursive } from "./schemas/recursive.ts"

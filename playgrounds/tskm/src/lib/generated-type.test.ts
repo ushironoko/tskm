@@ -59,6 +59,11 @@ test("keeps the undefined member when optionalKeys is not enabled", () => {
   expect(rendered).toContain("nickname: string | undefined;")
 })
 
+test("renders preprocess as the inner output type", () => {
+  expect(fallbackType(`preprocess((value) => Number(value), number())`)).toBe("number")
+  expect(fallbackType(`coerce.number()`)).toBe("number")
+})
+
 test("renders wrappers as unions and dedupes repeated members", () => {
   expect(fallbackType(`nullable(string())`)).toBe("string | null")
   expect(fallbackType(`nullish(string())`)).toBe("string | null | undefined")

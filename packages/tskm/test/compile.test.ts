@@ -6,6 +6,7 @@ import {
   boolean,
   type Config,
   check,
+  coerce,
   minLength,
   minValue,
   nullish,
@@ -124,6 +125,38 @@ describe("safeParseCompiled — piped/refined child in a container (the PoC bypa
     expect(compiled.success).toBe(false)
     expectParity(schema, [5])
     expectParity(schema, [12, 99])
+  })
+
+  it("coerce-in-container: compiled output is the coerced value, matching the interpreter", () => {
+    const schema = object({ port: coerce.number() })
+    const compiled = safeParseCompiled(schema, { port: "8080" })
+    expect(compiled.success).toBe(true)
+    if (compiled.success) {
+      expect(compiled.output.port).toBe(8080)
+      expect(typeof compiled.output.port).toBe("number")
+    }
+    expectParity(schema, { port: "8080" })
+    expectParity(schema, { port: "nope" })
+
+    const nested = object({
+      server: object({ port: coerce.number() }),
+      ports: array(coerce.number()),
+      rows: array(object({ port: coerce.number() })),
+    })
+    const input = {
+      server: { port: "8080" },
+      ports: ["1", "2"],
+      rows: [{ port: "3" }, { port: "4" }],
+    }
+    const nestedCompiled = safeParseCompiled(nested, input)
+    expect(nestedCompiled.success).toBe(true)
+    if (nestedCompiled.success) {
+      expect(nestedCompiled.output.server.port).toBe(8080)
+      expect(nestedCompiled.output.ports).toEqual([1, 2])
+      expect(nestedCompiled.output.rows).toEqual([{ port: 3 }, { port: 4 }])
+    }
+    expectParity(nested, input)
+    expectParity(nested, { server: { port: "nope" }, ports: ["x"], rows: [{ port: true }] })
   })
 
   it("transform-in-container: the transform output is applied, not dropped", () => {

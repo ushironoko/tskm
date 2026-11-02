@@ -28,6 +28,8 @@ export const schemaIdentifiers = [
   "objectAsync",
   "optional",
   "picklist",
+  "preprocess",
+  "preprocessAsync",
   "record",
   "recordAsync",
   "recursive",

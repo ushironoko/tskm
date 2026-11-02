@@ -69,6 +69,11 @@ describe("schemaToTypeString — per-type TS bodies", () => {
     ["tuple", s.tuple([s.string(), s.number()]), "[string, number]"],
     ["union", s.union([s.string(), s.number()]), "string | number"],
     ["optional", s.optional(s.string()), "string | undefined"],
+    [
+      "preprocess unwraps to the inner output type",
+      { kind: "schema", type: "preprocess", wrapped: s.number() },
+      "number",
+    ],
     ["nullable", s.nullable(s.string()), "string | null"],
     ["nullish", s.nullish(s.string()), "string | null | undefined"],
     [
@@ -114,6 +119,21 @@ describe("schemaToTypeString — recursion", () => {
     root.getter = () => body
     return root
   }
+
+  it("unwraps preprocess inside a recursive object to the inner output type", () => {
+    const root: Record<string, unknown> = { kind: "schema", type: "recursive" }
+    root.getter = () =>
+      s.object({
+        name: s.string(),
+        score: { kind: "schema", type: "preprocess", wrapped: s.number() },
+        child: s.optional(root),
+      })
+    const result = walk(root, "Tree", new Map<object, string>([[root, "Tree"]]))
+    expect(result.typeString).toBe("{ name: string; score: number; child: Tree | undefined }")
+    expect(result.bearsOpaque).toBe(false)
+    expect(result.bearsUnsupported).toBe(false)
+    expect(result.warnings).toHaveLength(0)
+  })
 
   it("materializes the self-cycle as a named back-edge (hoisted once)", () => {
     const root = categoryRoot()
