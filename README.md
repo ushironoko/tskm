@@ -327,6 +327,20 @@ The **experimental JSON Schema** emitter is different: it walks the runtime sche
 
 ⚠ = lossy or unrepresentable in JSON Schema; the emitter records a warning.
 
+### Standard JSON Schema on the schema
+
+JSON Schema conversion is opt-in. `withJsonSchema` from `@tskm/core/json-schema` returns a new object that implements [Standard JSON Schema](https://github.com/standard-schema/standard-schema/blob/main/packages/spec/json-schema.md). The argument is not modified, and a program that never imports this entry does not bundle the walker.
+
+```ts
+import { object, string } from "@tskm/core"
+import { withJsonSchema } from "@tskm/core/json-schema"
+
+const User = withJsonSchema(object({ name: string() }))
+User["~standard"].jsonSchema.input({ target: "draft-07" })
+```
+
+Supported targets are `draft-2020-12`, `draft-07`, and `openapi-3.0`. For schemas the `tskm json-schema` emitter can represent, `output({ target: "draft-2020-12" })` matches that emitter. `input` and `output` differ for `preprocess` (input is `{}`), for a JSON `default` on `optional` / `nullable` / `nullish` (the keyword is on the input), and for `fallback` (the keyword is on the output). `transform` output, `check`, `bigint`, `date`, and `undefined` throw when `input` or `output` is called, not when the schema is wrapped. Vercel AI SDK's `tool({ inputSchema })` calls `jsonSchema.input({ target: "draft-07" })`, so pass the wrapped schema.
+
 ## Standard Schema interop
 
 The compiler is not tskm-specific: any **[Standard Schema](https://standardschema.dev)** library is a type source. Discovery is hybrid. Syntactic candidates come from `schemaSources` imports, and an any-guarded checker probe confirms each one. The query itself is pure structure (`NonNullable<(typeof x)["~standard"]["types"]>["output"]`), so the same expression resolves every vendor.
