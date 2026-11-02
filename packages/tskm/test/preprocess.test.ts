@@ -15,6 +15,7 @@ import {
   parse,
   parseAsync,
   pipe,
+  pipeAsync,
   preprocess,
   preprocessAsync,
   safeParse,
@@ -22,6 +23,8 @@ import {
   string,
   templateLiteral,
   transform,
+  transformAsync,
+  union,
 } from "../src/index.ts"
 
 function failure(schema: Parameters<typeof safeParse>[0], input: unknown) {
@@ -272,7 +275,7 @@ describe("preprocess", () => {
     const schema = preprocess((value) => value, string())
     expect(schema.kind).toBe("schema")
     expect(schema.type).toBe("preprocess")
-    expect(schema.expects).toBe("unknown")
+    expect(schema.expects).toBe("string")
     expect(schema.async).toBe(false)
     const clean = schema["~run"]({ value: "hi" }, {})
     expect(clean.typed).toBe(true)
@@ -287,6 +290,86 @@ describe("preprocess", () => {
     expect(failed.issues?.[0]?.severity).toBe("error")
   })
 
+  it("lets an inner transform throw propagate unchanged", () => {
+    const inner = new Error("inner boom")
+    const schema = preprocess(
+      (value) => value,
+      pipe(
+        string(),
+        transform(() => {
+          throw inner
+        }),
+      ),
+    )
+    try {
+      schema["~run"]({ value: "hi" }, {})
+      throw new Error("inner throw should have propagated")
+    } catch (error) {
+      expect(error).toBe(inner)
+    }
+    try {
+      parse(schema, "hi")
+      throw new Error("parse should have thrown the inner error")
+    } catch (error) {
+      expect(error).toBe(inner)
+      expect(isTskmError(error)).toBe(false)
+    }
+  })
+
+  it("rejects a thenable operation and does not run the inner schema", () => {
+    let settled = false
+    // Intentional thenable: preprocess must reject it without calling `then`.
+    const schema = preprocess(
+      () => ({
+        // biome-ignore lint/suspicious/noThenProperty: the value under test is a thenable
+        then() {
+          settled = true
+        },
+      }),
+      number(),
+    )
+    const result = failure(schema, "4")
+    expect(settled).toBe(false)
+    expect(result.output).toBe("4")
+    expect(result.issues).toHaveLength(1)
+    expect(result.issues[0]).toMatchObject({
+      kind: "transformation",
+      type: "preprocess",
+      severity: "error",
+      message: "Invalid preprocess: operation returned a Promise; use preprocessAsync",
+      input: "4",
+    })
+
+    const asyncFn = failure(
+      preprocess(async (value) => Number(value), number()),
+      "4",
+    )
+    expect(asyncFn.output).toBe("4")
+    expect(asyncFn.issues[0]?.type).toBe("preprocess")
+    expect(asyncFn.issues[0]?.message).toBe(
+      "Invalid preprocess: operation returned a Promise; use preprocessAsync",
+    )
+  })
+
+  it("does not treat null as a thenable", () => {
+    const result = failure(
+      preprocess(() => null, string()),
+      1,
+    )
+    expect(result.issues[0]?.type).toBe("string")
+    expect(result.issues).toHaveLength(1)
+  })
+
+  it("uses the inner expects string so a union message stays readable", () => {
+    expect(coerce.number().expects).toBe("number")
+    const schema = union([coerce.number(), string()])
+    expect(schema.expects).toBe("number | string")
+    const result = failure(schema, undefined)
+    expect(result.issues[0]?.message).toBe(
+      "Invalid type: Expected number | string but received undefined",
+    )
+  })
+
   it("does not change the original value that is() accepts", () => {
     const value = "8080"
     expect(is(coerce.number(), value)).toBe(true)
@@ -299,7 +382,7 @@ describe("preprocessAsync", () => {
     const marked = preprocessAsync(async (value) => value, string())
     expect(marked.kind).toBe("schema")
     expect(marked.type).toBe("preprocess")
-    expect(marked.expects).toBe("unknown")
+    expect(marked.expects).toBe("string")
     expect(marked.async).toBe(true)
     expect(marked.reference).toBe(preprocessAsync)
     const clean = await marked["~run"]({ value: "hi" }, {})
@@ -368,6 +451,47 @@ describe("preprocessAsync", () => {
       if (isTskmError(error)) {
         expect(error.issues[0]?.message).toBe("Invalid preprocess: nope")
       }
+    }
+  })
+
+  it("lets an inner transform rejection propagate unchanged", async () => {
+    const inner = new Error("inner boom")
+    const schema = preprocessAsync(
+      async (value) => value,
+      pipeAsync(
+        string(),
+        transformAsync(async () => {
+          throw inner
+        }),
+      ),
+    )
+    try {
+      await schema["~run"]({ value: "hi" }, {})
+      throw new Error("inner rejection should have propagated")
+    } catch (error) {
+      expect(error).toBe(inner)
+    }
+    try {
+      await parseAsync(schema, "hi")
+      throw new Error("parseAsync should have rejected with the inner error")
+    } catch (error) {
+      expect(error).toBe(inner)
+      expect(isTskmError(error)).toBe(false)
+    }
+
+    const raw = "inner-raw"
+    const rawSchema = preprocessAsync(
+      async (value) => value,
+      pipeAsync(
+        string(),
+        transformAsync(async () => Promise.reject(raw)),
+      ),
+    )
+    try {
+      await parseAsync(rawSchema, "hi")
+      throw new Error("parseAsync should have rejected with the raw reason")
+    } catch (error) {
+      expect(error).toBe(raw)
     }
   })
 

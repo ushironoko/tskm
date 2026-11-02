@@ -57,18 +57,36 @@ export function preprocessIssue(
   }
 }
 
-function halt(dataset: UnknownDataset, original: unknown, issues: readonly Issue[]): void {
+/** Restores `original`, marks the dataset untyped, and records `issues`. Shared with `preprocessAsync`. */
+export function halt(dataset: UnknownDataset, original: unknown, issues: readonly Issue[]): void {
   const out = dataset as MutableDataset
   out.value = original
   out.typed = false
   out.issues = out.issues ? [...out.issues, ...issues] : [...issues]
 }
 
-function attach(dataset: UnknownDataset, issues: readonly Issue[]): void {
+/** Appends warnings. An empty list leaves `issues` unset. Shared with `preprocessAsync`. */
+export function attach(dataset: UnknownDataset, issues: readonly Issue[]): void {
   if (issues.length === 0) return
   const out = dataset as MutableDataset
   out.issues = out.issues ? [...out.issues, ...issues] : [...issues]
 }
+
+/**
+ * True for a Promise or any other thenable. Sync `preprocess` rejects these
+ * instead of handing a Promise to the inner schema.
+ */
+export function isThenable(value: unknown): boolean {
+  return (
+    (typeof value === "object" || typeof value === "function") &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === "function"
+  )
+}
+
+/** Issue text when sync `preprocess` is given an async operation. */
+export const PREPROCESS_THEN_MESSAGE =
+  "Invalid preprocess: operation returned a Promise; use preprocessAsync"
 
 /**
  * Applies a settled preprocess operation to `dataset`. An error-severity issue
@@ -111,8 +129,14 @@ function openContext(original: unknown): {
  * The operation runs before any validation. A throw becomes a
  * `type: "preprocess"` issue (`Invalid preprocess: …`) and the inner schema
  * does not run. Non-`Error` throws use `String(error)` for the detail.
- * Sync only — an async inner schema or an async operation is a compile-time
- * error (use `preprocessAsync`).
+ * Exceptions thrown by the inner schema propagate unchanged; they are not
+ * relabeled as preprocess issues.
+ *
+ * Sync only. An async inner schema is a compile-time error (use
+ * `preprocessAsync`). An async operation type-checks, because its return type
+ * is `unknown`, but a thenable return fails at runtime with a preprocess issue
+ * that says to use `preprocessAsync`. The inner schema does not run, and the
+ * thenable is not awaited.
  */
 // @__NO_SIDE_EFFECTS__
 export function preprocess<TWrapped extends BaseSchema<unknown, unknown>>(
@@ -123,7 +147,7 @@ export function preprocess<TWrapped extends BaseSchema<unknown, unknown>>(
     kind: "schema",
     type: "preprocess",
     reference: preprocess,
-    expects: "unknown",
+    expects: wrapped.expects,
     async: false,
     wrapped,
     operation,
@@ -133,21 +157,22 @@ export function preprocess<TWrapped extends BaseSchema<unknown, unknown>>(
     "~run"(dataset, config) {
       const original = dataset.value
       const { issues, ctx } = openContext(original)
+      let produced: unknown
       try {
-        const produced = operation(original, ctx)
-        return applyPreprocess(
-          dataset,
-          original,
-          produced,
-          issues,
-          wrapped,
-          config,
-        ) as OutputDataset<InferOutput<TWrapped>>
+        produced = operation(original, ctx)
       } catch (error) {
         issues.push(preprocessIssue(original, preprocessThrownMessage(error), "error"))
         halt(dataset, original, issues)
         return dataset as unknown as OutputDataset<InferOutput<TWrapped>>
       }
+      if (isThenable(produced)) {
+        issues.push(preprocessIssue(original, PREPROCESS_THEN_MESSAGE, "error"))
+        halt(dataset, original, issues)
+        return dataset as unknown as OutputDataset<InferOutput<TWrapped>>
+      }
+      return applyPreprocess(dataset, original, produced, issues, wrapped, config) as OutputDataset<
+        InferOutput<TWrapped>
+      >
     },
   }
 }
