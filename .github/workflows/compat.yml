@@ -1,13 +1,17 @@
 # Checker compatibility. Not triggered by pull_request or push, so a failure
 # cannot block a merge.
 #
-# `@typescript/native-preview@latest` is frozen (7.0.0-dev.20260707.2 as of
-# 2026-10-30). A daily @latest run would not notice breakage. The matrix
-# tracks `@corsa-bind/napi@beta` against three tsgo lines: the lockfile pin,
-# `typescript@beta` (the 7.1 RC / stable line), and `typescript@next` (protocol
-# changes show up here first). A pinned baseline cell stays so a beta-only
-# failure is distinguishable from a broken suite. Pin cells keep the lockfile's
-# native-preview and do not float `@latest`.
+# `@typescript/native-preview@latest` is frozen at 7.0.0-dev.20260707.2, which
+# is also the lockfile pin (#49) together with `@corsa-bind/napi@1.15.0`. A
+# daily @latest run would not notice breakage. The matrix tracks
+# `@corsa-bind/napi@beta` against three tsgo lines: that pin, `typescript@beta`
+# (the 7.1 RC / stable line), and `typescript@next` (protocol changes show up
+# here first). A pinned baseline cell stays so a beta-only failure is
+# distinguishable from a broken suite. Pin cells do not float `@latest`.
+#
+# The meta-package bin entry is `bin/tsgo` (it was `bin/tsgo.js`). That file is
+# a Node launcher. The checker Corsa spawns, and the path pin cells record, is
+# the platform package's `lib/tsgo`, the same path `resolveTsgoExecutable` uses.
 #
 # Schedule failure mail goes only to the person who last modified this file
 # (GitHub's schedule notification rule). This workflow does not open issues or
@@ -180,6 +184,7 @@ jobs:
           const metaRequire = createRequire(np.path)
           const platName = `@typescript/native-preview-${process.platform}-${process.arch}`
           const plat = resolvePkg(metaRequire, platName)
+          // Native checker, not the `bin/tsgo` Node launcher (formerly `bin/tsgo.js`).
           const pinnedExe = join(dirname(plat.path), "lib", "tsgo")
 
           const override = process.env.TSKM_TEST_TSGO_EXECUTABLE
