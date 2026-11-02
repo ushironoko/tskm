@@ -6,7 +6,6 @@ import {
   boolean,
   type Config,
   check,
-  coerce,
   minLength,
   minValue,
   nullish,
@@ -14,6 +13,7 @@ import {
   object,
   optional,
   pipe,
+  preprocess,
   safeParse,
   string,
   type TransformContext,
@@ -127,8 +127,13 @@ describe("safeParseCompiled — piped/refined child in a container (the PoC bypa
     expectParity(schema, [12, 99])
   })
 
-  it("coerce-in-container: compiled output is the coerced value, matching the interpreter", () => {
-    const schema = object({ port: coerce.number() })
+  it("preprocess-in-container: compiled output is the converted value, matching the interpreter", () => {
+    const asNumber = () =>
+      preprocess((value) => {
+        if (typeof value !== "string") return value
+        return Number(value)
+      }, number())
+    const schema = object({ port: asNumber() })
     const compiled = safeParseCompiled(schema, { port: "8080" })
     expect(compiled.success).toBe(true)
     if (compiled.success) {
@@ -139,9 +144,9 @@ describe("safeParseCompiled — piped/refined child in a container (the PoC bypa
     expectParity(schema, { port: "nope" })
 
     const nested = object({
-      server: object({ port: coerce.number() }),
-      ports: array(coerce.number()),
-      rows: array(object({ port: coerce.number() })),
+      server: object({ port: asNumber() }),
+      ports: array(asNumber()),
+      rows: array(object({ port: asNumber() })),
     })
     const input = {
       server: { port: "8080" },

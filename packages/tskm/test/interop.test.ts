@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import * as v from "valibot"
-import { coerce, number, object, string } from "../src/index.ts"
+import { number, object, preprocess, string } from "../src/index.ts"
 
 /**
  * Runtime interop proof (issue #23, requirement 6). The type-level conformance against
@@ -48,8 +48,14 @@ describe("Standard Schema interop: one generic consumer, two libraries", () => {
     }
   })
 
-  it("consumes a coerced number through the same consumer", async () => {
-    const result = await consume(coerce.number(), "4")
+  it("consumes a preprocessed number through the same consumer", async () => {
+    const result = await consume(
+      preprocess((value) => {
+        if (typeof value !== "string") return value
+        return Number(value)
+      }, number()),
+      "4",
+    )
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.value).toBe(4)

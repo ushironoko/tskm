@@ -3,10 +3,6 @@ import { expectTypeOf } from "expect-type"
 import {
   array,
   assert,
-  type BigintSchema,
-  type BooleanSchema,
-  coerce,
-  type DateSchema,
   type DescriptionAction,
   description,
   type InferInput,
@@ -14,18 +10,15 @@ import {
   is,
   maxValue,
   minValue,
-  type NumberSchema,
   number,
   object,
   objectAsync,
   optional,
   type PipeItem,
-  type PreprocessSchema,
   parse,
   pipe,
   preprocess,
   preprocessAsync,
-  type StringSchema,
   string,
   transform,
 } from "../src/index.ts"
@@ -87,17 +80,13 @@ describe("sync/async soundness", () => {
   })
 })
 
-describe("preprocess and coerce types", () => {
-  test("coerce helpers keep the inner schema as TWrapped and unknown as the input", () => {
-    expectTypeOf<ReturnType<typeof coerce.string>>().toEqualTypeOf<PreprocessSchema<StringSchema>>()
-    expectTypeOf<ReturnType<typeof coerce.number>>().toEqualTypeOf<PreprocessSchema<NumberSchema>>()
-    expectTypeOf<ReturnType<typeof coerce.boolean>>().toEqualTypeOf<
-      PreprocessSchema<BooleanSchema>
-    >()
-    expectTypeOf<ReturnType<typeof coerce.bigint>>().toEqualTypeOf<PreprocessSchema<BigintSchema>>()
-    expectTypeOf<ReturnType<typeof coerce.date>>().toEqualTypeOf<PreprocessSchema<DateSchema>>()
-
-    const port = pipe(coerce.number(), minValue(1), maxValue(65535))
+describe("preprocess types", () => {
+  test("preprocess keeps unknown as the input and the inner schema as the output", () => {
+    const port = pipe(
+      preprocess((value) => Number(value), number()),
+      minValue(1),
+      maxValue(65535),
+    )
     expectTypeOf<InferInput<typeof port>>().toEqualTypeOf<unknown>()
     expectTypeOf<InferOutput<typeof port>>().toEqualTypeOf<number>()
 
@@ -112,7 +101,7 @@ describe("preprocess and coerce types", () => {
     expectTypeOf<InferInput<typeof counted>>().toEqualTypeOf<unknown>()
     expectTypeOf<InferOutput<typeof counted>>().toEqualTypeOf<number>()
 
-    const maybe = optional(coerce.number())
+    const maybe = optional(preprocess((value) => Number(value), number()))
     expectTypeOf<InferOutput<typeof maybe>>().toEqualTypeOf<number | undefined>()
   })
 
@@ -126,7 +115,7 @@ describe("preprocess and coerce types", () => {
   })
 
   test("is and assert narrow the original value to InferOutput", () => {
-    const schema = coerce.number()
+    const schema = preprocess((value) => Number(value), number())
     const value: unknown = "8080"
     if (is(schema, value)) {
       expectTypeOf(value).toEqualTypeOf<number>()

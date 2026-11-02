@@ -38,7 +38,6 @@ export { type ArraySchema, array } from "./schemas/array.ts"
 export { type ArraySchemaAsync, arrayAsync } from "./schemas/arrayAsync.ts"
 export { type BigintSchema, bigint } from "./schemas/bigint.ts"
 export { type BooleanSchema, boolean } from "./schemas/boolean.ts"
-export { coerce } from "./schemas/coerce.ts"
 export { type DateSchema, date } from "./schemas/date.ts"
 export {
   type DiscriminatedUnionMembers,
