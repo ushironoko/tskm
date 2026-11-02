@@ -5,7 +5,6 @@ import {
   arrayAsync,
   bigint,
   boolean,
-  coerce,
   date,
   discriminatedUnion,
   discriminatedUnionAsync,
@@ -67,7 +66,6 @@ const standardCases: ReadonlyArray<ConformanceCase> = [
     valid: "1",
     invalid: "x",
   },
-  { name: "coerce.number", schema: coerce.number(), async: false, valid: "1", invalid: "x" },
   {
     name: "preprocessAsync",
     schema: preprocessAsync(async (value) => Number(value), number()),

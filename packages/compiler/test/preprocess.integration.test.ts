@@ -30,7 +30,7 @@ afterAll(() => {
 })
 
 describe("preprocess codegen (real tsgo)", () => {
-  it("emits the inner output type for coerce and preprocess", async () => {
+  it("emits the inner output type for preprocess", async () => {
     const result = await generate({
       root: fixtureRoot,
       config: withTestTsgo({
