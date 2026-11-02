@@ -7,7 +7,6 @@ import {
   boolean,
   brand,
   check,
-  coerce,
   date,
   description,
   discriminatedUnion,
@@ -114,7 +113,14 @@ const agree: ReadonlyArray<readonly [string, unknown]> = [
   ["lazy", lazy(() => object({ a: string() }))],
   ["recursive", recursive((self) => object({ name: string(), children: array(self) }))],
   ["preprocess output", preprocess((value) => Number(value), number())],
-  ["coerce pipe output", pipe(coerce.number(), minValue(1), maxValue(65535))],
+  [
+    "preprocess pipe output",
+    pipe(
+      preprocess((value) => Number(value), number()),
+      minValue(1),
+      maxValue(65535),
+    ),
+  ],
   ["nested", object({ items: array(union([string(), nullable(number())])) })],
 ]
 
@@ -209,7 +215,7 @@ describe("known differences from the compiler emitter", () => {
   })
 
   it("preprocess input: emitter has only the output shape, core input is {}", () => {
-    const schema = coerce.number()
+    const schema = preprocess((value) => Number(value), number())
     const emitted = schemaToJsonSchema(schema)
     expect(emitted.schema).toEqual({ type: "number" })
     expect(emitted.warnings).toEqual([

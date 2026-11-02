@@ -429,7 +429,7 @@ function walkPipe(schema: SchemaLike & { pipe: unknown[] }, ctx: WalkContext): J
   if (!isObject(base)) {
     fail("cannot convert a pipe whose base is not a schema object")
   }
-  // Constraints on a preprocess validate the coerced value, not the raw input.
+  // Constraints on a preprocess validate the value the operation produced, not the raw input.
   if (ctx.io === "input" && base.type === "preprocess") {
     return {}
   }

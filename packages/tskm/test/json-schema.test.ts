@@ -9,7 +9,6 @@ import {
   brand,
   check,
   checkAsync,
-  coerce,
   date,
   description,
   discriminatedUnion,
@@ -313,7 +312,7 @@ describe("Standard JSON Schema — input and output", () => {
     ).toThrow("tskm: cannot represent a default value in JSON Schema: the default is undefined")
   })
 
-  it("splits preprocess and coerce into an open input and a constrained output", () => {
+  it("splits preprocess into an open input and a constrained output", () => {
     const schema = pipe(
       preprocess((value) => Number(value), number()),
       minValue(1),
@@ -321,8 +320,6 @@ describe("Standard JSON Schema — input and output", () => {
     )
     expect(input(schema)).toEqual({})
     expect(output(schema)).toEqual({ type: "number", minimum: 1, maximum: 9 })
-    expect(input(coerce.number())).toEqual({})
-    expect(output(coerce.string())).toEqual({ type: "string" })
     expect(input(preprocess((value) => value, bigint()))).toEqual({})
     expect(() => output(preprocess((value) => value, bigint()))).toThrow(/bigint/)
   })
@@ -566,8 +563,12 @@ describe("Standard JSON Schema — errors", () => {
       "vendor",
       "version",
     ])
-    expect(wrapped["~standard"].validate).toBe(schema["~standard"].validate)
-    expect(wrapped["~standard"].validate({ a: "x" })).toEqual({ value: { a: "x" } })
+    const first = wrapped["~standard"]
+    const second = wrapped["~standard"]
+    expect(first).toBe(second)
+    expect(first.jsonSchema).toBe(second.jsonSchema)
+    expect(first.validate).toBe(schema["~standard"].validate)
+    expect(first.validate({ a: "x" })).toEqual({ value: { a: "x" } })
     expect(() => unrepresentable["~standard"].jsonSchema.output(draft)).toThrow(
       'tskm: cannot convert schema type "bigint" to JSON Schema: bigint has no JSON representation',
     )

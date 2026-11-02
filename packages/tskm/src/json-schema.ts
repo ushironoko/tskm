@@ -22,23 +22,21 @@ export type { StandardJSONSchemaV1 } from "./types/standard.ts"
 export function withJsonSchema<TSchema extends AnySchema>(
   schema: TSchema,
 ): TSchema & StandardJSONSchemaV1<InferInput<TSchema>, InferOutput<TSchema>> {
+  // One plain object, not a getter. Each read of `~standard` must be the same
+  // reference, and `jsonSchema` must be stable across those reads. Spreading the
+  // base props keeps `version`, `vendor`, `validate`, and `types` (when present)
+  // identical to the original.
+  const base = schema["~standard"]
+  const jsonSchema = {
+    input(options: JsonSchemaOptions) {
+      return convertToJsonSchema(schema, "input", options)
+    },
+    output(options: JsonSchemaOptions) {
+      return convertToJsonSchema(schema, "output", options)
+    },
+  }
   return {
     ...schema,
-    get "~standard"() {
-      const base = schema["~standard"]
-      return {
-        version: base.version,
-        vendor: base.vendor,
-        validate: base.validate,
-        jsonSchema: {
-          input(options: JsonSchemaOptions) {
-            return convertToJsonSchema(schema, "input", options)
-          },
-          output(options: JsonSchemaOptions) {
-            return convertToJsonSchema(schema, "output", options)
-          },
-        },
-      }
-    },
+    "~standard": { ...base, jsonSchema },
   } as TSchema & StandardJSONSchemaV1<InferInput<TSchema>, InferOutput<TSchema>>
 }
