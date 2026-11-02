@@ -62,6 +62,26 @@ describe("preprocess", () => {
     expect(nope.output).toBeNaN()
   })
 
+  it("rejects strings outside an explicit decimal grammar", () => {
+    const port = preprocess(
+      (value) => (typeof value === "string" && /^[0-9]+$/.test(value) ? Number(value) : value),
+      number(),
+    )
+    expect(parse(port, "8080")).toBe(8080)
+    const empty = failure(port, "")
+    expect(empty.issues[0]?.type).toBe("number")
+    expect(empty.output).toBe("")
+    const hex = failure(port, "0x1F")
+    expect(hex.issues[0]?.type).toBe("number")
+    expect(hex.output).toBe("0x1F")
+    const padded = failure(port, " 8080 ")
+    expect(padded.issues[0]?.type).toBe("number")
+    expect(padded.output).toBe(" 8080 ")
+    const exponent = failure(port, "1e3")
+    expect(exponent.issues[0]?.type).toBe("number")
+    expect(exponent.output).toBe("1e3")
+  })
+
   it("runs inside optional and array instead of skipping the wrapper", () => {
     let calls = 0
     const wrapped = optional(

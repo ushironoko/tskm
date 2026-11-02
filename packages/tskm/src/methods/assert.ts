@@ -13,10 +13,12 @@ import { tskmError } from "../utils/errors.ts"
  *
  * The assertion narrows the original value to `InferOutput`. That is unsound
  * for a schema that transforms the value (`preprocess`, `transform`):
- * `assert(preprocess((value) => Number(value), number()), "8080")` types the
- * string as `number` while the runtime value is still `"8080"`. For schemas
- * that contain a transformation, use the output of `parse` / `safeParse`, not
- * the original value.
+ * `assert(preprocess(digits, number()), "8080")` types the string as `number`
+ * while the runtime value is still `"8080"`. `digits` returns the value
+ * unchanged unless it matches `/^[0-9]+$/`:
+ * `(value) => (typeof value === "string" && /^[0-9]+$/.test(value) ? Number(value) : value)`.
+ * For schemas that contain a transformation, use the output of `parse` /
+ * `safeParse`, not the original value.
  */
 export function assert<const TSchema extends BaseSchema<unknown, unknown>>(
   schema: TSchema,

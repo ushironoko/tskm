@@ -1,20 +1,20 @@
 import { boolean, maxValue, minValue, number, object, pipe, preprocess } from "@tskm/core"
 
 export const portSchema = pipe(
-  preprocess((value) => {
-    if (typeof value !== "string") return value
-    return Number(value)
-  }, number()),
+  preprocess(
+    (value) => (typeof value === "string" && /^[0-9]+$/.test(value) ? Number(value) : value),
+    number(),
+  ),
   minValue(1),
   maxValue(65535),
 )
 
 export const serverSchema = object({
   port: pipe(
-    preprocess((value) => {
-      if (typeof value !== "string") return value
-      return Number(value)
-    }, number()),
+    preprocess(
+      (value) => (typeof value === "string" && /^[0-9]+$/.test(value) ? Number(value) : value),
+      number(),
+    ),
     minValue(1),
     maxValue(65535),
   ),

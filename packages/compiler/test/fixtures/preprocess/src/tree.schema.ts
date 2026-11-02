@@ -3,10 +3,10 @@ import { number, object, optional, preprocess, recursive, string } from "@tskm/c
 export const treeSchema = recursive((self) =>
   object({
     name: string(),
-    score: preprocess((value) => {
-      if (typeof value !== "string") return value
-      return Number(value)
-    }, number()),
+    score: preprocess(
+      (value) => (typeof value === "string" && /^[0-9]+$/.test(value) ? Number(value) : value),
+      number(),
+    ),
     child: optional(self),
   }),
 )

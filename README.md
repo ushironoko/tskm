@@ -137,10 +137,10 @@ Methods: `pipe parse safeParse is assert fallback` (+ `parseAsync safeParseAsync
 import { boolean, maxValue, minValue, number, pipe, preprocess, parse } from "@tskm/core"
 
 const port = pipe(
-  preprocess((value) => {
-    if (typeof value !== "string") return value
-    return Number(value)
-  }, number()),
+  preprocess(
+    (value) => (typeof value === "string" && /^[0-9]+$/.test(value) ? Number(value) : value),
+    number(),
+  ),
   minValue(1),
   maxValue(65535),
 )
