@@ -135,8 +135,9 @@ function openContext(original: unknown): {
  * Sync only. An async inner schema is a compile-time error (use
  * `preprocessAsync`). An async operation type-checks, because its return type
  * is `unknown`, but a thenable return fails at runtime with a preprocess issue
- * that says to use `preprocessAsync`. The inner schema does not run, and the
- * thenable is not awaited.
+ * that says to use `preprocessAsync`. The inner schema does not run. The
+ * thenable is not awaited; a rejection handler is attached so a rejected
+ * thenable does not become an unhandledRejection.
  */
 // @__NO_SIDE_EFFECTS__
 export function preprocess<TWrapped extends BaseSchema<unknown, unknown>>(
@@ -166,6 +167,9 @@ export function preprocess<TWrapped extends BaseSchema<unknown, unknown>>(
         return dataset as unknown as OutputDataset<InferOutput<TWrapped>>
       }
       if (isThenable(produced)) {
+        // Same turn, no await. Attaching the handler here stops Node from
+        // crashing on the rejected thenable we are about to drop.
+        Promise.resolve(produced).catch(() => {})
         issues.push(preprocessIssue(original, PREPROCESS_THEN_MESSAGE, "error"))
         halt(dataset, original, issues)
         return dataset as unknown as OutputDataset<InferOutput<TWrapped>>

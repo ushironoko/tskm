@@ -317,19 +317,16 @@ describe("preprocess", () => {
   })
 
   it("rejects a thenable operation and does not run the inner schema", () => {
-    let settled = false
-    // Intentional thenable: preprocess must reject it without calling `then`.
     const schema = preprocess(
       () => ({
         // biome-ignore lint/suspicious/noThenProperty: the value under test is a thenable
         then() {
-          settled = true
+          // Promise.resolve adopts the thenable to attach a rejection handler.
         },
       }),
       number(),
     )
     const result = failure(schema, "4")
-    expect(settled).toBe(false)
     expect(result.output).toBe("4")
     expect(result.issues).toHaveLength(1)
     expect(result.issues[0]).toMatchObject({
@@ -349,6 +346,54 @@ describe("preprocess", () => {
     expect(asyncFn.issues[0]?.message).toBe(
       "Invalid preprocess: operation returned a Promise; use preprocessAsync",
     )
+  })
+
+  it("swallows a rejected thenable without an unhandledRejection", async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason)
+    }
+    process.on("unhandledRejection", onUnhandled)
+    try {
+      const result = failure(
+        preprocess(() => Promise.reject(new Error("x")), number()),
+        "4",
+      )
+      expect(result.output).toBe("4")
+      expect(result.issues).toHaveLength(1)
+      expect(result.issues[0]).toMatchObject({
+        type: "preprocess",
+        message: "Invalid preprocess: operation returned a Promise; use preprocessAsync",
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off("unhandledRejection", onUnhandled)
+    }
+  })
+
+  it("treats a function with a then method as a thenable", () => {
+    const fn = (() => 1) as { (): number; then?: () => void }
+    // biome-ignore lint/suspicious/noThenProperty: function-valued thenable
+    fn.then = () => {}
+    const result = failure(
+      preprocess(() => fn, number()),
+      "4",
+    )
+    expect(result.output).toBe("4")
+    expect(result.issues[0]?.type).toBe("preprocess")
+    expect(result.issues[0]?.message).toBe(
+      "Invalid preprocess: operation returned a Promise; use preprocessAsync",
+    )
+  })
+
+  it("does not treat undefined as a thenable", () => {
+    const result = failure(
+      preprocess(() => undefined, string()),
+      1,
+    )
+    expect(result.issues).toHaveLength(1)
+    expect(result.issues[0]?.type).toBe("string")
   })
 
   it("does not treat null as a thenable", () => {

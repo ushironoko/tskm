@@ -2,21 +2,8 @@ import { afterAll, describe, expect, it } from "bun:test"
 import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import type { TskmConfig } from "../src/config.ts"
 import { generate } from "../src/index.ts"
-
-/**
- * Honors the compat-CI override (`TSKM_TEST_TSGO_EXECUTABLE`) the same way as
- * `withTestTsgo` in `tsgo-test-executable.ts`. Kept local so this file does not
- * depend on that module, which lands with the checker-compat CI change.
- */
-function withTestTsgo(config: TskmConfig): TskmConfig {
-  const executable = process.env.TSKM_TEST_TSGO_EXECUTABLE
-  if (executable === undefined || executable.trim() === "" || config.executable !== undefined) {
-    return config
-  }
-  return { ...config, executable }
-}
+import { withTestTsgo } from "./tsgo-test-executable.ts"
 
 const fixtureRoot = fileURLToPath(new URL("./fixtures/preprocess", import.meta.url))
 const src = (file: string): string =>
