@@ -48,6 +48,22 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
   let command: ResolvedConfig["command"] | undefined
   let controller: WatchController | undefined
 
+  // One generate per wave of environment builds. A wave is shared with an
+  // environment that has not taken it yet (client then ssr in one `buildApp`,
+  // including when those `buildStart`s overlap). The same environment's next
+  // `buildStart` is a rebuild and starts a new wave. `sharedDuringBuild` keeps
+  // this closure shared; Vite still calls the hook per environment.
+  // `configResolved` drops the wave so the next `build()` starts clean.
+  // Vite 5 has no `this.environment`; every call uses "default" and therefore
+  // starts a new wave, which is one generate per `buildStart`.
+  let wave:
+    | { readonly pass: Promise<void>; readonly consumed: Set<string>; closed: boolean }
+    | undefined
+  // Environments that have already taken some wave. A later rebuild must not
+  // join a sibling's already-finished wave (that pass does not include this
+  // rebuild's edits). The first build of an environment still may.
+  let seen = new Set<string>()
+
   const resolveRoot = (): string | undefined => options.root ?? viteRoot
 
   // `vite dev` runs both hooks. The compiler watcher generates once as it starts
@@ -56,6 +72,11 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
   // never calls `configureServer`, and still generates from `buildStart`.
   const devWatcherOwnsInitialGenerate = (): boolean =>
     command === "serve" && options.watch !== false
+
+  const clearWave = (): void => {
+    wave = undefined
+    seen = new Set()
+  }
 
   const closeWatcher = async (): Promise<void> => {
     if (!controller) {
@@ -66,24 +87,50 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
     await current.close()
   }
 
-  return {
-    name: "tskm",
-
-    configResolved(config: ResolvedConfig) {
-      viteRoot = config.root
-      command = config.command
-    },
-
-    async buildStart() {
-      if (devWatcherOwnsInitialGenerate()) {
-        return
-      }
-      const result = await deps.generate({
+  const beginWave = (env: string): Promise<void> => {
+    const consumed = new Set<string>([env])
+    const pass = deps
+      .generate({
         root: resolveRoot(),
         mode: options.mode,
         pretty: options.pretty,
       })
-      logResult(result)
+      .then(logResult)
+    wave = { pass, consumed, closed: false }
+    seen.add(env)
+    return pass
+  }
+
+  return {
+    name: "tskm",
+    // Share this instance across environments so the wave above is shared too.
+    sharedDuringBuild: true,
+
+    configResolved(config: ResolvedConfig) {
+      viteRoot = config.root
+      command = config.command
+      clearWave()
+    },
+
+    async buildStart(this: { environment?: { name?: string } } | undefined) {
+      if (devWatcherOwnsInitialGenerate()) {
+        return
+      }
+      const env = this?.environment?.name ?? "default"
+      const firstTime = !seen.has(env)
+      // Join when this environment has not taken the current wave, and either
+      // it has never built (sequential client-then-ssr, even after `buildEnd`)
+      // or the wave is still open (the other environment has not `buildEnd`ed,
+      // so a shared-file rebuild can share one generate).
+      // A never-built environment also joins a closed wave. If buildApp builds client,
+      // rewrites schema sources, then builds ssr for the first time, ssr shares that stale pass.
+      if (wave && !wave.consumed.has(env) && (firstTime || !wave.closed)) {
+        wave.consumed.add(env)
+        seen.add(env)
+        await wave.pass
+        return
+      }
+      await beginWave(env)
     },
 
     async configureServer(server) {
@@ -108,6 +155,9 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
     },
 
     async buildEnd() {
+      if (wave) {
+        wave.closed = true
+      }
       await closeWatcher()
     },
 
