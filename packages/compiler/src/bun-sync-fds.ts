@@ -43,7 +43,7 @@ export function installBunSyncChannelFds(): void {
     const stdout = this.stdout
     const stdin = this.stdin
     if (piped && stdin !== null && stdout !== null && stdout._handle == null) {
-      const created = [...socketFds().keys()].filter((fd) => !before.has(fd)).sort((a, b) => a - b)
+      const created = newPipeFds(before)
       const writeFd = created[0]
       const readFd = created[1]
       if (writeFd !== undefined && readFd !== undefined) {
@@ -66,19 +66,25 @@ function socketFds(): Map<number, string> {
   const found = new Map<number, string>()
   for (const entry of readdirSync("/proc/self/fd")) {
     const fd = Number(entry)
-    if (!Number.isInteger(fd)) {
-      continue
-    }
+    if (!Number.isInteger(fd)) continue
     try {
       const link = readlinkSync(`/proc/self/fd/${entry}`)
-      if (link.startsWith("socket:")) {
-        found.set(fd, link)
-      }
+      // Bun's stdio pipes are socketpairs. A recycled fd number keeps the old
+      // key but points at a new inode, so identity is the link text, not the number.
+      if (link.startsWith("socket:") || link.startsWith("pipe:")) found.set(fd, link)
     } catch {
       // The fd can close between readdir and readlink.
     }
   }
   return found
+}
+
+function newPipeFds(before: Map<number, string>): number[] {
+  const created: number[] = []
+  for (const [fd, link] of socketFds()) {
+    if (before.get(fd) !== link) created.push(fd)
+  }
+  return created.sort((a, b) => a - b)
 }
 
 interface FcntlLib {
