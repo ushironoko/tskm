@@ -9,6 +9,11 @@ profiles use Bun's native `--cpu-prof`, which writes a standard V8 `.cpuprofile`
 loads directly in speedscope and Chrome DevTools, and converts to pprof with the usual
 tooling. The `--cpu-prof-md` pass also writes a grep-friendly markdown call summary.
 
+`compare/` is a separate bench (its own `package.json`, not a workspace) that
+runs `@tskm/core` against zod, valibot, arktype, typebox, and effect on one
+payload. Measured numbers are in `compare/RESULTS.md`. Run it with the steps in
+`compare/README.md`.
+
 ## Layout
 
 - `lib/measure.ts` is the zero-dep micro-bench. It self-calibrates the inner repeat count,
