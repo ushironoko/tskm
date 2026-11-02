@@ -329,17 +329,17 @@ The **experimental JSON Schema** emitter is different: it walks the runtime sche
 
 ### Standard JSON Schema on the schema
 
-Every `@tskm/core` schema implements [Standard JSON Schema](https://github.com/standard-schema/standard-schema/blob/main/packages/spec/json-schema.md) (`~standard.jsonSchema.input` / `output`). The walker is a separate entry, so a program that never converts schemas does not bundle it:
+JSON Schema conversion is opt-in. `withJsonSchema` from `@tskm/core/json-schema` returns a new object that implements [Standard JSON Schema](https://github.com/standard-schema/standard-schema/blob/main/packages/spec/json-schema.md). The argument is not modified, and a program that never imports this entry does not bundle the walker.
 
 ```ts
 import { object, string } from "@tskm/core"
-import "@tskm/core/json-schema"
+import { withJsonSchema } from "@tskm/core/json-schema"
 
-const User = object({ name: string() })
+const User = withJsonSchema(object({ name: string() }))
 User["~standard"].jsonSchema.input({ target: "draft-07" })
 ```
 
-Supported targets are `draft-2020-12`, `draft-07`, and `openapi-3.0`. For schemas the `tskm json-schema` emitter can represent, `output({ target: "draft-2020-12" })` matches that emitter. `input` and `output` differ for `preprocess` / `coerce` (input is `{}`), for a JSON `default` on `optional` / `nullable` / `nullish` (the keyword is on the input), and for `fallback` (the keyword is on the output). `transform` output, `check`, `bigint`, `date`, and `undefined` throw with the reason, instead of the emitter's lossy stand-in. Vercel AI SDK's `tool({ inputSchema })` calls `jsonSchema.input({ target: "draft-07" })`; import the entry before that runs.
+Supported targets are `draft-2020-12`, `draft-07`, and `openapi-3.0`. For schemas the `tskm json-schema` emitter can represent, `output({ target: "draft-2020-12" })` matches that emitter. `input` and `output` differ for `preprocess` / `coerce` (input is `{}`), for a JSON `default` on `optional` / `nullable` / `nullish` (the keyword is on the input), and for `fallback` (the keyword is on the output). `transform` output, `check`, `bigint`, `date`, and `undefined` throw when `input` or `output` is called, not when the schema is wrapped. Vercel AI SDK's `tool({ inputSchema })` calls `jsonSchema.input({ target: "draft-07" })`, so pass the wrapped schema.
 
 ## Standard Schema interop
 

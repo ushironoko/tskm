@@ -1,6 +1,6 @@
 import type { Config } from "./config.ts"
 import type { OutputDataset, SuccessDataset, UnknownDataset } from "./dataset.ts"
-import type { StandardJSONSchemaV1, StandardSchemaV1 } from "./standard.ts"
+import type { StandardSchemaV1 } from "./standard.ts"
 
 /**
  * Standard Schema props whose phantom `types` carrier is surfaced as PRESENT, rather
@@ -15,17 +15,12 @@ import type { StandardJSONSchemaV1, StandardSchemaV1 } from "./standard.ts"
  * longer forces a `NonNullable`/optional check, so a type-checked runtime READ
  * (`schema["~standard"].types.output`) compiles but throws. Use it only as a type
  * (`(typeof schema)["~standard"]["types"]["output"]`), never as a value.
- *
- * `jsonSchema` is the opposite: it is a real runtime field (Standard JSON Schema).
- * The methods delegate to a converter installed by `@tskm/core/json-schema`, so the
- * main entry does not embed the walker.
  */
 export type StandardProps<TInput, TOutput> = Omit<
   StandardSchemaV1.Props<TInput, TOutput>,
   "types"
 > & {
   readonly types: StandardSchemaV1.Types<TInput, TOutput>
-  readonly jsonSchema: StandardJSONSchemaV1.Converter
 }
 
 /** A synchronous schema: a tagged plain object created by a factory function. */

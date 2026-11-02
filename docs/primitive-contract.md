@@ -10,7 +10,7 @@ The Standard Schema v1 interface is vendored verbatim in `packages/tskm/src/type
 
 - `~standard.validate` returns a plain result for a sync schema and a `Promise` for an async one. It never mixes the two for one schema.
 - `~standard.types` is a present, type-level-only carrier of `input` and `output`. It exposes those two members and no other. It is absent at runtime, so it must never be read as a runtime value.
-- The runtime `~standard` object is `version`, `vendor`, `validate`, and `jsonSchema`. `jsonSchema.input` / `jsonSchema.output` are Standard JSON Schema. The converter is installed by importing `@tskm/core/json-schema`; the main entry does not embed the walker. A primitive must not add any other runtime member.
+- The runtime `~standard` object stays `version`, `vendor`, and `validate`. A primitive must not add another runtime member. Standard JSON Schema is opt-in: `withJsonSchema` from `@tskm/core/json-schema` returns a new object whose `~standard` also has `jsonSchema`, and it does not mutate the argument.
 - The external `Issue` stays exactly `{ message, path? }`. The rich internal issue (`kind`, `type`, `expected`, `received`, `input`, and any future severity-like field) must never cross the `_getStandardProps` boundary.
 
 The boundary is the strict allowlist in the conformance harness. The harness rejects any key on a returned issue other than `message` and `path`, so a new internal field cannot leak even by accident.
@@ -29,7 +29,7 @@ The emitter is a duck-typed walker (`packages/compiler/src/jsonschema.ts`). The 
 | key-typed `record(key, value)` | `propertyNames` constraining the key (a pattern for a `templateLiteral` key, an enum for a `picklist` key) plus `additionalProperties` for the value |
 | exact (closed) object | `additionalProperties: false` (already the `object` default) |
 | discriminated union | `oneOf` with `const` on the discriminant, the discriminant key surfaced as an option or vendor extension |
-| `preprocess` / `coerce` | compiler emitter: the inner schema (the output shape), plus a warning that the input accepts any value. `@tskm/core` `~standard.jsonSchema` splits the directions: `output` is the inner schema, `input` is `{}` |
+| `preprocess` / `coerce` | compiler emitter: the inner schema (the output shape), plus a warning that the input accepts any value. `withJsonSchema` splits the directions: `output` is the inner schema, `input` is `{}` |
 
 Two walkers read the same runtime schema graph: the JSON Schema walker and the structural TypeScript walker (`packages/compiler/src/structural-ts.ts`). A primitive that introduces a new `schema.type` case must add it to both walkers in the same change. If only one walker learns a case, the other falls through to its default branch and silently emits `{}` or `unknown` or `additionalProperties: false`.
 

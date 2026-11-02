@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test"
 import { asSchema } from "@ai-sdk/provider-utils"
 import { array, number, object, optional, string } from "@tskm/core"
+import { withJsonSchema } from "@tskm/core/json-schema"
 import { tool } from "ai"
-import "@tskm/core/json-schema"
 
 /**
  * Vercel AI SDK (`ai` 7 + `@ai-sdk/provider-utils` 5) accepts a Standard Schema
@@ -11,11 +11,13 @@ import "@tskm/core/json-schema"
  * otherwise throws "does not support JSON Schema conversion".
  */
 
-const User = object({
-  name: string(),
-  age: number(),
-  tags: optional(array(string())),
-})
+const User = withJsonSchema(
+  object({
+    name: string(),
+    age: number(),
+    tags: optional(array(string())),
+  }),
+)
 
 const expected = {
   type: "object",

@@ -5,8 +5,7 @@ import { dts } from "rolldown-plugin-dts"
 export default defineConfig({
   input: {
     index: "src/index.ts",
-    // Separate entry so the walker is not reachable from the main bundle.
-    // `sideEffects` marks this entry: `import "@tskm/core/json-schema"` must survive tree-shaking.
+    // The walker is only reachable from this entry. The main entry does not import it.
     "json-schema": "src/json-schema.ts",
   },
   // pure library: no Node/browser globals, so emit platform-neutral output

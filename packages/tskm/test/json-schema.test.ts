@@ -1,8 +1,5 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: assertions compare template-literal text that contains "${...}"
 import { describe, expect, it } from "bun:test"
-import { convertToJsonSchema } from "../src/json-schema/convert.ts"
-import { standardJsonSchemaSlot } from "../src/json-schema/slot.ts"
-import "../src/json-schema.ts"
 import {
   any,
   array,
@@ -54,29 +51,23 @@ import {
   unknown,
   url,
 } from "../src/index.ts"
+import { convertToJsonSchema } from "../src/json-schema/convert.ts"
+import { withJsonSchema } from "../src/json-schema.ts"
 
 const draft = { target: "draft-2020-12" } as const
 const draft07 = { target: "draft-07" } as const
 const openapi = { target: "openapi-3.0" } as const
 
-function output(schema: {
-  readonly "~standard": {
-    readonly jsonSchema: {
-      readonly output: (options: { readonly target: string }) => Record<string, unknown>
-    }
-  }
-}) {
-  return schema["~standard"].jsonSchema.output(draft)
+function output(schema: Parameters<typeof withJsonSchema>[0]) {
+  return withJsonSchema(schema)["~standard"].jsonSchema.output(draft)
 }
 
-function input(schema: {
-  readonly "~standard": {
-    readonly jsonSchema: {
-      readonly input: (options: { readonly target: string }) => Record<string, unknown>
-    }
-  }
-}) {
-  return schema["~standard"].jsonSchema.input(draft)
+function input(schema: Parameters<typeof withJsonSchema>[0]) {
+  return withJsonSchema(schema)["~standard"].jsonSchema.input(draft)
+}
+
+function jsonSchema(schema: Parameters<typeof withJsonSchema>[0]) {
+  return withJsonSchema(schema)["~standard"].jsonSchema
 }
 
 describe("Standard JSON Schema — representable schemas", () => {
@@ -229,7 +220,7 @@ describe("Standard JSON Schema — representable schemas", () => {
   it("names a hoisted cycle from libraryOptions.name", () => {
     const category = recursive((self) => object({ name: string(), children: array(self) }))
     expect(
-      category["~standard"].jsonSchema.output({
+      jsonSchema(category).output({
         target: "draft-2020-12",
         libraryOptions: { name: "Category" },
       }).$ref,
@@ -377,7 +368,7 @@ describe("Standard JSON Schema — targets", () => {
   })
 
   it("rewrites tuples, consts, nulls, and $defs for draft-07", () => {
-    expect(schema["~standard"].jsonSchema.output(draft07)).toEqual({
+    expect(jsonSchema(schema).output(draft07)).toEqual({
       type: "object",
       properties: {
         id: { type: "string" },
@@ -394,14 +385,14 @@ describe("Standard JSON Schema — targets", () => {
       additionalProperties: false,
     })
     const category = recursive((self) => object({ name: string(), children: array(self) }))
-    const json = category["~standard"].jsonSchema.output(draft07)
+    const json = jsonSchema(category).output(draft07)
     expect(json.$ref).toBe("#/definitions/recursive")
     expect(json.$defs).toBeUndefined()
     expect(json.definitions).toBeDefined()
   })
 
   it("rewrites OpenAPI 3.0 tuples, consts, and nullable", () => {
-    expect(schema["~standard"].jsonSchema.input(openapi)).toEqual({
+    expect(jsonSchema(schema).input(openapi)).toEqual({
       type: "object",
       properties: {
         id: { type: "string" },
@@ -418,37 +409,37 @@ describe("Standard JSON Schema — targets", () => {
       required: ["id", "pos", "tag", "box"],
       additionalProperties: false,
     })
-    expect(schema["~standard"].jsonSchema.output(openapi).properties).toEqual(
-      schema["~standard"].jsonSchema.input(openapi).properties,
+    expect(jsonSchema(schema).output(openapi).properties).toEqual(
+      jsonSchema(schema).input(openapi).properties,
     )
-    expect(null_()["~standard"].jsonSchema.output(openapi)).toEqual({
+    expect(jsonSchema(null_()).output(openapi)).toEqual({
       type: "string",
       nullable: true,
       enum: [null],
     })
-    expect(literal(1)["~standard"].jsonSchema.output(openapi)).toEqual({
+    expect(jsonSchema(literal(1)).output(openapi)).toEqual({
       type: "number",
       enum: [1],
     })
-    expect(literal(true)["~standard"].jsonSchema.output(openapi)).toEqual({
+    expect(jsonSchema(literal(true)).output(openapi)).toEqual({
       type: "boolean",
       enum: [true],
     })
     const category = recursive((self) => object({ name: string(), child: optional(self) }))
-    const nullableCategory = nullable(category)["~standard"].jsonSchema.output(openapi)
+    const nullableCategory = jsonSchema(nullable(category)).output(openapi)
     expect(nullableCategory.nullable).toBe(true)
     expect(nullableCategory.allOf).toEqual([{ $ref: "#/definitions/recursive" }])
     expect(nullableCategory.$ref).toBeUndefined()
-    expect(union([string(), number(), null_()])["~standard"].jsonSchema.output(openapi)).toEqual({
+    expect(jsonSchema(union([string(), number(), null_()])).output(openapi)).toEqual({
       anyOf: [{ type: "string" }, { type: "number" }],
       nullable: true,
     })
-    expect(union([null_(), null_()])["~standard"].jsonSchema.output(openapi)).toEqual({
+    expect(jsonSchema(union([null_(), null_()])).output(openapi)).toEqual({
       type: "string",
       nullable: true,
       enum: [null],
     })
-    expect(union([string(), number()])["~standard"].jsonSchema.output(openapi)).toEqual({
+    expect(jsonSchema(union([string(), number()])).output(openapi)).toEqual({
       anyOf: [{ type: "string" }, { type: "number" }],
     })
     expect(convertToJsonSchema({ type: "literal", literal: null }, "output", openapi)).toEqual({
@@ -456,13 +447,13 @@ describe("Standard JSON Schema — targets", () => {
       nullable: true,
       enum: [null],
     })
-    expect(tuple([])["~standard"].jsonSchema.output(openapi)).toEqual({
+    expect(jsonSchema(tuple([])).output(openapi)).toEqual({
       type: "array",
       items: { anyOf: [] },
       minItems: 0,
       maxItems: 0,
     })
-    expect(tuple([])["~standard"].jsonSchema.output(draft07)).toEqual({
+    expect(jsonSchema(tuple([])).output(draft07)).toEqual({
       type: "array",
       items: [],
       additionalItems: false,
@@ -471,16 +462,14 @@ describe("Standard JSON Schema — targets", () => {
 
   it("refuses keyed records and unknown targets", () => {
     const keyed = record(picklist(["a"]), number())
-    expect(() => keyed["~standard"].jsonSchema.output(openapi)).toThrow(
+    expect(() => jsonSchema(keyed).output(openapi)).toThrow(
       'tskm: cannot convert a record key constraint to JSON Schema target "openapi-3.0": propertyNames is not part of OpenAPI 3.0',
     )
-    expect(keyed["~standard"].jsonSchema.output(draft07).propertyNames).toEqual({ enum: ["a"] })
-    expect(() => string()["~standard"].jsonSchema.output({ target: "draft-04" })).toThrow(
+    expect(jsonSchema(keyed).output(draft07).propertyNames).toEqual({ enum: ["a"] })
+    expect(() => jsonSchema(string()).output({ target: "draft-04" })).toThrow(
       'tskm: unsupported JSON Schema target "draft-04". Supported targets: "draft-2020-12", "draft-07", "openapi-3.0".',
     )
-    expect(() => string()["~standard"].jsonSchema.input({ target: "openapi-3.1" })).toThrow(
-      /openapi-3\.1/,
-    )
+    expect(() => jsonSchema(string()).input({ target: "openapi-3.1" })).toThrow(/openapi-3\.1/)
   })
 })
 
@@ -517,57 +506,71 @@ describe("Standard JSON Schema — errors", () => {
 
   it("refuses options that are not the spec object", () => {
     expect(() =>
-      string()["~standard"].jsonSchema.input(undefined as unknown as { target: "draft-07" }),
+      jsonSchema(string()).input(undefined as unknown as { target: "draft-07" }),
     ).toThrow("tskm: jsonSchema options must be an object with a target")
     expect(() =>
-      string()["~standard"].jsonSchema.output({
+      jsonSchema(string()).output({
         target: "draft-07",
         libraryOptions: null as unknown as Record<string, unknown>,
       }),
     ).toThrow("tskm: jsonSchema libraryOptions must be a plain object when provided")
     expect(() =>
-      string()["~standard"].jsonSchema.output({
+      jsonSchema(string()).output({
         target: "draft-07",
         libraryOptions: ["nope"] as unknown as Record<string, unknown>,
       }),
     ).toThrow(/libraryOptions must be a plain object/)
     expect(() =>
-      string()["~standard"].jsonSchema.output({
+      jsonSchema(string()).output({
         target: "draft-07",
         libraryOptions: { name: "" },
       }),
     ).toThrow('tskm: jsonSchema libraryOptions.name must be a non-empty string without "/" or "#"')
     expect(() =>
-      string()["~standard"].jsonSchema.output({
+      jsonSchema(string()).output({
         target: "draft-07",
         libraryOptions: { name: "a/b" },
       }),
     ).toThrow(/libraryOptions\.name/)
     expect(() =>
-      string()["~standard"].jsonSchema.output({
+      jsonSchema(string()).output({
         target: "draft-07",
         libraryOptions: { name: "a#b" },
       }),
     ).toThrow(/libraryOptions\.name/)
     expect(() =>
-      string()["~standard"].jsonSchema.output({
+      jsonSchema(string()).output({
         target: "draft-07",
         libraryOptions: { name: 1 as unknown as string },
       }),
     ).toThrow(/libraryOptions\.name/)
   })
 
-  it("throws when the converter has not been installed", () => {
-    const host = globalThis as Record<symbol, unknown>
-    const previous = host[standardJsonSchemaSlot]
-    delete host[standardJsonSchemaSlot]
-    try {
-      expect(() => output(string())).toThrow(
-        'tskm: Standard JSON Schema is not enabled. Import "@tskm/core/json-schema" before calling ~standard.jsonSchema.',
-      )
-    } finally {
-      host[standardJsonSchemaSlot] = previous
-    }
+  it("wraps without throwing and does not mutate the original schema", () => {
+    const schema = object({ a: string() })
+    const keysBefore = Object.keys(schema).sort()
+    const standardBefore = schema["~standard"]
+    const runBefore = schema["~run"]
+    const unrepresentable = withJsonSchema(bigint())
+    const wrapped = withJsonSchema(schema)
+
+    expect(wrapped).not.toBe(schema)
+    expect(Object.keys(schema).sort()).toEqual(keysBefore)
+    expect(schema["~standard"]).toBe(standardBefore)
+    expect(schema["~run"]).toBe(runBefore)
+    expect("jsonSchema" in schema["~standard"]).toBe(false)
+    expect(wrapped.entries).toBe(schema.entries)
+    expect(Object.keys(wrapped["~standard"]).sort()).toEqual([
+      "jsonSchema",
+      "validate",
+      "vendor",
+      "version",
+    ])
+    expect(wrapped["~standard"].validate).toBe(schema["~standard"].validate)
+    expect(wrapped["~standard"].validate({ a: "x" })).toEqual({ value: { a: "x" } })
+    expect(() => unrepresentable["~standard"].jsonSchema.output(draft)).toThrow(
+      'tskm: cannot convert schema type "bigint" to JSON Schema: bigint has no JSON representation',
+    )
   })
 })
 
@@ -658,7 +661,7 @@ describe("Standard JSON Schema — malformed nodes", () => {
 
   it("accepts libraryOptions that carry no name", () => {
     expect(
-      string()["~standard"].jsonSchema.output({
+      jsonSchema(string()).output({
         target: "draft-07",
         libraryOptions: { io: "input" },
       }),

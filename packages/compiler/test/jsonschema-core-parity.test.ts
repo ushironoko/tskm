@@ -43,7 +43,7 @@ import {
   unknown,
   url,
 } from "../../tskm/src/index.ts"
-import "../../tskm/src/json-schema.ts"
+import { withJsonSchema } from "../../tskm/src/json-schema.ts"
 import { schemaToJsonSchema } from "../src/jsonschema.ts"
 
 /**
@@ -57,14 +57,12 @@ import { schemaToJsonSchema } from "../src/jsonschema.ts"
 
 const draft2020 = { target: "draft-2020-12" } as const
 
-function coreOutput(schema: {
-  readonly "~standard": {
-    readonly jsonSchema: {
-      readonly output: (options: typeof draft2020) => Record<string, unknown>
-    }
-  }
-}) {
-  return schema["~standard"].jsonSchema.output(draft2020)
+function coreOutput(schema: Parameters<typeof withJsonSchema>[0]) {
+  return withJsonSchema(schema)["~standard"].jsonSchema.output(draft2020)
+}
+
+function coreInput(schema: Parameters<typeof withJsonSchema>[0]) {
+  return withJsonSchema(schema)["~standard"].jsonSchema.input(draft2020)
 }
 
 const agree: ReadonlyArray<readonly [string, unknown]> = [
@@ -137,43 +135,87 @@ describe("core jsonSchema.output matches the compiler emitter", () => {
   })
 })
 
-describe("known divergences the compiler source is not changed for", () => {
-  it("bigint, date, and undefined: emitter substitutes, core throws", () => {
-    expect(schemaToJsonSchema(bigint()).schema).toEqual({ type: "string" })
-    expect(schemaToJsonSchema(date()).schema).toEqual({ type: "string", format: "date-time" })
-    expect(schemaToJsonSchema(undefined_()).schema).toEqual({})
-    expect(() => coreOutput(bigint())).toThrow(/bigint/)
-    expect(() => coreOutput(date())).toThrow(/Date/)
-    expect(() => coreOutput(undefined_())).toThrow(/undefined/)
+/**
+ * Known differences. The compiler emitter warns and substitutes a stand-in.
+ * `withJsonSchema` throws, or emits a different side, and compiler src stays as it is.
+ * Each case locks both documents so a change on either side fails here.
+ */
+describe("known differences from the compiler emitter", () => {
+  it("bigint: emitter emits a string, core throws", () => {
+    const emitted = schemaToJsonSchema(bigint())
+    expect(emitted.schema).toEqual({ type: "string" })
+    expect(emitted.warnings).toEqual(["tskm: bigint has no JSON representation; emitting string."])
+    expect(() => coreOutput(bigint())).toThrow(
+      'tskm: cannot convert schema type "bigint" to JSON Schema: bigint has no JSON representation',
+    )
   })
 
-  it("check and transform: emitter skips the item, core refuses output", () => {
-    const checked = pipe(
+  it("date: emitter emits a date-time string, core throws", () => {
+    const emitted = schemaToJsonSchema(date())
+    expect(emitted.schema).toEqual({ type: "string", format: "date-time" })
+    expect(emitted.warnings).toEqual(["tskm: Date is serialized as an ISO date-time string."])
+    expect(() => coreOutput(date())).toThrow(
+      'tskm: cannot convert schema type "date" to JSON Schema: Date has no JSON representation',
+    )
+  })
+
+  it("undefined: emitter emits {}, core throws", () => {
+    const emitted = schemaToJsonSchema(undefined_())
+    expect(emitted.schema).toEqual({})
+    expect(emitted.warnings).toEqual(["tskm: undefined has no JSON representation; emitting {}."])
+    expect(() => coreOutput(undefined_())).toThrow(
+      'tskm: cannot convert schema type "undefined" to JSON Schema: undefined has no JSON representation',
+    )
+  })
+
+  it("check: emitter drops the predicate, core throws", () => {
+    const schema = pipe(
       string(),
       check(() => true),
     )
-    const transformed = pipe(
+    const emitted = schemaToJsonSchema(schema)
+    expect(emitted.schema).toEqual({ type: "string" })
+    expect(emitted.warnings).toEqual([
+      'tskm: pipe item "check" is not representable in JSON Schema; skipped.',
+    ])
+    expect(() => coreOutput(schema)).toThrow(
+      'tskm: cannot convert pipe item "check" to JSON Schema: a function predicate has no JSON Schema representation',
+    )
+  })
+
+  it("transform: emitter keeps the base schema, core output throws and input is the pre-transform schema", () => {
+    const schema = pipe(
       string(),
       transform((value: string) => value.length),
     )
-    expect(schemaToJsonSchema(checked).schema).toEqual({ type: "string" })
-    expect(schemaToJsonSchema(transformed).schema).toEqual({ type: "string" })
-    expect(() => coreOutput(checked)).toThrow(/check/)
-    expect(() => coreOutput(transformed)).toThrow(/transform/)
+    const emitted = schemaToJsonSchema(schema)
+    expect(emitted.schema).toEqual({ type: "string" })
+    expect(emitted.warnings).toEqual([
+      'tskm: pipe item "transform" is not representable in JSON Schema; skipped.',
+    ])
+    expect(coreInput(schema)).toEqual({ type: "string" })
+    expect(() => coreOutput(schema)).toThrow(
+      'tskm: cannot convert pipe item "transform" to JSON Schema output: the transform\'s output type is not reified at runtime. input() still describes the schema before the transform',
+    )
   })
 
-  it("fallback: emitter does not know the kind and emits {}; core unwraps it", () => {
+  it("fallback: emitter emits {}, core unwraps the inner schema and puts default on the output", () => {
     const schema = fallback(string(), "x")
     const emitted = schemaToJsonSchema(schema)
     expect(emitted.schema).toEqual({})
-    expect(emitted.warnings.some((warning) => warning.includes("fallback"))).toBe(true)
+    expect(emitted.warnings).toEqual(['tskm: unknown schema type "fallback"; emitting {}.'])
+    expect(coreInput(schema)).toEqual({ type: "string" })
     expect(coreOutput(schema)).toEqual({ type: "string", default: "x" })
   })
 
-  it("preprocess input is {} while the emitter only has the output shape", () => {
+  it("preprocess input: emitter has only the output shape, core input is {}", () => {
     const schema = coerce.number()
-    expect(schemaToJsonSchema(schema).schema).toEqual({ type: "number" })
-    expect(schema["~standard"].jsonSchema.input(draft2020)).toEqual({})
+    const emitted = schemaToJsonSchema(schema)
+    expect(emitted.schema).toEqual({ type: "number" })
+    expect(emitted.warnings).toEqual([
+      "tskm: preprocess changes the value before validation; emitted the output shape; input accepts any value.",
+    ])
     expect(coreOutput(schema)).toEqual({ type: "number" })
+    expect(coreInput(schema)).toEqual({})
   })
 })
