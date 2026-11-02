@@ -1,12 +1,13 @@
 import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
-import { CorsaApiClient } from "@corsa-bind/napi"
+import { installBunSyncChannelFds } from "./bun-sync-fds.ts"
 
 /**
  * typeToString flags: NoTruncation | UseStructuralFallback | InTypeAlias | NoTypeReduction.
  * Empirically required for full, non-truncated expansion of anonymous inferred types.
- * flag=0 truncates around ~259 chars with `...N more...`.
+ * flag=0 truncates around ~259 chars with `...N more...`. The numeric value is the
+ * official TypeFormatFlags mask (1 | 8 | 8388608 | 536870912).
  */
 export const TYPE_TO_STRING_FLAGS = 545259529
 
@@ -35,7 +36,7 @@ export interface TsgoClient {
   /**
    * Batched {@link updateFile}: applies all of `created`/`changed`/`deleted` in ONE
    * snapshot, so registering N query files costs one project re-sync instead of N. The
-   * file-set change (created/deleted) is what tsgo charges for, so batching it is the
+   * file-set change (created/deleted) is what the checker charges for, so batching it is the
    * dominant codegen win on a full run.
    */
   readonly updateFiles: (summary: {
@@ -44,10 +45,10 @@ export interface TsgoClient {
     readonly deleted?: ReadonlyArray<string>
   }) => void
   /**
-   * True when the runtime accepts in-memory `overlayChanges`, letting callers register a
-   * query document without writing it to disk. Determined from the runtime's
-   * describeCapabilities at spawn. A stock native-preview tsgo does not implement the
-   * overlay endpoint, so this is false there and callers fall back to real query files.
+   * True when query documents can be registered in memory. The official sync API always
+   * can, via a `createFileSystemLayer` overlay, so this is true for every client this
+   * module constructs. Callers that pass a stub may still set it false to exercise the
+   * on-disk query-file fallback.
    */
   readonly supportsOverlay: boolean
   /**
@@ -60,11 +61,9 @@ export interface TsgoClient {
   /** Removes in-memory overlay documents previously registered via {@link applyOverlay}. */
   readonly clearOverlay: (documents: ReadonlyArray<string>) => void
   /**
-   * Runs `fn` under ONE snapshot, passing it a `resolveAt` that reuses that
-   * snapshot for every query. Taking a snapshot is the dominant codegen cost, so a
-   * caller that issues many queries against an unchanging file state (all markers of
-   * one query file) should batch them here rather than pay a fresh snapshot per
-   * marker. The snapshot is released exactly once when `fn` returns or throws.
+   * Runs `fn` under the current snapshot, passing it a `resolveAt` that reuses that
+   * snapshot for every query. The file state does not change inside `fn`, so one
+   * snapshot serves every marker. The snapshot stays live until the next update.
    */
   readonly withSnapshot: <T>(
     fn: (resolveAt: (queryFileAbs: string, position: number) => ResolvedType | null) => T,
@@ -73,25 +72,55 @@ export interface TsgoClient {
   readonly resolveTypeAt: (queryFileAbs: string, position: number) => ResolvedType | null
   /**
    * Semantic diagnostics scoped to one file — the fixpoint oracle's measuring
-   * instrument. Goes through the untyped `callJson("getSemanticDiagnostics")` hatch
-   * (not on Corsa's typed surface); if a future Corsa drops the method this returns
-   * a synthetic diagnostic so the caller fails CLOSED (skeleton kept), and the
-   * documented fallback is spawning `tsgo --noEmit` on the probe file.
+   * instrument. If the checker call throws or returns a non-array, this returns
+   * a synthetic diagnostic so the caller fails CLOSED (skeleton kept).
    */
   readonly getDiagnostics: (probeFileAbs: string) => ReadonlyArray<FileDiagnostic>
   readonly close: () => void
 }
 
-interface SnapshotRecord {
-  readonly snapshot: string
-  readonly projects: ReadonlyArray<{ readonly id: string }>
+interface CheckerDiagnostic {
+  readonly code?: number
+  readonly fileName?: string
+  readonly text?: string
 }
 
 /**
- * Resolves the tsgo binary via a two-step require chain: first the meta-package
- * `@typescript/native-preview`, then the platform-specific package next to it.
- * Resolving the platform package directly from this module would fail because it
- * is an optional dependency hoisted under the meta-package.
+ * Maps a checker diagnostic payload to the client's file diagnostics.
+ * A non-array payload is a missing or renamed method: fail CLOSED with a synthetic
+ * diagnostic so an oracle caller never treats silence as soundness.
+ */
+export function toFileDiagnostics(
+  raw: unknown,
+  probeFileAbs: string,
+): ReadonlyArray<FileDiagnostic> {
+  if (!Array.isArray(raw)) {
+    return [{ code: -1, fileName: probeFileAbs }]
+  }
+  const diagnostics: FileDiagnostic[] = []
+  for (const item of raw) {
+    if (item === null || typeof item !== "object") {
+      continue
+    }
+    const diagnostic = item as CheckerDiagnostic
+    const fileName = typeof diagnostic.fileName === "string" ? diagnostic.fileName : ""
+    if (fileName !== "" && fileName !== probeFileAbs) {
+      continue
+    }
+    const text = typeof diagnostic.text === "string" ? diagnostic.text : undefined
+    diagnostics.push({
+      code: typeof diagnostic.code === "number" ? diagnostic.code : 0,
+      fileName: fileName === "" ? probeFileAbs : fileName,
+      ...(text !== undefined ? { text } : {}),
+    })
+  }
+  return diagnostics
+}
+
+/**
+ * Resolves the native checker binary shipped with the `typescript` package:
+ * `@typescript/typescript-<platform>-<arch>/lib/tsc`. The JS `bin/tsc` launcher is
+ * not what the sync API or `--noEmit` probes spawn.
  */
 export function resolveTsgoExecutable(override?: string): string {
   if (override) {
@@ -101,14 +130,27 @@ export function resolveTsgoExecutable(override?: string): string {
     return override
   }
   const require = createRequire(import.meta.url)
-  const metaPkg = require.resolve("@typescript/native-preview/package.json")
+  let metaPkg: string
+  try {
+    metaPkg = require.resolve("typescript/package.json")
+  } catch {
+    throw new Error(
+      "tskm: typescript package not found. Install typescript >=7.1.0-beta <8 (the package that provides typescript/sync).",
+    )
+  }
   const metaRequire = createRequire(metaPkg)
-  const platPkg = metaRequire.resolve(
-    `@typescript/native-preview-${process.platform}-${process.arch}/package.json`,
-  )
-  const exe = join(dirname(platPkg), "lib", "tsgo")
+  const platformPackage = `@typescript/typescript-${process.platform}-${process.arch}`
+  let platformPkg: string
+  try {
+    platformPkg = metaRequire.resolve(`${platformPackage}/package.json`)
+  } catch {
+    throw new Error(
+      `tskm: typescript native binary package not found (${platformPackage}). It is an optional dependency of typescript.`,
+    )
+  }
+  const exe = join(dirname(platformPkg), "lib", process.platform === "win32" ? "tsc.exe" : "tsc")
   if (!existsSync(exe)) {
-    throw new Error(`tskm: tsgo binary not found at ${exe}`)
+    throw new Error(`tskm: typescript native binary not found at ${exe}`)
   }
   return exe
 }
@@ -119,205 +161,273 @@ export interface CreateTsgoClientOptions {
   readonly executable?: string
 }
 
+interface FileNotifications {
+  created?: string[]
+  changed?: string[]
+  deleted?: string[]
+}
+
+interface SnapshotLike {
+  getConfiguredProject(configFileName: string): ProjectLike | undefined
+  update(params: {
+    fileSystem?: unknown
+    fileNotifications?: FileNotifications
+    ensurePrograms?: boolean
+  }): SnapshotLike
+  dispose(): void
+}
+
+interface SyncApi {
+  API: new (options: {
+    cwd: string
+    tsserverPath: string
+    useCaseSensitiveFileNames: boolean
+  }) => { createSnapshot(params: { openProjects: string[] }): SnapshotLike; close(): void }
+}
+
+interface FsApi {
+  createFileSystemLayer(files: ReadonlyArray<readonly [string, string]>): unknown
+}
+
+let syncApi: SyncApi | undefined
+let fsApi: FsApi | undefined
+
+function loadCheckerApi(): { syncApi: SyncApi; fsApi: FsApi } {
+  // Bun's static `import { spawn }` captures the function at evaluation time.
+  // Install the fd shim before the checker module is loaded for the first time.
+  installBunSyncChannelFds()
+  if (syncApi && fsApi) {
+    return { syncApi, fsApi }
+  }
+  const require = createRequire(import.meta.url)
+  syncApi = require(checkerEntrypoint("sync")) as SyncApi
+  fsApi = require(checkerEntrypoint("fs")) as FsApi
+  return { syncApi, fsApi }
+}
+
+function checkerEntrypoint(kind: "sync" | "fs"): string {
+  // A split string keeps the bundler from hoisting this into a top-level import,
+  // which would run before the Bun fd shim.
+  return `typescript/${kind}`
+}
+
+interface ProjectLike {
+  checker: {
+    getTypeAtPosition(file: string, position: number): { flags: number } | undefined
+    typeToString(type: { flags: number }, enclosing: undefined, flags: number): string
+    getStringType(): { flags: number }
+  }
+  program: {
+    getSemanticDiagnostics(file: string): unknown
+  }
+}
+
 /**
- * Spawns and initializes a tsgo (Corsa) client bound to a single open project.
+ * The host file system is case-sensitive except on Windows and macOS.
+ * Passed explicitly so the checker matches the host instead of inferring it
+ * from a path inside the typescript package.
+ */
+function inferCaseSensitiveFileNames(): boolean {
+  return process.platform !== "win32" && process.platform !== "darwin"
+}
+
+function notificationsOf(summary: {
+  readonly created?: ReadonlyArray<string>
+  readonly changed?: ReadonlyArray<string>
+  readonly deleted?: ReadonlyArray<string>
+}): FileNotifications | undefined {
+  const fileNotifications: FileNotifications = {}
+  if (summary.created?.length) {
+    fileNotifications.created = [...summary.created]
+  }
+  if (summary.changed?.length) {
+    fileNotifications.changed = [...summary.changed]
+  }
+  if (summary.deleted?.length) {
+    fileNotifications.deleted = [...summary.deleted]
+  }
+  if (
+    fileNotifications.created === undefined &&
+    fileNotifications.changed === undefined &&
+    fileNotifications.deleted === undefined
+  ) {
+    return undefined
+  }
+  return fileNotifications
+}
+
+/**
+ * Opens one TypeScript project through the official `typescript/sync` API.
  *
- * `openProject` is called exactly once: repeating it stale-caches the initial file
- * contents and never reloads them. Every later file write must flow through
- * `updateFile`/`updateFiles` (fileChanges), never another `openProject`. In-memory
- * `overlayChanges` are used instead of real query files ONLY when the runtime advertises
- * the capability (`supportsOverlay`); a stock native-preview tsgo does not, so callers fall
- * back to writing real query files to disk.
+ * Query documents are an in-memory file-system layer (`createFileSystemLayer`).
+ * They are never written to disk. The project is opened once; later edits go
+ * through `updateFile` / `updateFiles` / the overlay methods, which each produce
+ * one new snapshot. `typescript/sync` hides the wire `project` handle, so a
+ * string-to-number handle change in the server does not reach this client.
  */
 export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
   const executable = resolveTsgoExecutable(options.executable)
-  const client = CorsaApiClient.spawn({
-    executable,
+  const { syncApi: sync, fsApi: fs } = loadCheckerApi()
+  const api = new sync.API({
     cwd: options.cwd,
-    mode: "msgpack",
+    tsserverPath: executable,
+    useCaseSensitiveFileNames: inferCaseSensitiveFileNames(),
   })
-  client.initialize()
+  let snapshot: SnapshotLike
+  try {
+    snapshot = api.createSnapshot({ openProjects: [options.tsconfigPath] }) as SnapshotLike
+    probeStringType(snapshot, options.tsconfigPath)
+  } catch (error) {
+    try {
+      api.close()
+    } catch {
+      // The original failure is the one callers need.
+    }
+    throw error
+  }
 
-  let project = ""
-  const openOnce = (): void => {
-    const snap = client.updateSnapshot({ openProject: options.tsconfigPath }) as SnapshotRecord
-    const first = snap.projects[0]
-    if (!first) {
+  const overlay = new Map<string, string>()
+  let closed = false
+
+  const projectOf = (): ProjectLike => {
+    const project = snapshot.getConfiguredProject(options.tsconfigPath)
+    if (!project) {
       throw new Error(`tskm: tsconfig opened no projects: ${options.tsconfigPath}`)
     }
-    project = first.id
-  }
-  openOnce()
-
-  // Detect in-memory overlay support from the runtime. A stock native-preview tsgo does not
-  // implement the describeCapabilities endpoint (the call throws "unknown API method"), so
-  // overlay stays off and callers write real query files. When upstream tsgo implements
-  // describeCapabilities + overlayChanges this flips on with no other change needed.
-  let overlayCapable = false
-  try {
-    const caps = client.callJson("describeCapabilities", {}) as
-      | { overlay?: { updateSnapshotOverlayChanges?: boolean } }
-      | null
-      | undefined
-    overlayCapable = caps?.overlay?.updateSnapshotOverlayChanges === true
-  } catch {
-    overlayCapable = false
+    return project
   }
 
-  /** Adopts the project id from a snapshot record and releases the short-lived handle. */
-  const consume = (snap: SnapshotRecord): void => {
-    const first = snap.projects[0]
-    if (first) {
-      project = first.id
-    }
-    client.releaseHandle(snap.snapshot)
+  const commit = (summary: {
+    readonly created?: ReadonlyArray<string>
+    readonly changed?: ReadonlyArray<string>
+    readonly deleted?: ReadonlyArray<string>
+  }): void => {
+    const fileNotifications = notificationsOf(summary)
+    const next = snapshot.update({
+      ...(overlay.size > 0 ? { fileSystem: fs.createFileSystemLayer([...overlay.entries()]) } : {}),
+      ...(fileNotifications ? { fileNotifications } : {}),
+      ensurePrograms: true,
+    })
+    const previous = snapshot
+    snapshot = next
+    previous.dispose()
   }
 
   const updateFile: TsgoClient["updateFile"] = (absPath, kind) => {
-    consume(client.updateSnapshot({ fileChanges: { [kind]: [absPath] } }) as SnapshotRecord)
+    commit({ [kind]: [absPath] })
   }
 
   const updateFiles: TsgoClient["updateFiles"] = (summary) => {
-    const fileChanges: { created?: string[]; changed?: string[]; deleted?: string[] } = {}
-    if (summary.created?.length) {
-      fileChanges.created = [...summary.created]
+    if (!summary.created?.length && !summary.changed?.length && !summary.deleted?.length) {
+      return
     }
-    if (summary.changed?.length) {
-      fileChanges.changed = [...summary.changed]
-    }
-    if (summary.deleted?.length) {
-      fileChanges.deleted = [...summary.deleted]
-    }
-    consume(client.updateSnapshot({ fileChanges }) as SnapshotRecord)
+    commit(summary)
   }
 
   const applyOverlay: TsgoClient["applyOverlay"] = (entries) => {
     if (entries.length === 0) {
       return
     }
-    const upsert = entries.map((e) => ({
-      document: e.document,
-      text: e.text,
-      languageId: "typescript",
-    }))
-    consume(client.updateSnapshot({ overlayChanges: { upsert } }) as SnapshotRecord)
+    const created: string[] = []
+    const changed: string[] = []
+    for (const entry of entries) {
+      if (overlay.has(entry.document)) {
+        changed.push(entry.document)
+      } else {
+        created.push(entry.document)
+      }
+      overlay.set(entry.document, entry.text)
+    }
+    commit({ created, changed })
   }
 
   const clearOverlay: TsgoClient["clearOverlay"] = (documents) => {
-    if (documents.length === 0) {
+    const deleted: string[] = []
+    for (const document of documents) {
+      if (overlay.delete(document)) {
+        deleted.push(document)
+      }
+    }
+    if (deleted.length === 0) {
       return
     }
-    consume(client.updateSnapshot({ overlayChanges: { delete: [...documents] } }) as SnapshotRecord)
+    commit({ deleted })
   }
 
-  const withSnapshot: TsgoClient["withSnapshot"] = (fn) => {
-    // Take a no-op snapshot ONCE to obtain a fresh handle for the current file state, then
-    // let `fn` reuse it for every query: within one query file the file state never changes,
-    // so one snapshot serves all markers (avoids one updateSnapshot round trip per marker).
-    // Released exactly once in the finally below.
-    const snap = client.updateSnapshot({ fileChanges: {} }) as SnapshotRecord
-    const first = snap.projects[0]
-    if (first) {
-      project = first.id
-    }
-    const resolveAt = (queryFileAbs: string, position: number): ResolvedType | null => {
-      const handle = client.getTypeAtPosition(snap.snapshot, project, queryFileAbs, position) as
-        | { id: string; flags: number }
-        | null
-        | undefined
-      if (!handle) {
+  const resolveAt = (queryFileAbs: string, position: number): ResolvedType | null => {
+    const checker = projectOf().checker
+    let type: { flags: number } | undefined
+    try {
+      type = checker.getTypeAtPosition(queryFileAbs, position)
+    } catch (error) {
+      // A query document that is not in the project (cleared overlay, bad path)
+      // is a missing type, not a crash. Callers already treat null as fail-closed.
+      if (error instanceof Error && error.message.includes("source file not found")) {
         return null
       }
-      const text = client.typeToString(
-        snap.snapshot,
-        project,
-        handle.id,
-        undefined,
-        TYPE_TO_STRING_FLAGS,
-      )
-      return { flags: handle.flags, text }
+      throw error
     }
-    try {
-      return fn(resolveAt)
-    } finally {
-      client.releaseHandle(snap.snapshot)
+    if (!type) {
+      return null
     }
+    return { flags: type.flags, text: checker.typeToString(type, undefined, TYPE_TO_STRING_FLAGS) }
   }
 
-  // A single-query convenience over withSnapshot, kept so callers that resolve just
-  // one marker need not open a withSnapshot scope themselves.
+  const withSnapshot: TsgoClient["withSnapshot"] = (fn) => fn(resolveAt)
+
   const resolveTypeAt: TsgoClient["resolveTypeAt"] = (queryFileAbs, position) =>
-    withSnapshot((resolveAt) => resolveAt(queryFileAbs, position))
+    resolveAt(queryFileAbs, position)
 
   const getDiagnostics: TsgoClient["getDiagnostics"] = (probeFileAbs) => {
-    const snap = client.updateSnapshot({ fileChanges: {} }) as SnapshotRecord
-    const first = snap.projects[0]
-    if (first) {
-      project = first.id
-    }
     try {
-      const raw = client.callJson("getSemanticDiagnostics", {
-        snapshot: snap.snapshot,
-        project,
-      }) as ReadonlyArray<{ code?: number; fileName?: string; text?: string }> | null | undefined
-      if (!Array.isArray(raw)) {
-        // Method missing/renamed in this Corsa build: fail CLOSED with a synthetic
-        // diagnostic so an oracle caller never treats silence as soundness.
-        return [{ code: -1, fileName: probeFileAbs }]
-      }
-      return raw
-        .filter((d) => d.fileName === probeFileAbs)
-        .map((d) => ({
-          code: d.code ?? 0,
-          fileName: d.fileName ?? "",
-          ...(typeof d.text === "string" ? { text: d.text } : {}),
-        }))
+      return toFileDiagnostics(
+        projectOf().program.getSemanticDiagnostics(probeFileAbs),
+        probeFileAbs,
+      )
     } catch {
       return [{ code: -1, fileName: probeFileAbs }]
-    } finally {
-      client.releaseHandle(snap.snapshot)
     }
   }
 
   const close: TsgoClient["close"] = () => {
-    client.close()
-  }
-
-  // Capability probe: resolve the intrinsic `string` type and render it. This asserts
-  // the spawn/initialize/openProject/checker/typeToString pipeline is live before any
-  // real work, without needing a disk file (which would have to satisfy the tsconfig
-  // include globs to be visible).
-  const probe = (): void => {
-    const snap = client.updateSnapshot({ fileChanges: {} }) as SnapshotRecord
-    try {
-      const handle = client.getStringType(snap.snapshot, project) as
-        | { id: string; flags: number }
-        | null
-        | undefined
-      if (!handle) {
-        throw new Error("tskm: tsgo capability probe failed: getStringType returned no type.")
-      }
-      const text = client.typeToString(snap.snapshot, project, handle.id, undefined, 0)
-      if (handle.flags & FAILURE_TYPE_FLAGS || text !== "string") {
-        throw new Error(
-          `tskm: tsgo capability probe failed: expected "string" (got "${text}", flags=${handle.flags}).`,
-        )
-      }
-    } finally {
-      client.releaseHandle(snap.snapshot)
+    if (closed) {
+      return
     }
+    closed = true
+    try {
+      snapshot.dispose()
+    } catch {
+      // Closing a failed session should still stop the checker process.
+    }
+    api.close()
   }
-  probe()
 
   return {
     updateFile,
     updateFiles,
-    supportsOverlay: overlayCapable,
+    supportsOverlay: true,
     applyOverlay,
     clearOverlay,
     withSnapshot,
     resolveTypeAt,
     getDiagnostics,
     close,
+  }
+}
+
+function probeStringType(snapshot: SnapshotLike, tsconfigPath: string): void {
+  const project = snapshot.getConfiguredProject(tsconfigPath)
+  if (!project) {
+    throw new Error(`tskm: tsconfig opened no projects: ${tsconfigPath}`)
+  }
+  const type = project.checker.getStringType()
+  if (!type) {
+    throw new Error("tskm: tsgo capability probe failed: getStringType returned no type.")
+  }
+  const text = project.checker.typeToString(type, undefined, 0)
+  if (type.flags & FAILURE_TYPE_FLAGS || text !== "string") {
+    throw new Error(
+      `tskm: tsgo capability probe failed: expected "string" (got "${text}", flags=${type.flags}).`,
+    )
   }
 }

@@ -68,8 +68,8 @@ function main(): void {
   if (!vite) throw new Error("@tskm/vite not found")
 
   // Pin peers to the versions the repo develops against.
-  const nativePreview = JSON.parse(readFileSync(join(compiler.dir, "package.json"), "utf8"))
-    .devDependencies["@typescript/native-preview"]
+  const typescriptVersion = JSON.parse(readFileSync(join(compiler.dir, "package.json"), "utf8"))
+    .devDependencies.typescript
   const viteVersion = JSON.parse(readFileSync(join(vite.dir, "package.json"), "utf8"))
     .devDependencies.vite
 
@@ -92,7 +92,7 @@ function main(): void {
         "@tskm/core": `file:${tarballs.get("@tskm/core")}`,
         "@tskm/compiler": `file:${tarballs.get("@tskm/compiler")}`,
         "@tskm/vite": `file:${tarballs.get("@tskm/vite")}`,
-        "@typescript/native-preview": nativePreview,
+        typescript: typescriptVersion,
         vite: viteVersion,
       },
     }

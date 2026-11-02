@@ -419,10 +419,10 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
 
   /**
    * Registers all checker query files for a run in ONE snapshot. The dominant codegen cost is
-   * the project re-sync tsgo runs on every file-set change, so batching collapses N create
-   * re-syncs into one (and N teardown re-syncs into one in cleanupQueries). Uses in-memory
-   * overlays when the runtime supports them, else writes real query files to disk. The
-   * source-changed notifications ride along in the same snapshot.
+   * the project re-sync the checker runs on every file-set change, so batching collapses N
+   * create re-syncs into one (and N teardown re-syncs into one in cleanupQueries). The real
+   * client registers them as an in-memory overlay. A stub with supportsOverlay false still
+   * writes real query files. Source-changed notifications are their own snapshot.
    */
   const registerQueries = (
     docs: ReadonlyArray<QueryArtifact>,

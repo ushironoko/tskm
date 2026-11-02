@@ -1,9 +1,9 @@
 import { defineConfig } from "rolldown"
 import { dts } from "rolldown-plugin-dts"
 
-// dependencies / peerDependencies (the @corsa-bind/napi native addon, oxc-parser, and the
-// dynamically-resolved @typescript/native-preview tsgo binary) must stay external — unlike
-// tsdown, rolldown bundles node_modules by default, so they are listed explicitly here.
+// dependencies / peerDependencies (oxc-parser, and the typescript package that provides
+// typescript/sync plus the native checker) must stay external — unlike tsdown, rolldown
+// bundles node_modules by default, so they are listed explicitly here.
 export default defineConfig({
   // The workers are separate entries: the compiler spawns them as their own
   // processes (resolved on disk), never imports them, so they must ship as
@@ -19,9 +19,9 @@ export default defineConfig({
   // Schema adapter's dynamic imports, resolved from the USER's node_modules at
   // runtime — they must never be bundled (they are not even dependencies).
   external: [
-    /^@corsa-bind\/napi/,
+    /^typescript($|\/)/,
+    /^bun:/,
     /^oxc-parser/,
-    /^@typescript\/native-preview/,
     /^zod$/,
     /^zod\//,
     /^valibot$/,
