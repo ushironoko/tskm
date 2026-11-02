@@ -8,10 +8,18 @@
     // Resolve the workspace package to its source so `bun test` and the type lane work from a
     // fresh checkout with no prior build (the published entry still goes through `exports` → dist).
     "paths": {
-      "@tskm/compiler": ["./packages/compiler/src/index.ts"]
+      "@tskm/compiler": ["./packages/compiler/src/index.ts"],
+      "@tskm/core": ["./packages/tskm/src/index.ts"],
+      "@tskm/core/json-schema": ["./packages/tskm/src/json-schema.ts"]
     }
   },
-  "include": ["packages/*/src", "packages/*/test", "packages/*/*.config.ts", "scripts"],
+  "include": [
+    "packages/*/src",
+    "packages/*/test",
+    "packages/*/*.config.ts",
+    "examples/json-schema-interop",
+    "scripts"
+  ],
   "exclude": [
     "**/node_modules/**",
     "**/dist/**",

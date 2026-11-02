@@ -1,0 +1,13 @@
+{
+  "name": "@tskm/example-json-schema-interop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Integration tests for Standard JSON Schema consumers. Not published; dependencies stay out of @tskm/core.",
+  "devDependencies": {
+    "@ai-sdk/provider-utils": "5.0.72",
+    "@tskm/core": "workspace:*",
+    "ai": "7.0.159",
+    "zod": "4.4.3"
+  }
+}

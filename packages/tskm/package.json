@@ -11,7 +11,9 @@
   },
   "homepage": "https://github.com/ushironoko/tskm/tree/main/packages/tskm#readme",
   "bugs": "https://github.com/ushironoko/tskm/issues",
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/json-schema.mjs"
+  ],
   "files": [
     "dist"
   ],
@@ -19,6 +21,10 @@
     ".": {
       "types": "./dist/index.d.mts",
       "default": "./dist/index.mjs"
+    },
+    "./json-schema": {
+      "types": "./dist/json-schema.d.mts",
+      "default": "./dist/json-schema.mjs"
     }
   },
   "scripts": {

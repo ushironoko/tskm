@@ -126,7 +126,7 @@ export type {
   PipeItem,
   StandardProps,
 } from "./types/schema.ts"
-export type { StandardSchemaV1 } from "./types/standard.ts"
+export type { StandardJSONSchemaV1, StandardSchemaV1 } from "./types/standard.ts"
 
 // ---- Utilities ----
 export { isTskmError, type TskmError, tskmError } from "./utils/errors.ts"
