@@ -103,13 +103,13 @@ writing a sidecar. See the root README.)
 From the repository root (after `bun install` + `bun run build`):
 
 ```bash
-bun packages/compiler/dist/cli.mjs gen --root examples/advanced
-# in a published project this is simply:  bunx tskm gen
+node packages/compiler/dist/cli.mjs gen --root examples/advanced
+# in a published project this is simply:  npx tskm gen  (or bunx tskm gen)
 ```
 
 Recursive schemas are resolved by an isolated worker that **imports your schema module**, so the
-worker runtime must be able to import `.ts`. Run the CLI with bun (as above), or set
-`worker.execPath` in `tskm.config.ts`. Everything else stays on the static checker path.
+worker runtime must be able to import `.ts`. Node 22.18+ and Node 24 do this natively. On an
+older Node, set `worker.execPath` in `tskm.config.ts` (for example to `bun`). Everything else stays on the static checker path.
 
 `tsconfig.json` maps `@tskm/core` to the workspace source via `paths` so the checker can resolve
 the inferred output type. In a real project `@tskm/core` is a normal dependency and no `paths`

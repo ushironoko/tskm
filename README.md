@@ -230,6 +230,22 @@ export default {
 
 The plugin runs the compiler on `buildStart` and watches during `vite dev`.
 
+### Runtime
+
+The CLI runs on **Node 22 or later**, which is the recommended runtime. **Bun** is supported too. Its `engines` range is `>=1.2`, and CI pins Bun 1.3.13.
+
+```bash
+npx tskm gen        # Node (recommended)
+bunx tskm gen       # Bun
+```
+
+Two things differ by runtime:
+
+- **Worker `.ts` imports.** Recursive roots and the JSON Schema emitter import your schema modules in a child process, so that process must load `.ts`. Node 22.18+ and Node 24 do this natively. On an older Node, set `worker.execPath` in `tskm.config.ts` to `bun`.
+- **Bun's checker channel.** Under Bun, the compiler reads the checker's pipe fds from the process fd table: `/proc/self/fd` on Linux and `/dev/fd` on macOS. On a platform with neither, `gen` fails with a clear error. Node does not need either table.
+
+CI covers both runtimes on Linux. The `verify` job runs the full suite under Bun. The `node-smoke` job builds `dist/` and runs `scripts/node-smoke.mjs` under Node 22 and 24. That script regenerates the committed examples and fails on any byte difference. macOS is not in CI.
+
 ## How It Works
 
 The compiler never reads your schema at runtime. The inferred type only exists in the type system, so it asks the type checker directly:
@@ -420,7 +436,7 @@ See [`examples/standard-schema`](examples/standard-schema) for the end-to-end lo
   // materializes: type Category = { name: string; children: Category[] }
   ```
 
-  Recursive roots are the one place type generation **evaluates** your module, in an isolated, SIGKILL-guarded subprocess. Set `worker.execPath` to a TS-capable runtime such as `bun` when your sources are `.ts` and the host runtime cannot import them.
+  Recursive roots are the one place type generation **evaluates** your module, in an isolated, SIGKILL-guarded subprocess. The worker runs on the host runtime, which must be able to import your `.ts` sources. Node 22.18+ and Node 24 can. On an older Node, set `worker.execPath` to a TS-capable runtime such as `bun`.
 
   Same-file mutual recursion (A↔B) is supported. The pair forms a type-level cycle at authoring time, so give one member a loose `GenericSchema` annotation (still no structural type by hand). A specifier-form export (`const node = recursive(...)` followed by `export { node }`) resolves through an explicit `export type Node = Infer<typeof node>` marker; auto-discovery without a marker still requires the inline `export const` form.
 
