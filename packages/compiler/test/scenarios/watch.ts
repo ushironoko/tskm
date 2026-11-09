@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { existsSync, rmSync, writeFileSync } from "node:fs"
 import type { GenerateResult, WatchController } from "../../src/index.ts"
 import { withTestTsgo } from "../tsgo-test-executable.ts"
-import { type CompilerApi, expectNoQueryWrites, fixture, type Suite } from "./support.ts"
+import { type CompilerApi, fixture, type Suite } from "./support.ts"
 
 // The watch runtime (fs.watch, debounce, abort handling) against the real checker. The fs
 // events come from the runtime itself, which is why this suite runs on both runtimes.
@@ -83,12 +83,15 @@ export function watchSuites(api: CompilerApi): Suite[] {
   const stdArtifacts = [stdTarget, stdSidecar, stdQuery]
 
   /**
-   * A scenario body under the query-write guard. Its controllers are closed and its artifacts
-   * removed afterwards, pass or fail, as the original afterEach did.
+   * A scenario body. Its controllers are closed and its artifacts removed afterwards, pass or
+   * fail, as the original afterEach did. The query document is checked for leftovers once the
+   * body has finished. It is not watched while the body runs: a watcher on the project
+   * directories changes how Node delivers the echo of the initial sidecar write to watch(),
+   * which then regenerates once more.
    */
   const scenario = (
     name: string,
-    root: string,
+    query: string,
     artifacts: ReadonlyArray<string>,
     timeout: number,
     body: (track: (controller: WatchController) => WatchController) => Promise<void>,
@@ -98,7 +101,8 @@ export function watchSuites(api: CompilerApi): Suite[] {
     run: async () => {
       const tracker = trackControllers()
       try {
-        await expectNoQueryWrites(root, () => body(tracker.track))
+        await body(tracker.track)
+        assert.equal(existsSync(query), false, "a query document must not be left on disk")
       } finally {
         await tracker.closeAll()
         removeFiles(artifacts)
@@ -112,7 +116,7 @@ export function watchSuites(api: CompilerApi): Suite[] {
     scenarios: [
       scenario(
         "fires an initial generate, then re-generates on an external edit (inplace)",
-        fixtureRoot,
+        query,
         basicArtifacts,
         60_000,
         async (track) => {
@@ -159,7 +163,7 @@ export function watchSuites(api: CompilerApi): Suite[] {
       ),
       scenario(
         "re-generates a sidecar on an external edit and merges per-file results",
-        fixtureRoot,
+        query,
         basicArtifacts,
         60_000,
         async (track) => {
@@ -203,7 +207,7 @@ export function watchSuites(api: CompilerApi): Suite[] {
       ),
       scenario(
         "close() is idempotent and tears down the session",
-        fixtureRoot,
+        query,
         basicArtifacts,
         60_000,
         async () => {
@@ -226,7 +230,7 @@ export function watchSuites(api: CompilerApi): Suite[] {
       ),
       scenario(
         "closes when a passed AbortSignal is aborted",
-        fixtureRoot,
+        query,
         basicArtifacts,
         60_000,
         async (track) => {
@@ -254,7 +258,7 @@ export function watchSuites(api: CompilerApi): Suite[] {
       ),
       scenario(
         "closes immediately when given an already-aborted signal",
-        fixtureRoot,
+        query,
         basicArtifacts,
         60_000,
         async (track) => {
@@ -295,7 +299,7 @@ export function watchSuites(api: CompilerApi): Suite[] {
     scenarios: [
       scenario(
         "generates an external sidecar once and does not self-rebuild",
-        stdRoot,
+        stdQuery,
         stdArtifacts,
         60_000,
         async (track) => {
