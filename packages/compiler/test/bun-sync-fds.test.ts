@@ -9,6 +9,7 @@ import {
   newPipeFds,
   pipeIdentities,
   selectFdTable,
+  stdioPipePair,
   withBunSyncChannelFds,
 } from "../src/bun-sync-fds.ts"
 import { isNonBlocking } from "./fd-status.ts"
@@ -21,8 +22,11 @@ const NO_TABLE = "/tskm-missing-fd-table"
 // Procfs is missing, so the shim must use `/dev/fd`, which macOS provides.
 const FALLBACK = { procFdDir: NO_TABLE, devFdDir: "/dev/fd" }
 // Identity formats: procfs reports link text (`pipe:[123]`); `/dev/fd` reports `dev:ino`.
+// Darwin's st_dev is a signed int32 (`__darwin_dev_t` is `__int32_t`), and an AF_UNIX socket
+// reports NODEV (XNU `uipc_sense`: `sb->st_dev = NODEV`), which the macOS CI runner reads as
+// -1. So dev may be negative. Sockets are told apart by st_ino.
 const LINK_TEXT = /^(socket|pipe):\[\d+\]$/
-const DEV_INO = /^\d+:\d+$/
+const DEV_INO = /^-?\d+:\d+$/
 
 const childProcessPrototype = (): { spawn: unknown } =>
   (
@@ -61,9 +65,11 @@ describe("selectFdTable", () => {
       const table = selectFdTable(FALLBACK)
       expect(table).toBeDefined()
       const identities = pipeIdentities(table as NonNullable<typeof table>)
+      expect(pipes.fds.length).toBe(2)
       for (const fd of pipes.fds) {
         expect(identities.get(fd)).toMatch(DEV_INO)
       }
+      expect(new Set(pipes.fds.map((fd) => identities.get(fd))).size).toBe(2)
     } finally {
       await pipes.stop()
     }
@@ -102,6 +108,29 @@ describe("fd identities", () => {
     closeSync(fifo)
     expect(pipeIdentities(table).has(fifo)).toBe(false)
   })
+
+  // On Darwin every AF_UNIX socket reports the same st_dev (NODEV, read as -1), so two
+  // checkers' pipes differ only by st_ino. This pins the identity scheme to that case.
+  it.skipIf(!isBunPosix)("tells live sockets apart by st_ino when st_dev is shared", async () => {
+    const first = await shimPipes(FALLBACK)
+    const second = await shimPipes(FALLBACK)
+    try {
+      const table = selectFdTable(FALLBACK)
+      if (table === undefined) {
+        throw new Error("expected the /dev/fd table")
+      }
+      const identities = pipeIdentities(table)
+      const seen = [...first.fds, ...second.fds].map((fd) => identities.get(fd))
+      expect(seen.length).toBe(4)
+      for (const identity of seen) {
+        expect(identity).toMatch(DEV_INO)
+      }
+      expect(new Set(seen).size).toBe(4)
+    } finally {
+      await first.stop()
+      await second.stop()
+    }
+  })
 })
 
 describe("newPipeFds", () => {
@@ -122,6 +151,19 @@ describe("newPipeFds", () => {
 
   it("ignores descriptors that closed during the spawn", () => {
     expect(newPipeFds(new Map([[5, "socket:[3]"]]), new Map())).toEqual([])
+  })
+})
+
+describe("stdioPipePair", () => {
+  it("takes exactly two new descriptors, in the order given", () => {
+    expect(stdioPipePair([7, 9])).toEqual([7, 9])
+  })
+
+  it("rejects any other count, so the caller fails closed", () => {
+    expect(stdioPipePair([])).toBeUndefined()
+    expect(stdioPipePair([7])).toBeUndefined()
+    // An extra kqueue or socket created during the spawn would arrive as a third entry.
+    expect(stdioPipePair([5, 7, 9])).toBeUndefined()
   })
 })
 
