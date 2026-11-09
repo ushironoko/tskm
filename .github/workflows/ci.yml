@@ -161,3 +161,152 @@ jobs:
       # Runs on the Node in PATH (the matrix version), against the dist built above.
       - name: Run the compiler integration suite under Node
         run: bun run test:integration:node
+
+  # Bun's checker channel finds its pipe fds through /dev/fd on macOS, which has no procfs.
+  # The other lanes run on Linux and never take that path. This lane runs the compiler tests
+  # under Bun on macos-latest. The first step logs the arch: the variadic fcntl concern is
+  # specific to arm64 (Apple silicon), so check that line when the runner image changes.
+  # It fails if procfs is present, and if a test that depends on the /dev/fd channel was
+  # skipped instead of run. The skip check reads the JUnit report.
+  macos-bun:
+    name: macOS · bun · compiler tests (/dev/fd channel)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      # bun-version is read from package.json "packageManager" (bun@1.3.13) automatically.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Runner and Bun version
+        run: |
+          uname -sm
+          bun --version
+
+      # --ignore-scripts (see the verify job). The darwin native packages (checker, oxc-parser,
+      # rolldown, biome) declare no install script, so the flag costs nothing here.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Verify lockfile is unchanged
+        run: git diff --exit-code bun.lock
+
+      # The /dev/fd fallback is the path under test. If procfs exists, the channel takes the
+      # Linux path instead, so stop before the tests run.
+      - name: Confirm the fd table is /dev/fd
+        run: |
+          if [ -e /proc/self/fd ]; then
+            echo "::error::/proc/self/fd exists, so the /dev/fd fallback is not in use"
+            exit 1
+          fi
+          test -d /dev/fd
+
+      # No build step. Under Bun, tsconfig paths map @tskm/compiler and @tskm/core to src, and
+      # these tests do not load dist/ (node-integration.ts does, but bun test does not run it).
+      - name: Compiler tests
+        env:
+          JUNIT_OUT: ${{ runner.temp }}/compiler-junit.xml
+        run: bun test packages/compiler --reporter=junit --reporter-outfile="$JUNIT_OUT"
+
+      # bun test exits 0 when a test is skipped, so the skip is checked from the JUnit report.
+      - name: Check the /dev/fd channel tests were not skipped
+        env:
+          JUNIT_OUT: ${{ runner.temp }}/compiler-junit.xml
+        run: |
+          bun - <<'EOF'
+          import { appendFileSync, readFileSync } from "node:fs"
+
+          // A skip is a <skipped/> child of <testcase>. A pass is a self-closing <testcase/>.
+          const xml = readFileSync(process.env.JUNIT_OUT, "utf8")
+          const decode = (text) =>
+            text
+              .replace(/&lt;/g, "<")
+              .replace(/&gt;/g, ">")
+              .replace(/&quot;/g, '"')
+              .replace(/&apos;/g, "'")
+              .replace(/&amp;/g, "&")
+
+          const attributes = (text) =>
+            Object.fromEntries(
+              [...text.matchAll(/(\w+)="([^"]*)"/g)].map(([, k, v]) => [k, decode(v)]),
+            )
+          const testcases = [...xml.matchAll(/<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g)]
+            .map((match) => ({
+              ...attributes(match[1]),
+              skipped: match[3]?.includes("<skipped") === true,
+            }))
+
+          const failures = []
+          const declared = Number(xml.match(/<testsuites\b[^>]*?\btests="(\d+)"/)?.[1])
+          if (testcases.length !== declared) {
+            failures.push(`parsed ${testcases.length} of the ${declared} testcases in the report`)
+          }
+
+          // The tests that need the /dev/fd channel, or the native checker it spawns.
+          const CHANNEL = [
+            {
+              name: "bun-sync-fds unit tests",
+              matches: (t) => t.file?.endsWith("test/bun-sync-fds.test.ts"),
+            },
+            {
+              name: "TsgoClient /dev/fd fallback",
+              matches: (t) => t.classname === "TsgoClient on the /dev/fd fallback",
+            },
+            {
+              name: "native tsc resolution",
+              matches: (t) =>
+                t.file?.endsWith("test/tsgo-client.test.ts") &&
+                t.name === "returns the native tsc binary shipped with typescript",
+            },
+          ]
+          // Skipped off Linux by design: it hard-codes libc.so.6, and its F_SETFL call is a
+          // 3-argument fcntl, which is not ABI-safe on Apple arm64.
+          const LINUX_ONLY = "keeps resolving when the checker pipes are non-blocking"
+
+          let notSkipped = 0
+          const skippedByDesign = []
+          for (const channel of CHANNEL) {
+            const found = testcases.filter(channel.matches)
+            if (found.length === 0) {
+              failures.push(`no testcase matched "${channel.name}"`)
+            }
+            for (const t of found) {
+              if (!t.skipped) {
+                notSkipped += 1
+              } else if (process.platform !== "linux" && t.name === LINUX_ONLY) {
+                skippedByDesign.push(t)
+              } else {
+                failures.push(`skipped on ${process.platform}: ${t.classname} > ${t.name}`)
+              }
+            }
+          }
+
+          const counts = `${notSkipped} not skipped, ${skippedByDesign.length} skipped by design`
+          const line = `/dev/fd channel on ${process.platform}: ${counts}`
+          console.log(line)
+          for (const t of skippedByDesign) {
+            console.log(`  skipped by design: ${t.classname} > ${t.name}`)
+          }
+          if (process.env.GITHUB_STEP_SUMMARY) {
+            appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### ${line}\n\n`)
+          }
+          if (failures.length > 0) {
+            for (const failure of failures) {
+              console.error(`::error::${failure}`)
+            }
+            process.exit(1)
+          }
+          EOF
+
+      - name: Upload compiler test report (JUnit)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compiler-junit-macos
+          path: ${{ runner.temp }}/compiler-junit.xml
+          if-no-files-found: warn
+          retention-days: 14
