@@ -17,13 +17,13 @@ output type. In a real project `@tskm/core` is a normal dependency and no `paths
 From the repository root (after `bun install` + `bun run build`):
 
 ```bash
-bun packages/compiler/dist/cli.mjs gen --root examples/basic
-# in a published project this is simply:  bunx tskm gen
+node packages/compiler/dist/cli.mjs gen --root examples/basic
+# in a published project this is simply:  npx tskm gen  (or bunx tskm gen)
 ```
 
 (The recursive `categorySchema` is resolved by an isolated worker that imports the schema
-module, so the worker runtime must be able to import `.ts`: bun here, or `worker.execPath`
-in `tskm.config.ts`.)
+module, so the worker runtime must be able to import `.ts`. Node 22.18+ and Node 24 do this
+natively. On an older Node, set `worker.execPath` in `tskm.config.ts`.)
 
 This rewrites `src/user.schema.gen.ts`. Sidecar mode always rewrites the file (and reports `wrote`), but
 the content is stable: once it matches the current compiler, re-running leaves the file diff-free.

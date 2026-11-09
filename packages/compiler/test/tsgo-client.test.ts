@@ -4,11 +4,12 @@ import {
   FAILURE_TYPE_FLAGS,
   resolveTsgoExecutable,
   TYPE_TO_STRING_FLAGS,
+  toFileDiagnostics,
 } from "../src/tsgo-client.ts"
 
-// Whether the real tsgo binary resolves in this environment. The no-override branch
-// reaches into @typescript/native-preview, which may be absent on unsupported
-// platforms; guard those cases with skipIf rather than letting them hard-fail.
+// Whether the real checker binary resolves in this environment. The no-override
+// branch reaches into the typescript platform package, which may be absent on
+// unsupported platforms; guard those cases with skipIf rather than letting them hard-fail.
 const tsgoAvailable = (() => {
   try {
     return existsSync(resolveTsgoExecutable())
@@ -62,11 +63,74 @@ describe("resolveTsgoExecutable — override branch", () => {
 })
 
 describe("resolveTsgoExecutable — no override branch", () => {
-  it.skipIf(!tsgoAvailable)("returns a non-empty path to an existing binary", () => {
+  it.skipIf(!tsgoAvailable)("returns the native tsc binary shipped with typescript", () => {
     const exe = resolveTsgoExecutable()
     expect(typeof exe).toBe("string")
     expect(exe.length).toBeGreaterThanOrEqual(1)
-    expect(exe).toContain("tsgo")
+    expect(exe.endsWith(`${process.platform === "win32" ? "tsc.exe" : "tsc"}`)).toBe(true)
+    expect(exe).toContain(`${process.platform}-${process.arch}`)
     expect(existsSync(exe)).toBe(true)
+  })
+})
+
+describe("toFileDiagnostics", () => {
+  it("fails closed when the payload is not an array", () => {
+    expect(toFileDiagnostics(undefined, "/proj/q.ts")).toEqual([
+      { code: -1, fileName: "/proj/q.ts" },
+    ])
+    expect(toFileDiagnostics({ code: 2322 }, "/proj/q.ts")).toEqual([
+      { code: -1, fileName: "/proj/q.ts" },
+    ])
+  })
+
+  it("reports an empty array as no diagnostics", () => {
+    expect(toFileDiagnostics([], "/proj/q.ts")).toEqual([])
+  })
+
+  it("keeps the probe file's diagnostics and their message text", () => {
+    expect(
+      toFileDiagnostics(
+        [
+          { code: 2304, fileName: "/proj/q.ts", text: "Cannot find name 'Missing'." },
+          { code: 2322, fileName: "/proj/other.ts", text: "elsewhere" },
+          { code: 1, text: "no file" },
+        ],
+        "/proj/q.ts",
+      ),
+    ).toEqual([
+      { code: 2304, fileName: "/proj/q.ts", text: "Cannot find name 'Missing'." },
+      { code: 1, fileName: "/proj/q.ts", text: "no file" },
+    ])
+  })
+
+  it("fails closed on a malformed entry and keeps the valid ones", () => {
+    expect(
+      toFileDiagnostics(
+        [{ code: 2304, fileName: "/proj/q.ts", text: "Cannot find name 'X'." }, null, "bogus"],
+        "/proj/q.ts",
+      ),
+    ).toEqual([
+      { code: 2304, fileName: "/proj/q.ts", text: "Cannot find name 'X'." },
+      { code: -1, fileName: "/proj/q.ts" },
+      { code: -1, fileName: "/proj/q.ts" },
+    ])
+    expect(toFileDiagnostics([null], "/proj/q.ts")).toEqual([{ code: -1, fileName: "/proj/q.ts" }])
+  })
+
+  it("matches a native-separator probe path against the checker's slash-normalized name", () => {
+    // The checker reports RootedFilePath values, which use forward slashes. A Windows
+    // probe path built with path.join uses backslashes; both must compare equal.
+    expect(
+      toFileDiagnostics(
+        [{ code: 2322, fileName: "C:/proj/q.ts", text: "Type 'string' is not assignable." }],
+        "C:\\proj\\q.ts",
+      ),
+    ).toEqual([{ code: 2322, fileName: "C:/proj/q.ts", text: "Type 'string' is not assignable." }])
+  })
+
+  it("still drops another file's diagnostics when the separators differ", () => {
+    expect(
+      toFileDiagnostics([{ code: 2322, fileName: "C:/proj/other.ts" }], "C:\\proj\\q.ts"),
+    ).toEqual([])
   })
 })

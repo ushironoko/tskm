@@ -43,8 +43,8 @@ jobs:
         run: bun run lint
 
       # Type lane: type-checks all sources, the *.test.ts files, and the *.test-d.ts
-      # type-level assertions (expect-type / @ts-expect-error) via tsgo
-      # (@typescript/native-preview). Resolves on linux-x64 under --ignore-scripts
+      # type-level assertions (expect-type / @ts-expect-error) via the native tsc
+      # shipped with the typescript peer. Resolves on linux-x64 under --ignore-scripts
       # because the platform binary ships as an os/cpu-constrained optionalDependency.
       - name: Typecheck
         run: bun run test:type
@@ -112,3 +112,52 @@ jobs:
           path: packages/${{ matrix.package }}/reports/mutation/mutation.json
           if-no-files-found: warn
           retention-days: 14
+
+  # The CLI is recommended on Node, so the built dist runs here under Node 22 and 24.
+  # scripts/node-smoke.mjs regenerates the committed examples with dist/cli.mjs and fails
+  # on any byte difference or stray file. test:integration:node runs the shared compiler
+  # integration scenarios against dist/index.mjs; verify runs the same scenarios against src
+  # under Bun. Suites that run the structural or JSON Schema worker stay in verify only.
+  node-smoke:
+    name: node ${{ matrix.node }} · dist smoke · compiler integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      # bun-version is read from package.json "packageManager" (bun@1.3.13) automatically.
+      # Bun installs the workspace and builds dist. The smoke itself runs under Node.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      # --ignore-scripts blocks dependency lifecycle scripts (see the verify job).
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Verify lockfile is unchanged
+        run: git diff --exit-code bun.lock
+
+      - name: Build (rolldown)
+        run: bun run build
+
+      - name: Node version
+        run: node --version
+
+      - name: Smoke the built CLI under Node
+        run: node scripts/node-smoke.mjs
+
+      # Runs on the Node in PATH (the matrix version), against the dist built above.
+      - name: Run the compiler integration suite under Node
+        run: bun run test:integration:node

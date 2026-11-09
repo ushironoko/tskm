@@ -2,8 +2,14 @@ import { afterAll, describe, expect, it } from "bun:test"
 import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { generate } from "../src/index.ts"
+import * as compiler from "../src/index.ts"
+import { registerSuite } from "./runners/bun.ts"
+import { preprocessSuite } from "./scenarios/generate.ts"
 import { withTestTsgo } from "./tsgo-test-executable.ts"
+
+// The top-level preprocess case is shared with the Node run (scenarios/generate.ts). The
+// recursive case below runs the structural worker under Bun, so it stays Bun-only.
+registerSuite(preprocessSuite(compiler))
 
 const fixtureRoot = fileURLToPath(new URL("./fixtures/preprocess", import.meta.url))
 const src = (file: string): string =>
@@ -29,33 +35,12 @@ afterAll(() => {
   }
 })
 
-describe("preprocess codegen (real tsgo)", () => {
-  it("emits the inner output type for preprocess", async () => {
-    const result = await generate({
-      root: fixtureRoot,
-      config: withTestTsgo({
-        mode: "sidecar",
-        include: ["src/port.schema.ts"],
-        tsconfig: "tsconfig.json",
-      }),
-    })
-
-    expect(result.diagnostics).toEqual([])
-    expect(result.files).toHaveLength(1)
-    const gen = readFileSync(src("port.schema.gen.ts"), "utf8")
-    expect(gen).toContain("export type Port = number")
-    expect(gen).toContain("export type Server = {")
-    expect(gen).toContain("port: number")
-    expect(gen).toContain("verbose: boolean")
-  }, 60_000)
-})
-
 describe.skipIf(!bun)("preprocess inside recursive (real structural worker)", () => {
   it("emits the inner output type instead of unknown", async () => {
     if (bun === undefined) {
       throw new Error("bun is required")
     }
-    const result = await generate({
+    const result = await compiler.generate({
       root: fixtureRoot,
       config: withTestTsgo({
         mode: "sidecar",
