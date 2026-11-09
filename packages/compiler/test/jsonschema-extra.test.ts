@@ -46,22 +46,25 @@ describe("walkSchema — passthrough and unknown branches", () => {
     expect(r.warnings).toHaveLength(0)
   })
 
-  it("an unknown schema type warns and emits {}", () => {
-    const r = schemaToJsonSchema({ kind: "schema", type: "weird-thing" })
-    expect(r.schema).toEqual({})
-    expect(r.warnings.some((w) => w.includes('unknown schema type "weird-thing"'))).toBe(true)
+  it("an unknown schema kind is an error with its path, never an approximation", () => {
+    const r = schemaToJsonSchema(
+      { kind: "schema", type: "weird-thing" },
+      { rootName: "Thing", approximate: ["bigint", "date", "undefined", "check", "transform"] },
+    )
+    expect(r.errors).toEqual([
+      'Thing: cannot convert schema type "weird-thing" to JSON Schema: this schema kind has no JSON Schema representation.',
+    ])
+    expect(r.warnings).toHaveLength(0)
   })
 
-  it("a non-object top-level schema warns and emits {}", () => {
+  it("a non-object top-level schema is an error", () => {
     const r = schemaToJsonSchema(42)
-    expect(r.schema).toEqual({})
-    expect(r.warnings.some((w) => w.includes("cannot convert non-object schema"))).toBe(true)
+    expect(r.errors).toEqual(["schema: cannot convert non-object schema (42) to JSON Schema."])
   })
 
-  it("a null top-level schema warns and emits {}", () => {
+  it("a null top-level schema is an error", () => {
     const r = schemaToJsonSchema(null)
-    expect(r.schema).toEqual({})
-    expect(r.warnings.some((w) => w.includes("cannot convert non-object schema"))).toBe(true)
+    expect(r.errors).toEqual(["schema: cannot convert non-object schema (null) to JSON Schema."])
   })
 })
 
@@ -74,14 +77,24 @@ describe("walkSchema — literal of non-string values", () => {
 })
 
 describe("walkSchema — tuple/union with malformed item arrays", () => {
-  it("tuple with a non-array items field falls back to empty prefixItems", () => {
-    const r = schemaToJsonSchema({ kind: "schema", type: "tuple", items: "nope" })
-    expect(r.schema).toEqual({ type: "array", prefixItems: [], items: false })
+  it("a tuple whose items is not an array is an error, not an empty prefixItems", () => {
+    const r = schemaToJsonSchema(
+      { kind: "schema", type: "tuple", items: "nope" },
+      { rootName: "Pair" },
+    )
+    expect(r.errors).toEqual([
+      'Pair: cannot convert schema type "tuple" to JSON Schema: items is not an array.',
+    ])
   })
 
-  it("union with a non-array options field falls back to empty anyOf", () => {
-    const r = schemaToJsonSchema({ kind: "schema", type: "union", options: undefined })
-    expect(r.schema).toEqual({ anyOf: [] })
+  it("a union whose options is not an array is an error, not an empty anyOf", () => {
+    const r = schemaToJsonSchema(
+      { kind: "schema", type: "union", options: undefined },
+      { rootName: "Choice" },
+    )
+    expect(r.errors).toEqual([
+      'Choice: cannot convert schema type "union" to JSON Schema: options is not an array.',
+    ])
   })
 })
 
@@ -101,18 +114,16 @@ describe("walkObject — optional/nullish keys are excluded from required", () =
       required: ["id"],
       additionalProperties: false,
     })
-    // nullish still warns about dropping `undefined`.
-    expect(r.warnings.some((w) => w.includes("undefined"))).toBe(true)
+    // The undefined case is the absent key, so nullish needs no note.
+    expect(r.warnings).toHaveLength(0)
+    expect(r.errors).toHaveLength(0)
   })
 
-  it("object with non-object entries field treats entries as empty", () => {
+  it("an object whose entries is not an object is an error", () => {
     const r = schemaToJsonSchema({ kind: "schema", type: "object", entries: "nope" })
-    expect(r.schema).toEqual({
-      type: "object",
-      properties: {},
-      required: [],
-      additionalProperties: false,
-    })
+    expect(r.errors).toEqual([
+      'schema: cannot convert schema type "object" to JSON Schema: entries is not an object.',
+    ])
   })
 
   it("optional nested inside an array unwraps the item type", () => {
@@ -187,16 +198,18 @@ describe("walkPipe / applyItem — every representable refinement", () => {
     expect(r.schema).toEqual({ type: "string", pattern: "^[a-z]+$" })
   })
 
-  it("regex with a non-RegExp requirement is silently ignored (no pattern)", () => {
+  it("regex with a non-RegExp requirement is an error, as in core", () => {
     const r = schemaToJsonSchema(pipe(s.string(), v("regex", { requirement: "not-a-regex" })))
-    expect(r.schema).toEqual({ type: "string" })
-    expect(r.warnings).toHaveLength(0)
+    expect(r.errors).toEqual([
+      'schema: cannot convert pipe item "regex" to JSON Schema: requirement is not a RegExp.',
+    ])
   })
 
-  it("regex with an object requirement whose source is not a string is ignored", () => {
+  it("regex with an object requirement whose source is not a string is an error", () => {
     const r = schemaToJsonSchema(pipe(s.string(), v("regex", { requirement: { source: 123 } })))
-    expect(r.schema).toEqual({ type: "string" })
-    expect(r.warnings).toHaveLength(0)
+    expect(r.errors).toEqual([
+      'schema: cannot convert pipe item "regex" to JSON Schema: requirement is not a RegExp.',
+    ])
   })
 
   it("integer applied to an already-integer base keeps type:integer", () => {
@@ -216,32 +229,42 @@ describe("walkPipe / applyItem — every representable refinement", () => {
     expect(r.schema).toEqual({ type: "string", minLength: 2, maxLength: 8, format: "email" })
   })
 
-  it("a non-object pipe item is skipped without warning", () => {
+  it("a non-object pipe item is an error at the pipe, not a silent skip", () => {
     const base = s.string()
     const schema = { ...base, pipe: [base, "junk", 7, null] }
     const r = schemaToJsonSchema(schema)
-    expect(r.schema).toEqual({ type: "string" })
-    expect(r.warnings).toHaveLength(0)
+    expect(r.errors).toEqual([
+      "schema: cannot convert a non-object pipe item to JSON Schema.",
+      "schema: cannot convert a non-object pipe item to JSON Schema.",
+      "schema: cannot convert a non-object pipe item to JSON Schema.",
+    ])
   })
 
-  it("an unrepresentable pipe item warns and is skipped", () => {
-    const r = schemaToJsonSchema(pipe(s.string(), v("starts_with", { requirement: "x" })))
-    expect(r.schema).toEqual({ type: "string" })
-    expect(r.warnings.some((w) => w.includes('pipe item "starts_with"'))).toBe(true)
+  it("an unrepresentable pipe item is an error naming the item type", () => {
+    const r = schemaToJsonSchema(pipe(s.string(), v("starts_with", { requirement: "x" })), {
+      rootName: "Slug",
+    })
+    expect(r.errors).toEqual([
+      'Slug: cannot convert pipe item "starts_with" to JSON Schema: it has no JSON Schema representation.',
+    ])
   })
 })
 
 describe("walkLazy — degenerate getters", () => {
-  it("a lazy schema with no getter warns and emits {}", () => {
+  it("a lazy schema with no getter is an error", () => {
     const r = schemaToJsonSchema({ kind: "schema", type: "lazy" })
     expect(r.schema).toEqual({})
-    expect(r.warnings.some((w) => w.includes("lazy schema has no getter"))).toBe(true)
+    expect(r.errors).toEqual([
+      'schema: cannot convert schema type "lazy" to JSON Schema: it has no getter.',
+    ])
   })
 
-  it("a lazy schema whose getter is not a function warns and emits {}", () => {
+  it("a lazy schema whose getter is not a function is an error", () => {
     const r = schemaToJsonSchema({ kind: "schema", type: "lazy", getter: 123 })
     expect(r.schema).toEqual({})
-    expect(r.warnings.some((w) => w.includes("lazy schema has no getter"))).toBe(true)
+    expect(r.errors).toEqual([
+      'schema: cannot convert schema type "lazy" to JSON Schema: it has no getter.',
+    ])
   })
 
   it("a lazy schema getter that returns a plain leaf inlines it", () => {

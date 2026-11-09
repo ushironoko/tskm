@@ -8,6 +8,7 @@ import {
   defineConfig,
   loadConfig,
   matchesSchemaSource,
+  parseApproximations,
   resolveConfig,
   vendorAllowList,
   vendorName,
@@ -124,6 +125,32 @@ describe("resolveConfig — schemaSources", () => {
   })
 })
 
+describe("parseApproximations — exact names only", () => {
+  it("accepts every known name and keeps the given order", () => {
+    expect(
+      parseApproximations(["transform", "bigint", "date", "undefined", "check"], "--approximate"),
+    ).toEqual(["transform", "bigint", "date", "undefined", "check"])
+  })
+
+  it("accepts an empty list as no approximation", () => {
+    expect(parseApproximations([], "--approximate")).toEqual([])
+  })
+
+  it("does not trim, fold case, or coerce: each near miss is an unknown value", () => {
+    for (const value of [" date", "Date", "bigints", "", "true", 1]) {
+      expect(() => parseApproximations([value], "--approximate")).toThrow(
+        `tskm: --approximate has unknown value ${JSON.stringify(value)} (known values: bigint, date, undefined, check, transform).`,
+      )
+    }
+  })
+
+  it("names the source label in the error", () => {
+    expect(() => parseApproximations(["nope"], "--approximate")).toThrow(
+      "--approximate has unknown value",
+    )
+  })
+})
+
 describe("resolveConfig — defaults", () => {
   it("applies every default for an empty config", () => {
     const resolved = resolveConfig({}, "/proj")
@@ -131,7 +158,7 @@ describe("resolveConfig — defaults", () => {
     expect(resolved.include).toEqual(["src/**/*.ts"])
     expect(resolved.tsconfig).toBe("/proj/tsconfig.json")
     expect(resolved.executable).toBeUndefined()
-    expect(resolved.jsonSchema).toEqual({ outDir: undefined, io: "output" })
+    expect(resolved.jsonSchema).toEqual({ outDir: undefined, io: "output", approximate: [] })
     expect(resolved.watch).toEqual({ debounceMs: 50 })
     expect(resolved.codegen).toEqual({ nameSharedSchemas: false })
     expect(resolved.root).toBe("/proj")
@@ -166,13 +193,41 @@ describe("resolveConfig — overrides", () => {
     expect(resolved.mode).toBe("inplace")
     expect(resolved.include).toEqual(["a/**/*.ts", "b/**/*.ts"])
     expect(resolved.executable).toBe("/usr/bin/tsgo")
-    expect(resolved.jsonSchema).toEqual({ outDir: "schemas", io: "output" })
+    expect(resolved.jsonSchema).toEqual({ outDir: "schemas", io: "output", approximate: [] })
     expect(resolved.watch).toEqual({ debounceMs: 250 })
   })
 
   it("honors an explicit jsonSchema io of input", () => {
     const resolved = resolveConfig({ jsonSchema: { io: "input" } }, "/proj")
     expect(resolved.jsonSchema.io).toBe("input")
+  })
+
+  it("resolves jsonSchema.approximate to the listed names, deduplicated", () => {
+    const resolved = resolveConfig(
+      { jsonSchema: { approximate: ["bigint", "date", "bigint"] } },
+      "/proj",
+    )
+    expect(resolved.jsonSchema.approximate).toEqual(["bigint", "date"])
+  })
+
+  it("rejects an unknown jsonSchema.approximate name and lists the known names", () => {
+    expect(() =>
+      resolveConfig({ jsonSchema: { approximate: ["bigint", "Date"] as never } }, "/proj"),
+    ).toThrow(
+      'tskm: jsonSchema.approximate has unknown value "Date" (known values: bigint, date, undefined, check, transform).',
+    )
+  })
+
+  it("rejects a boolean jsonSchema.approximate: the option is a list, not a switch", () => {
+    expect(() => resolveConfig({ jsonSchema: { approximate: true as never } }, "/proj")).toThrow(
+      "tskm: jsonSchema.approximate must be an array of names (known values: bigint, date, undefined, check, transform).",
+    )
+  })
+
+  it("rejects a string jsonSchema.approximate instead of reading it as characters", () => {
+    expect(() =>
+      resolveConfig({ jsonSchema: { approximate: "bigint" as never } }, "/proj"),
+    ).toThrow("must be an array of names")
   })
 
   it("joins a relative tsconfig against the resolved root", () => {
@@ -231,7 +286,7 @@ describe("loadConfig — tskm.config.ts via default export", () => {
     expect(resolved.mode).toBe("inplace")
     expect(resolved.include).toEqual(["app/**/*.ts"])
     expect(resolved.tsconfig).toBe(join(resolve(dir), "tsconfig.app.json"))
-    expect(resolved.jsonSchema).toEqual({ outDir: "gen", io: "output" })
+    expect(resolved.jsonSchema).toEqual({ outDir: "gen", io: "output", approximate: [] })
     expect(resolved.watch).toEqual({ debounceMs: 123 })
     expect(resolved.root).toBe(resolve(dir))
   })

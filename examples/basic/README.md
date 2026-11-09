@@ -35,11 +35,13 @@ the content is stable: once it matches the current compiler, re-running leaves t
 node packages/compiler/dist/cli.mjs gen --root examples/basic --mode inplace
 
 # Emit JSON Schema next to each source (experimental; needs a runtime that can import the .ts module):
-node packages/compiler/dist/cli.mjs json-schema --root examples/basic
+node packages/compiler/dist/cli.mjs json-schema --root examples/basic --approximate transform
 
 # Regenerate on every change:
 node packages/compiler/dist/cli.mjs watch --root examples/basic
 ```
+
+`category.schema.ts` has a `transform` on its output side, which JSON Schema cannot express. Without `--approximate transform`, `json-schema` exits with code 1, names `categorySchema.depth` in the error, and writes no file for that source. The `--approximate` flag emits the schema before the transform (`number`) for it. `user.schema.ts` needs no flag. A `tskm.config.ts` with `jsonSchema: { io: "input" }` describes the input side instead, which needs no approximation at all.
 
 In a Vite app, add the plugin instead of running the CLI:
 
