@@ -11,8 +11,8 @@ import type { StandardJSONSchemaV1 } from "../types/standard.ts"
  *
  * Directions differ where the runtime value does:
  * - `preprocess` input is `{}` (the input type is `unknown`); output is the
- *   inner schema. Pipe constraints on a preprocess run after coercion, so they
- *   belong to the output only.
+ *   inner schema. Pipe constraints on a preprocess run after the caller's
+ *   conversion, so they belong to the output only.
  * - `optional` / `nullable` / `nullish` put a JSON `default` on the input when
  *   the default is a JSON value. Output omits it (the default has been applied).
  * - `fallback` puts that value on the output only (it recovers a failed parse).
