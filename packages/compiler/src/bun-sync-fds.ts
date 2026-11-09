@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readlinkSync } from "node:fs"
+import { existsSync, fstatSync, readdirSync, readlinkSync } from "node:fs"
 import { createRequire } from "node:module"
 
 /**
@@ -13,18 +13,53 @@ import { createRequire } from "node:module"
  * so the callback is just `new API(...)`, and child processes spawned elsewhere in the
  * same process never see the wrapper.
  *
- * Pipe fds are identified by diffing the process fd table around the spawn. That
- * table is procfs (`/proc/self/fd`). A platform without it (macOS) cannot be served,
- * so the function throws instead of patching spawn for every caller.
+ * The checker's pipe fds are found by diffing the process fd table around the spawn.
+ * Two tables are tried, in order:
+ *
+ * - procfs (`/proc/self/fd`, Linux). The identity is the link text (`socket:[inode]`).
+ *   The handle is switched to blocking mode with fcntl.
+ * - `/dev/fd` (macOS, and any POSIX platform without procfs). The identity is
+ *   `st_dev:st_ino` from fstat. The handle is switched to blocking mode with fcntl, using
+ *   a call that is correct under both the SysV/AAPCS64 and Apple arm64 variadic
+ *   conventions (see `setBlockingVariadic`). If the switch does not take, the channel
+ *   still works: it retries EAGAIN with a 1 ms sleep, only more slowly.
+ *
+ * When neither table exists the function throws, instead of patching spawn for every
+ * caller.
  */
 
-/** The process fd table that Linux procfs exposes. */
-export const PROC_FD_DIR = "/proc/self/fd"
+/** The directories that name the process's open descriptors, in preference order. */
+export interface FdDirs {
+  /** Linux procfs fd table. */
+  readonly procFdDir: string
+  /** Fallback table: `/dev/fd` (fdesc on macOS, a symlink to procfs on Linux). */
+  readonly devFdDir: string
+}
+
+export const DEFAULT_FD_DIRS: FdDirs = { procFdDir: "/proc/self/fd", devFdDir: "/dev/fd" }
+
+/** A source of the process's open descriptors and the identity of each socket or pipe. */
+export interface FdTable {
+  /** Every descriptor number the table reports as open. */
+  list(): number[]
+  /**
+   * Identity of the socket or pipe behind `fd`. Undefined for anything else. A recycled
+   * descriptor number keeps its key but gets a new identity.
+   */
+  identify(fd: number): string | undefined
+  /** Switches the descriptor's blocking mode. Absent when this table cannot do so safely. */
+  setBlocking?(fd: number, blocking: boolean): void
+}
 
 interface PipeStream {
-  _handle?: { fd: number; setBlocking(blocking: boolean): void } | null
+  _handle?: PipeHandle | null
   unref?: () => PipeStream
   ref?: () => PipeStream
+}
+
+interface PipeHandle {
+  readonly fd: number
+  setBlocking?(blocking: boolean): void
 }
 
 interface SpawnedChild {
@@ -39,15 +74,16 @@ interface SpawnedChild {
 
 /**
  * Runs `fn` with Bun's `spawn` wrapped so the pipes it creates expose POSIX fds.
- * A no-op outside Bun and on Windows. `procFdDir` is injectable for tests.
+ * A no-op outside Bun and on Windows. `dirs` is injectable for tests.
  */
-export function withBunSyncChannelFds<T>(fn: () => T, procFdDir: string = PROC_FD_DIR): T {
+export function withBunSyncChannelFds<T>(fn: () => T, dirs: FdDirs = DEFAULT_FD_DIRS): T {
   if (process.versions.bun === undefined || process.platform === "win32") {
     return fn()
   }
-  if (!existsSync(procFdDir)) {
+  const table = selectFdTable(dirs)
+  if (table === undefined) {
     throw new Error(
-      `tskm: Bun's checker channel reads its pipe fds from ${procFdDir}, which this platform does not provide. Run the compiler under Node on this platform.`,
+      `tskm: Bun's checker channel finds its pipe fds in an fd table, and neither ${dirs.procFdDir} nor ${dirs.devFdDir} exists on this platform. Run the compiler under Node on this platform.`,
     )
   }
   const childProcess = process.getBuiltinModule("node:child_process") as unknown as {
@@ -56,7 +92,7 @@ export function withBunSyncChannelFds<T>(fn: () => T, procFdDir: string = PROC_F
   const prototype = childProcess.ChildProcess.prototype
   const original = prototype.spawn
   prototype.spawn = function spawnWithFds(this: SpawnedChild, options?: { stdio?: unknown }) {
-    const before = socketFds(procFdDir)
+    const before = pipeIdentities(table)
     const result = original.call(this, options)
     if (this.pid === undefined) {
       // A failed spawn (ENOENT, EACCES) has no pipes to identify. Node and Bun also emit
@@ -70,7 +106,7 @@ export function withBunSyncChannelFds<T>(fn: () => T, procFdDir: string = PROC_F
     const stdout = this.stdout
     const stdin = this.stdin
     if (piped && stdin !== null && stdout !== null && stdout._handle == null) {
-      const created = newPipeFds(before, procFdDir)
+      const created = newPipeFds(before, pipeIdentities(table))
       const writeFd = created[0]
       const readFd = created[1]
       if (writeFd === undefined || readFd === undefined) {
@@ -81,8 +117,8 @@ export function withBunSyncChannelFds<T>(fn: () => T, procFdDir: string = PROC_F
           `tskm: could not identify the checker's stdio pipes (found ${created.length} new fds).`,
         )
       }
-      stdin._handle = blockingHandle(writeFd)
-      stdout._handle = blockingHandle(readFd)
+      stdin._handle = pipeHandle(writeFd, table)
+      stdout._handle = pipeHandle(readFd, table)
       stdin.unref ??= () => stdin
       stdin.ref ??= () => stdin
     }
@@ -95,72 +131,168 @@ export function withBunSyncChannelFds<T>(fn: () => T, procFdDir: string = PROC_F
   }
 }
 
-function socketFds(procFdDir: string): Map<number, string> {
+/**
+ * The first fd table that exists, or undefined when neither does. procfs is preferred so
+ * Linux keeps its existing behavior, including the link-text identity.
+ */
+export function selectFdTable(dirs: FdDirs = DEFAULT_FD_DIRS): FdTable | undefined {
+  if (existsSync(dirs.procFdDir)) {
+    return procfsTable(dirs.procFdDir)
+  }
+  if (existsSync(dirs.devFdDir)) {
+    return devFdTable(dirs.devFdDir)
+  }
+  return undefined
+}
+
+/** Identity of every socket or pipe the table reports, keyed by descriptor number. */
+export function pipeIdentities(table: FdTable): Map<number, string> {
   const found = new Map<number, string>()
-  for (const entry of readdirSync(procFdDir)) {
-    const fd = Number(entry)
-    if (!Number.isInteger(fd)) continue
-    try {
-      const link = readlinkSync(`${procFdDir}/${entry}`)
-      // Bun's stdio pipes are socketpairs. A recycled fd number keeps the old
-      // key but points at a new inode, so identity is the link text, not the number.
-      if (link.startsWith("socket:") || link.startsWith("pipe:")) found.set(fd, link)
-    } catch {
-      // The fd can close between readdir and readlink.
+  for (const fd of table.list()) {
+    const identity = table.identify(fd)
+    if (identity !== undefined) {
+      found.set(fd, identity)
     }
   }
   return found
 }
 
-function newPipeFds(before: Map<number, string>, procFdDir: string): number[] {
+/** Descriptors that are new in `after`, or whose identity changed since `before`. */
+export function newPipeFds(
+  before: ReadonlyMap<number, string>,
+  after: ReadonlyMap<number, string>,
+): number[] {
   const created: number[] = []
-  for (const [fd, link] of socketFds(procFdDir)) {
-    if (before.get(fd) !== link) created.push(fd)
+  for (const [fd, identity] of after) {
+    if (before.get(fd) !== identity) {
+      created.push(fd)
+    }
   }
   return created.sort((a, b) => a - b)
 }
 
-interface FcntlLib {
-  symbols: {
-    fcntl(fd: number, cmd: number, flags: number): number
+function numericEntries(dir: string): number[] {
+  const fds: number[] = []
+  for (const entry of readdirSync(dir)) {
+    if (/^\d+$/.test(entry)) {
+      fds.push(Number(entry))
+    }
   }
+  return fds
 }
 
-let fcntlLib: FcntlLib | undefined
-
-function blockingHandle(fd: number): { fd: number; setBlocking(blocking: boolean): void } {
+function procfsTable(dir: string): FdTable {
   return {
-    fd,
-    setBlocking(blocking: boolean): void {
-      const lib = loadFcntl()
-      const flags = lib.symbols.fcntl(fd, F_GETFL, 0)
-      if (flags < 0) {
-        return
+    list: () => numericEntries(dir),
+    identify(fd) {
+      try {
+        const link = readlinkSync(`${dir}/${fd}`)
+        return link.startsWith("socket:") || link.startsWith("pipe:") ? link : undefined
+      } catch {
+        // The fd can close between readdir and readlink.
+        return undefined
       }
-      const next = blocking ? flags & ~nonBlockingFlag() : flags | nonBlockingFlag()
-      lib.symbols.fcntl(fd, F_SETFL, next)
     },
+    setBlocking: setBlockingWithFcntl,
   }
 }
+
+// S_IFMT and its socket and FIFO kinds. These values are the same on Linux and Darwin.
+const S_IFMT = 0o170000
+const S_IFIFO = 0o010000
+const S_IFSOCK = 0o140000
+
+function devFdTable(dir: string): FdTable {
+  return {
+    list: () => numericEntries(dir),
+    identify(fd) {
+      try {
+        // bigint keeps inode numbers above 2^53 exact.
+        const stat = fstatSync(fd, { bigint: true })
+        const kind = Number(stat.mode) & S_IFMT
+        return kind === S_IFSOCK || kind === S_IFIFO ? `${stat.dev}:${stat.ino}` : undefined
+      } catch {
+        // A closed fd fails fstat. The directory fd that readdir opened is S_IFDIR, so it
+        // is skipped here.
+        return undefined
+      }
+    },
+    setBlocking: setBlockingVariadic,
+  }
+}
+
+function pipeHandle(fd: number, table: FdTable): PipeHandle {
+  const setBlocking = table.setBlocking
+  if (setBlocking === undefined) {
+    return { fd }
+  }
+  return { fd, setBlocking: (blocking: boolean) => setBlocking(fd, blocking) }
+}
+
+type Fcntl3 = (fd: number, cmd: number, arg: number) => number
+type Fcntl9 = (
+  fd: number,
+  cmd: number,
+  arg: number,
+  unused4: number,
+  unused5: number,
+  unused6: number,
+  unused7: number,
+  unused8: number,
+  arg9: number,
+) => number
 
 const F_GETFL = 3
 const F_SETFL = 4
 
+let procfsFcntl: Fcntl3 | undefined
+let variadicFcntl: Fcntl9 | undefined
+
+/** The procfs table's call: the three-argument fcntl the Linux path has always made. */
+function setBlockingWithFcntl(fd: number, blocking: boolean): void {
+  procfsFcntl ??= openFcntl(3) as Fcntl3
+  const flags = procfsFcntl(fd, F_GETFL, 0)
+  if (flags < 0) {
+    return
+  }
+  const next = blocking ? flags & ~nonBlockingFlag() : flags | nonBlockingFlag()
+  procfsFcntl(fd, F_SETFL, next)
+}
+
+/**
+ * The `/dev/fd` table's call. fcntl is variadic, and bun:ffi cannot declare a variadic
+ * signature. SysV and AAPCS64 read the third argument from a register. Apple's arm64
+ * ABI reads it from the first stack slot, which is the ninth argument of this call.
+ * Passing the flags in both places means each convention finds them, and each callee
+ * ignores the slot its ABI does not use. The F_GETFL call passes zeros, which the callee
+ * ignores.
+ */
+function setBlockingVariadic(fd: number, blocking: boolean): void {
+  variadicFcntl ??= openFcntl(9) as Fcntl9
+  const flags = variadicFcntl(fd, F_GETFL, 0, 0, 0, 0, 0, 0, 0)
+  if (flags < 0) {
+    return
+  }
+  const next = blocking ? flags & ~nonBlockingFlag() : flags | nonBlockingFlag()
+  variadicFcntl(fd, F_SETFL, next, 0, 0, 0, 0, 0, next)
+}
+
+/** O_NONBLOCK: 0x4 on Darwin, 0o4000 on Linux. */
 function nonBlockingFlag(): number {
-  // Linux O_NONBLOCK is 0o4000. Darwin's is 0x4.
   return process.platform === "darwin" ? 0x4 : 0o4000
 }
 
-function loadFcntl(): FcntlLib {
-  if (fcntlLib) {
-    return fcntlLib
-  }
+/** Opens libc's fcntl with `argCount` int arguments. */
+function openFcntl(argCount: 3 | 9): (...args: number[]) => number {
   const { dlopen, FFIType } = createRequire(import.meta.url)("bun:ffi") as {
-    dlopen: (name: string, symbols: object) => FcntlLib
+    dlopen: (name: string, symbols: object) => { symbols: { fcntl: (...args: number[]) => number } }
     FFIType: { i32: unknown }
   }
   const symbols = {
-    fcntl: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+    fcntl: {
+      args: Array.from({ length: argCount }, () => FFIType.i32),
+      returns: FFIType.i32,
+    },
   }
   const names =
     process.platform === "darwin"
@@ -169,8 +301,7 @@ function loadFcntl(): FcntlLib {
   let last: unknown
   for (const name of names) {
     try {
-      fcntlLib = dlopen(name, symbols)
-      return fcntlLib
+      return dlopen(name, symbols).symbols.fcntl
     } catch (error) {
       last = error
     }

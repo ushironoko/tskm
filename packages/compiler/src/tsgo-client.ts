@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
-import { withBunSyncChannelFds } from "./bun-sync-fds.ts"
+import { type FdDirs, withBunSyncChannelFds } from "./bun-sync-fds.ts"
 
 /**
  * typeToString flags: NoTruncation | UseStructuralFallback | InTypeAlias | NoTypeReduction.
@@ -169,6 +169,11 @@ export interface CreateTsgoClientOptions {
   readonly cwd: string
   readonly tsconfigPath: string
   readonly executable?: string
+  /**
+   * Under Bun, the fd tables that locate the checker's pipes (procfs first, then `/dev/fd`).
+   * The default suits every caller. Tests set it to exercise the `/dev/fd` fallback on Linux.
+   */
+  readonly fdDirs?: FdDirs
 }
 
 interface FileNotifications {
@@ -284,6 +289,7 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
         tsserverPath: executable,
         useCaseSensitiveFileNames: inferCaseSensitiveFileNames(),
       }),
+    options.fdDirs,
   )
   let snapshot: SnapshotLike
   try {
