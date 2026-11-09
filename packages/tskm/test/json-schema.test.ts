@@ -669,3 +669,70 @@ describe("Standard JSON Schema — malformed nodes", () => {
     ).toEqual({ type: "string" })
   })
 })
+
+describe("Standard JSON Schema — ~standard shape", () => {
+  it("defines ~standard as a data property that every read shares", () => {
+    const cases = [
+      object({ a: string() }),
+      pipe(string(), minLength(1)),
+      recursive((self) => object({ child: optional(self) })),
+    ]
+    for (const schema of cases) {
+      const wrapped = withJsonSchema(schema)
+      const descriptor = Object.getOwnPropertyDescriptor(wrapped, "~standard")
+      expect(descriptor && "value" in descriptor).toBe(true)
+      expect(descriptor?.get).toBeUndefined()
+      expect(wrapped["~standard"]).toBe(wrapped["~standard"])
+      expect(wrapped["~standard"].jsonSchema).toBe(wrapped["~standard"].jsonSchema)
+      expect(wrapped["~standard"].validate).toBe(schema["~standard"].validate)
+    }
+  })
+
+  it("keeps the base's types when the base carries them", () => {
+    const types = { input: "in", output: "out" }
+    const validate = (value: unknown) => ({ value })
+    const base = { version: 1, vendor: "test", validate, types }
+    const schema = {
+      kind: "schema",
+      type: "string",
+      reference: string,
+      expects: "string",
+      async: false,
+      get "~standard"() {
+        return base
+      },
+      "~run": (dataset: unknown) => dataset,
+    }
+    const wrapped = withJsonSchema(schema as unknown as Parameters<typeof withJsonSchema>[0])
+    expect(wrapped["~standard"].types).toBe(types)
+    expect(wrapped["~standard"].version).toBe(1)
+    expect(wrapped["~standard"].vendor).toBe("test")
+    expect(wrapped["~standard"].validate).toBe(validate)
+    expect(Object.keys(wrapped["~standard"]).sort()).toEqual([
+      "jsonSchema",
+      "types",
+      "validate",
+      "vendor",
+      "version",
+    ])
+    expect(schema["~standard"]).toBe(base)
+    expect("jsonSchema" in base).toBe(false)
+  })
+
+  it("leaves the original schema's properties and descriptors untouched", () => {
+    const schema = pipe(object({ a: optional(string(), "x") }), description("doc"))
+    const before: Record<string, PropertyDescriptor> = Object.getOwnPropertyDescriptors(schema)
+    const standardBefore = schema["~standard"]
+    const wrapped = withJsonSchema(schema)
+    wrapped["~standard"].jsonSchema.input(draft)
+    wrapped["~standard"].jsonSchema.output(draft07)
+    const after: Record<string, PropertyDescriptor> = Object.getOwnPropertyDescriptors(schema)
+    expect(Object.keys(after)).toEqual(Object.keys(before))
+    for (const key of Object.keys(before)) {
+      expect(after[key]?.get).toBe(before[key]?.get)
+      expect(after[key]?.value).toBe(before[key]?.value)
+    }
+    expect(schema["~standard"]).toBe(standardBefore)
+    expect("jsonSchema" in schema["~standard"]).toBe(false)
+  })
+})
