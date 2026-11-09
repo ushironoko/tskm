@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
-import { installBunSyncChannelFds } from "./bun-sync-fds.ts"
+import { withBunSyncChannelFds } from "./bun-sync-fds.ts"
 
 /**
  * typeToString flags: NoTruncation | UseStructuralFallback | InTypeAlias | NoTypeReduction.
@@ -85,10 +85,15 @@ interface CheckerDiagnostic {
   readonly text?: string
 }
 
+function toSlashes(path: string): string {
+  return path.replace(/\\/g, "/")
+}
+
 /**
  * Maps a checker diagnostic payload to the client's file diagnostics.
- * A non-array payload is a missing or renamed method: fail CLOSED with a synthetic
- * diagnostic so an oracle caller never treats silence as soundness.
+ * A non-array payload is a missing or renamed method, and a non-object entry is a
+ * malformed one: both fail CLOSED with a synthetic diagnostic so an oracle caller never
+ * treats silence as soundness.
  */
 export function toFileDiagnostics(
   raw: unknown,
@@ -97,14 +102,19 @@ export function toFileDiagnostics(
   if (!Array.isArray(raw)) {
     return [{ code: -1, fileName: probeFileAbs }]
   }
+  const probe = toSlashes(probeFileAbs)
   const diagnostics: FileDiagnostic[] = []
   for (const item of raw) {
     if (item === null || typeof item !== "object") {
+      diagnostics.push({ code: -1, fileName: probeFileAbs })
       continue
     }
     const diagnostic = item as CheckerDiagnostic
     const fileName = typeof diagnostic.fileName === "string" ? diagnostic.fileName : ""
-    if (fileName !== "" && fileName !== probeFileAbs) {
+    // The checker reports slash-normalized RootedFilePath values, while the probe path is
+    // built with the host separator. Compare both in one form, or every Windows diagnostic
+    // is dropped and the probe reads as clean.
+    if (fileName !== "" && toSlashes(fileName) !== probe) {
       continue
     }
     const text = typeof diagnostic.text === "string" ? diagnostic.text : undefined
@@ -193,9 +203,6 @@ let syncApi: SyncApi | undefined
 let fsApi: FsApi | undefined
 
 function loadCheckerApi(): { syncApi: SyncApi; fsApi: FsApi } {
-  // Bun's static `import { spawn }` captures the function at evaluation time.
-  // Install the fd shim before the checker module is loaded for the first time.
-  installBunSyncChannelFds()
   if (syncApi && fsApi) {
     return { syncApi, fsApi }
   }
@@ -206,8 +213,8 @@ function loadCheckerApi(): { syncApi: SyncApi; fsApi: FsApi } {
 }
 
 function checkerEntrypoint(kind: "sync" | "fs"): string {
-  // A split string keeps the bundler from hoisting this into a top-level import,
-  // which would run before the Bun fd shim.
+  // A split string keeps the bundler from resolving this at build time; the package is
+  // an external peer and must be loaded from the user's install at runtime.
   return `typescript/${kind}`
 }
 
@@ -268,11 +275,16 @@ function notificationsOf(summary: {
 export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
   const executable = resolveTsgoExecutable(options.executable)
   const { syncApi: sync, fsApi: fs } = loadCheckerApi()
-  const api = new sync.API({
-    cwd: options.cwd,
-    tsserverPath: executable,
-    useCaseSensitiveFileNames: inferCaseSensitiveFileNames(),
-  })
+  // The checker's channel spawns inside the constructor, so only this call needs the Bun
+  // pipe-fd wrapper. It is removed again before any other child process can start.
+  const api = withBunSyncChannelFds(
+    () =>
+      new sync.API({
+        cwd: options.cwd,
+        tsserverPath: executable,
+        useCaseSensitiveFileNames: inferCaseSensitiveFileNames(),
+      }),
+  )
   let snapshot: SnapshotLike
   try {
     snapshot = api.createSnapshot({ openProjects: [options.tsconfigPath] }) as SnapshotLike
@@ -308,6 +320,11 @@ export function createTsgoClient(options: CreateTsgoClientOptions): TsgoClient {
       ...(fileNotifications ? { fileNotifications } : {}),
       ensurePrograms: true,
     })
+    if (next === snapshot) {
+      // updateSnapshot hands back the base object when the server reports no change.
+      // Disposing it below would dispose the live snapshot as well.
+      return
+    }
     const previous = snapshot
     snapshot = next
     previous.dispose()

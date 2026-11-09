@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { withBunSyncChannelFds } from "../src/bun-sync-fds.ts"
 import {
@@ -84,6 +85,10 @@ describe("toFileDiagnostics", () => {
     ])
   })
 
+  it("reports an empty array as no diagnostics", () => {
+    expect(toFileDiagnostics([], "/proj/q.ts")).toEqual([])
+  })
+
   it("keeps the probe file's diagnostics and their message text", () => {
     expect(
       toFileDiagnostics(
@@ -91,7 +96,6 @@ describe("toFileDiagnostics", () => {
           { code: 2304, fileName: "/proj/q.ts", text: "Cannot find name 'Missing'." },
           { code: 2322, fileName: "/proj/other.ts", text: "elsewhere" },
           { code: 1, text: "no file" },
-          null,
         ],
         "/proj/q.ts",
       ),
@@ -100,18 +104,95 @@ describe("toFileDiagnostics", () => {
       { code: 1, fileName: "/proj/q.ts", text: "no file" },
     ])
   })
+
+  it("fails closed on a malformed entry and keeps the valid ones", () => {
+    expect(
+      toFileDiagnostics(
+        [{ code: 2304, fileName: "/proj/q.ts", text: "Cannot find name 'X'." }, null, "bogus"],
+        "/proj/q.ts",
+      ),
+    ).toEqual([
+      { code: 2304, fileName: "/proj/q.ts", text: "Cannot find name 'X'." },
+      { code: -1, fileName: "/proj/q.ts" },
+      { code: -1, fileName: "/proj/q.ts" },
+    ])
+    expect(toFileDiagnostics([null], "/proj/q.ts")).toEqual([{ code: -1, fileName: "/proj/q.ts" }])
+  })
+
+  it("matches a native-separator probe path against the checker's slash-normalized name", () => {
+    // The checker reports RootedFilePath values, which use forward slashes. A Windows
+    // probe path built with path.join uses backslashes; both must compare equal.
+    expect(
+      toFileDiagnostics(
+        [{ code: 2322, fileName: "C:/proj/q.ts", text: "Type 'string' is not assignable." }],
+        "C:\\proj\\q.ts",
+      ),
+    ).toEqual([{ code: 2322, fileName: "C:/proj/q.ts", text: "Type 'string' is not assignable." }])
+  })
+
+  it("still drops another file's diagnostics when the separators differ", () => {
+    expect(
+      toFileDiagnostics([{ code: 2322, fileName: "C:/proj/other.ts" }], "C:\\proj\\q.ts"),
+    ).toEqual([])
+  })
 })
 
 describe("withBunSyncChannelFds", () => {
-  it("returns the callback result and installs the prototype wrapper once", () => {
-    const { ChildProcess } = process.getBuiltinModule("node:child_process")
-    const prototype = ChildProcess.prototype as unknown as { spawn: { name: string } }
+  const isBunPosix = process.versions.bun !== undefined && process.platform !== "win32"
+  const childProcessPrototype = (): { spawn: unknown } =>
+    (
+      process.getBuiltinModule("node:child_process") as unknown as {
+        ChildProcess: { prototype: { spawn: unknown } }
+      }
+    ).ChildProcess.prototype
+
+  it("returns the callback result and leaves ChildProcess.prototype.spawn as it was", () => {
+    const original = childProcessPrototype().spawn
     expect(withBunSyncChannelFds(() => 7)).toBe(7)
-    const wrapped = prototype.spawn
-    expect(withBunSyncChannelFds(() => 0)).toBe(0)
-    expect(prototype.spawn).toBe(wrapped)
-    if (process.versions.bun !== undefined && process.platform !== "win32") {
-      expect(wrapped.name).toBe("spawnWithFds")
-    }
+    expect(childProcessPrototype().spawn).toBe(original)
   })
+
+  it("restores spawn when the callback throws", () => {
+    const original = childProcessPrototype().spawn
+    expect(() =>
+      withBunSyncChannelFds(() => {
+        throw new Error("callback failed")
+      }),
+    ).toThrow("callback failed")
+    expect(childProcessPrototype().spawn).toBe(original)
+  })
+
+  it.skipIf(!isBunPosix)("wraps spawn only while the callback runs", () => {
+    const original = childProcessPrototype().spawn
+    withBunSyncChannelFds(() => {
+      const wrapped = childProcessPrototype().spawn as { name: string }
+      expect(wrapped).not.toBe(original)
+      expect(wrapped.name).toBe("spawnWithFds")
+    })
+    expect(childProcessPrototype().spawn).toBe(original)
+  })
+
+  it.skipIf(!isBunPosix)("leaves unrelated child processes without shim handles", async () => {
+    withBunSyncChannelFds(() => 0)
+    const child = spawn("sh", ["-c", "printf OK"], { stdio: ["pipe", "pipe", "inherit"] })
+    const handle = (child.stdout as unknown as { _handle?: unknown } | null)?._handle
+    let out = ""
+    child.stdout?.on("data", (chunk) => {
+      out += String(chunk)
+    })
+    await new Promise<void>((resolve) => child.on("close", () => resolve()))
+    expect(handle ?? null).toBeNull()
+    expect(out).toBe("OK")
+  })
+
+  it.skipIf(!isBunPosix)(
+    "fails clearly, without patching spawn, when the fd table is missing",
+    () => {
+      const original = childProcessPrototype().spawn
+      expect(() => withBunSyncChannelFds(() => 1, "/tskm-missing-fd-table")).toThrow(
+        "which this platform does not provide",
+      )
+      expect(childProcessPrototype().spawn).toBe(original)
+    },
+  )
 })

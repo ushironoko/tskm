@@ -82,9 +82,29 @@ describe("TsgoClient (typescript/sync)", () => {
 
       client.clearOverlay([query])
       expect(existsSync(query)).toBe(false)
-      expect(client.resolveTypeAt(query, 0)).toBeNull()
+      // Removal must take the document out of the program, not just stop the write:
+      // the marker that resolved before must now be a missing type.
+      expect(client.resolveTypeAt(query, bad.indexOf("__q"))).toBeNull()
     } finally {
       client.close()
+      client.close()
+    }
+  })
+
+  it("fails closed for a document the project does not include", () => {
+    const { root, tsconfig } = project()
+    mkdirSync(join(root, "outside"))
+    const client = createTsgoClient({ cwd: root, tsconfigPath: tsconfig })
+    const outside = join(root, "outside/probe.tskm-query.ts")
+    const text = `declare const __q: number = "not a number"\n`
+    try {
+      client.applyOverlay([{ document: outside, text }])
+      // The checker reports "source file not found" for such a document. The client maps
+      // that to a missing type, and a diagnostics call to the synthetic failure entry.
+      expect(client.resolveTypeAt(outside, text.indexOf("__q"))).toBeNull()
+      expect(client.getDiagnostics(outside)).toEqual([{ code: -1, fileName: outside }])
+      client.clearOverlay([outside])
+    } finally {
       client.close()
     }
   })

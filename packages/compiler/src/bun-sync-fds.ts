@@ -1,15 +1,25 @@
-import { readdirSync, readlinkSync } from "node:fs"
+import { existsSync, readdirSync, readlinkSync } from "node:fs"
 import { createRequire } from "node:module"
 
 /**
  * Bun's `child_process` pipes are socketpairs and do not expose `stdout._handle.fd`.
  * TypeScript's sync channel reads that fd and calls `readSync` on it. Node already
- * provides the handle. The wrapper sits on `ChildProcess.prototype.spawn`, which
- * the already-imported `spawn` function calls, so it still applies when some other
- * module imported `node:child_process` first (Vite does). Windows Bun uses the
- * channel's own named-pipe path, so it is left alone.
+ * provides the handle, and Windows Bun uses the channel's own named-pipe path, so the
+ * shim is only needed under Bun on POSIX.
+ *
+ * The shim is scoped to one call. `withBunSyncChannelFds` swaps the wrapper onto
+ * `ChildProcess.prototype.spawn` for the duration of the callback and restores the
+ * original afterwards. The checker's channel spawns synchronously in its constructor,
+ * so the callback is just `new API(...)`, and child processes spawned elsewhere in the
+ * same process never see the wrapper.
+ *
+ * Pipe fds are identified by diffing the process fd table around the spawn. That
+ * table is procfs (`/proc/self/fd`). A platform without it (macOS) cannot be served,
+ * so the function throws instead of patching spawn for every caller.
  */
-let installed = false
+
+/** The process fd table that Linux procfs exposes. */
+export const PROC_FD_DIR = "/proc/self/fd"
 
 interface PipeStream {
   _handle?: { fd: number; setBlocking(blocking: boolean): void } | null
@@ -20,55 +30,68 @@ interface PipeStream {
 interface SpawnedChild {
   stdin: PipeStream | null
   stdout: PipeStream | null
+  kill(): boolean
   spawn(options?: { stdio?: unknown }): unknown
 }
 
-export function installBunSyncChannelFds(): void {
-  if (installed || process.versions.bun === undefined || process.platform === "win32") {
-    return
+/**
+ * Runs `fn` with Bun's `spawn` wrapped so the pipes it creates expose POSIX fds.
+ * A no-op outside Bun and on Windows. `procFdDir` is injectable for tests.
+ */
+export function withBunSyncChannelFds<T>(fn: () => T, procFdDir: string = PROC_FD_DIR): T {
+  if (process.versions.bun === undefined || process.platform === "win32") {
+    return fn()
   }
-  installed = true
+  if (!existsSync(procFdDir)) {
+    throw new Error(
+      `tskm: Bun's checker channel reads its pipe fds from ${procFdDir}, which this platform does not provide. Run the compiler under Node on this platform.`,
+    )
+  }
   const childProcess = process.getBuiltinModule("node:child_process") as unknown as {
     ChildProcess: { prototype: SpawnedChild }
   }
-  const original = childProcess.ChildProcess.prototype.spawn
-  childProcess.ChildProcess.prototype.spawn = function spawnWithFds(
-    this: SpawnedChild,
-    options?: { stdio?: unknown },
-  ) {
-    const before = socketFds()
+  const prototype = childProcess.ChildProcess.prototype
+  const original = prototype.spawn
+  prototype.spawn = function spawnWithFds(this: SpawnedChild, options?: { stdio?: unknown }) {
+    const before = socketFds(procFdDir)
     const result = original.call(this, options)
     const stdio = options?.stdio
     const piped = Array.isArray(stdio) && stdio[0] === "pipe" && stdio[1] === "pipe"
     const stdout = this.stdout
     const stdin = this.stdin
     if (piped && stdin !== null && stdout !== null && stdout._handle == null) {
-      const created = newPipeFds(before)
+      const created = newPipeFds(before, procFdDir)
       const writeFd = created[0]
       const readFd = created[1]
-      if (writeFd !== undefined && readFd !== undefined) {
-        stdin._handle = blockingHandle(writeFd)
-        stdout._handle = blockingHandle(readFd)
-        stdin.unref ??= () => stdin
-        stdin.ref ??= () => stdin
+      if (writeFd === undefined || readFd === undefined) {
+        // Without the pair the channel would fail on a null handle and leave this child
+        // running, so stop it here and name the cause.
+        this.kill()
+        throw new Error(
+          `tskm: could not identify the checker's stdio pipes (found ${created.length} new fds).`,
+        )
       }
+      stdin._handle = blockingHandle(writeFd)
+      stdout._handle = blockingHandle(readFd)
+      stdin.unref ??= () => stdin
+      stdin.ref ??= () => stdin
     }
     return result
   }
+  try {
+    return fn()
+  } finally {
+    prototype.spawn = original
+  }
 }
 
-export function withBunSyncChannelFds<T>(fn: () => T): T {
-  installBunSyncChannelFds()
-  return fn()
-}
-
-function socketFds(): Map<number, string> {
+function socketFds(procFdDir: string): Map<number, string> {
   const found = new Map<number, string>()
-  for (const entry of readdirSync("/proc/self/fd")) {
+  for (const entry of readdirSync(procFdDir)) {
     const fd = Number(entry)
     if (!Number.isInteger(fd)) continue
     try {
-      const link = readlinkSync(`/proc/self/fd/${entry}`)
+      const link = readlinkSync(`${procFdDir}/${entry}`)
       // Bun's stdio pipes are socketpairs. A recycled fd number keeps the old
       // key but points at a new inode, so identity is the link text, not the number.
       if (link.startsWith("socket:") || link.startsWith("pipe:")) found.set(fd, link)
@@ -79,9 +102,9 @@ function socketFds(): Map<number, string> {
   return found
 }
 
-function newPipeFds(before: Map<number, string>): number[] {
+function newPipeFds(before: Map<number, string>, procFdDir: string): number[] {
   const created: number[] = []
-  for (const [fd, link] of socketFds()) {
+  for (const [fd, link] of socketFds(procFdDir)) {
     if (before.get(fd) !== link) created.push(fd)
   }
   return created.sort((a, b) => a - b)
