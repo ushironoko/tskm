@@ -70,9 +70,19 @@ function schemaTypeCases(file: string): string[] {
 // under instrumentation loses nothing.
 const instrumented = readFileSync(join(SRC, "structural-ts.ts"), "utf8").includes("__stryker")
 
+/**
+ * Labels the JSON walker handles on purpose and the structural walker does not. `fallback`
+ * keeps the inner schema on the JSON side (the JSON side needs no checker). The structural
+ * walker leaves a `fallback()` to the checker instead: its default branch emits `unknown`
+ * and the sidecar takes the checker's type (see the shared-alias fixture). Teaching the
+ * structural walker `fallback` would change the TS output, so the difference is listed here
+ * rather than silently passing. Any other one-sided case still fails this test.
+ */
+const JSON_ONLY_CASES: ReadonlyArray<string> = ["fallback"]
+
 describe("walker switch-table parity (#23)", () => {
   it.skipIf(instrumented)(
-    "structural-ts.ts and jsonschema.ts handle the same schema-type set",
+    "structural-ts.ts and jsonschema.ts handle the same schema-type set, bar the listed exceptions",
     () => {
       const structural = schemaTypeCases("structural-ts.ts")
       const json = schemaTypeCases("jsonschema.ts")
@@ -82,7 +92,9 @@ describe("walker switch-table parity (#23)", () => {
       expect(structural.length).toBeGreaterThan(5)
       expect(json.length).toBeGreaterThan(5)
 
-      expect(structural).toEqual(json)
+      // The exception is real: the JSON walker has it and the structural walker does not.
+      expect(json.filter((label) => JSON_ONLY_CASES.includes(label))).toEqual([...JSON_ONLY_CASES])
+      expect(json.filter((label) => !JSON_ONLY_CASES.includes(label))).toEqual(structural)
     },
   )
 })

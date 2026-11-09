@@ -191,6 +191,7 @@ tskm gen            # generate sidecar .gen.ts for every included schema
 tskm gen --mode inplace   # rewrite `type T = Infer<typeof X>` markers in place (experimental)
 tskm watch          # generate, then re-generate on change
 tskm json-schema    # emit JSON Schema per schema, via an isolated worker (experimental)
+tskm json-schema --approximate bigint,date   # also approximate those types (see JSON Schema below)
 ```
 
 In-place mode rewrites the `Infer` marker in your source instead of writing a sidecar. Before:
@@ -288,7 +289,7 @@ The checker runs as a long-lived process: it opens the project once and is fed i
 
 **Sidecar / in-place `.ts` output has no fixed "supported subset".** Because the type comes from the real checker, whatever the schema's inferred output type resolves to is what you get, including types produced by `transform`, generics, and conditional types. The only failure mode is **fail-closed**: if a schema resolves to `any`/`unknown`/`never`, the previous output is kept and a diagnostic is reported.
 
-The **experimental JSON Schema** emitter is different: it walks the runtime schema structurally, so it has a documented mapping (and warns on anything it cannot represent). For example, `tskm json-schema` turns the recursive `categorySchema` from [Why tskm?](#why-tskm) into a `$ref`/`$defs` document:
+The **experimental JSON Schema** emitter is different: it walks the runtime schema structurally, so it has a documented mapping. Anything it cannot represent fails its file (see [JSON Schema: types it cannot express](#json-schema-types-it-cannot-express)). For example, `tskm json-schema` turns the recursive `categorySchema` from [Why tskm?](#why-tskm) into a `$ref`/`$defs` document:
 
 ```json
 {
@@ -315,12 +316,12 @@ The **experimental JSON Schema** emitter is different: it walks the runtime sche
 | schema | generated `.ts` type | JSON Schema (draft 2020-12) |
 | --- | --- | --- |
 | `string` `number` `boolean` | `string` `number` `boolean` | `{ "type": "string" }` etc. |
-| `bigint` | `bigint` | `{ "type": "string" }` ⚠ |
-| `date` | `Date` | `{ "type": "string", "format": "date-time" }` ⚠ |
+| `bigint` | `bigint` | ✖ `{ "type": "string" }` with `approximate: ["bigint"]` |
+| `date` | `Date` | ✖ `{ "type": "string", "format": "date-time" }` with `approximate: ["date"]` |
 | `literal(x)` | `x` (non-finite numbers widen to `number` ⚠) | `{ "const": x }` |
 | `templateLiteral(["p_", string()])` | `` `p_${string}` `` (template literal type, not widened to `string`) | `{ "type": "string", "pattern": ... }` |
 | `picklist([...])` | union of literals | `{ "enum": [...] }` |
-| `null_` `undefined_` | `null` `undefined` | `{ "type": "null" }` · `{}` ⚠ |
+| `null_` `undefined_` | `null` `undefined` | `{ "type": "null" }` · ✖ `{}` with `approximate: ["undefined"]` |
 | `any` `unknown` `never_` | `any` `unknown` `never` | `{}` · `{}` · `{ "not": {} }` |
 | `object({...})` | `{ k: T }` (unknown keys stripped) | `{ "type": "object", "properties", "required", "additionalProperties": false }` |
 | `exactObject({...})` / `object(_, { rest })` | `{ k: T }` (same shape; `exact` rejects unknown keys, `passthrough` copies them through) | `additionalProperties: false` (`exact`/`strip`) · `true` (`passthrough`) |
@@ -330,18 +331,66 @@ The **experimental JSON Schema** emitter is different: it walks the runtime sche
 | `tuple([A, B])` | `[A, B]` | `{ "type": "array", "prefixItems": [A, B], "items": false }` |
 | `union([A, B])` | `A \| B` | `{ "anyOf": [A, B] }` |
 | `discriminatedUnion("k", [A, B])` | `A \| B` (same shape as `union`; O(1) tag dispatch + `.literals`/`.mapping` metadata) | `{ "oneOf": [A, B], "x-tskm-discriminant": "k" }` |
-| `optional(T)` | `T \| undefined`; under `object(_, { optionalKeys: true })` the key is omittable (`k?: T`) | inside `object`: `T`, key dropped from `required`; standalone: `T` ⚠ (drops `undefined`) |
+| `optional(T)` | `T \| undefined`; under `object(_, { optionalKeys: true })` the key is omittable (`k?: T`) | inside `object`: `T`, key dropped from `required`; standalone: `T` (`undefined` has no JSON form) |
 | `nullable(T)` | `T \| null` | `{ "anyOf": [T, { "type": "null" }] }` |
-| `nullish(T)` | `T \| null \| undefined` | `{ "anyOf": [T, { "type": "null" }] }` ⚠ (drops `undefined`) |
+| `nullish(T)` | `T \| null \| undefined` | `{ "anyOf": [T, { "type": "null" }] }` (inside `object`, `undefined` is the dropped key) |
+| `fallback(T, v)` | `T` (the fallback value only recovers a failed parse) | the inner `T` (the `default` keyword is not emitted) |
+| `preprocess(fn, T)` | the output `T` | `output`: the inner `T`; `input` (`jsonSchema.io`): `{}`, since the input is `unknown` |
 | `lazy(() => T)` | recursive `T` (needs a hand-written annotation) | `$ref` / `$defs` |
 | `recursive((self) => ...)` | **named self-referential alias, materialized** | `$ref` / `$defs` (export-named) |
 | pipe `minLength`/`maxLength`/`length`/`nonEmpty` | unchanged | `minLength`/`maxLength` (or `minItems`/`maxItems`) |
 | pipe `minValue`/`maxValue`/`integer`/`multipleOf` | unchanged | `minimum`/`maximum`/`"type":"integer"`/`multipleOf` (numeric bases only) |
 | pipe `email`/`url`/`regex` | unchanged | `format: "email"`/`format: "uri"`/`pattern` |
 | pipe `description` | unchanged (metadata; never executed) | `description` (last-wins when piped repeatedly) |
-| pipe `transform`/`brand`/`check`/`readonly` (+ `checkAsync`/`transformAsync`) | **output type** (resolved) | ⚠ not representable: warns, keeps the base constraints |
+| pipe `brand`/`readonly` | unchanged (they do not change the JSON value) | no-op |
+| pipe `transform` (+ `transformAsync`) | **output type** (resolved) | ✖ on the output side. With `approximate: ["transform"]`: the schema before the transform. On the input side (`jsonSchema.io: "input"`): the input type, exact |
+| pipe `check` (+ `checkAsync`) | the predicate (not expressible) | ✖ with `approximate: ["check"]`: the predicate is dropped |
 
-⚠ = lossy or unrepresentable in JSON Schema; the emitter records a warning.
+✖ = not expressible in JSON Schema. The file fails by default, and nothing is written for it. Listing the type in `jsonSchema.approximate` (CLI `--approximate`) emits the stand-in shown, and records a warning for each use.
+⚠ = a lossy note on the generated `.ts` type (the JSON Schema column is unaffected).
+
+### JSON Schema: types it cannot express
+
+`tskm json-schema` fails closed. A schema containing a ✖ type makes its file fail, and nothing is written for that file. The other files still emit. The run exits with code 1, so CI sees the failure. The error names the export, the path inside it, the type, and the option that would accept it:
+
+```text
+tskm: /repo/src/order.schema.ts: orderSchema.amount: cannot convert schema type "bigint" to JSON Schema: bigint has no JSON representation. Add "bigint" to jsonSchema.approximate (CLI: --approximate bigint) to emit it as a string instead.
+tskm: json-schema failed with 1 error(s); the affected files were not written.
+```
+
+The path is the export name followed by the position: `orderSchema.createdAt` (a property), `orderSchema.items[0]` (a tuple slot), `orderSchema.tags[]` (an array item or record value), `orderSchema.byDate[key]` (a record key). Each error is listed, so one run shows every problem.
+
+To accept a type, list it. Known names are `bigint`, `date`, `undefined`, `check`, and `transform`; anything else is an error, and there is no switch that approximates everything:
+
+```ts
+// tskm.config.ts
+export default defineConfig({
+  jsonSchema: { approximate: ["bigint", "date"] },
+})
+```
+
+```bash
+tskm json-schema --approximate bigint,date   # the flag overrides the config field by field
+```
+
+| name | what it emits instead | warning per use |
+| --- | --- | --- |
+| `bigint` | `{ "type": "string" }` | approximated bigint as a string |
+| `date` | `{ "type": "string", "format": "date-time" }` | approximated date as a date-time string |
+| `undefined` | `{}` (an unconstrained schema) | approximated undefined as an unconstrained schema |
+| `check` | the base schema, predicate dropped | approximated check without the predicate |
+| `transform` | the schema before the transform (output side) | approximated transform as the schema before the transform |
+
+A `transform` is exact on the input side. Set `jsonSchema: { io: "input" }` to describe what callers send, with no approximation. `io` applies to tskm schemas and to the Standard Schema converters that honor it.
+
+**Migrating from 0.4.x.** These changes are breaking for `@tskm/compiler`:
+
+- A file with a `bigint`, `date`, `undefined`, `check`, or output-side `transform` now fails (exit 1, not written). To keep the previous output, list the types in `jsonSchema.approximate` or pass `--approximate`. For `transform` on a request body, `io: "input"` is usually the better choice.
+- `fallback(T, v)` emits the inner `T`; it used to emit `{}`.
+- `io: "input"` applies to tskm schemas: `preprocess` is `{}`, and a transform keeps the pre-transform type. Before, `io` was ignored for tskm schemas.
+- `preprocess` and `nullish` no longer print a warning, and `brand` / `readonly` no longer print one either, because their JSON output is exact.
+- `--out` no longer ignores `tskm.config.*`. The flag overrides `jsonSchema.outDir`, and the rest of the config still applies.
+- `generateJsonSchema()` and `schemaToJsonSchema()` return `errors`. A source with an error is not written. `schemaToJsonSchema()` still returns `warnings`.
 
 ### Standard JSON Schema on the schema
 
@@ -355,7 +404,7 @@ const User = withJsonSchema(object({ name: string() }))
 User["~standard"].jsonSchema.input({ target: "draft-07" })
 ```
 
-Supported targets are `draft-2020-12`, `draft-07`, and `openapi-3.0`. For schemas the `tskm json-schema` emitter can represent, `output({ target: "draft-2020-12" })` matches that emitter. `input` and `output` differ for `preprocess` (input is `{}`), for a JSON `default` on `optional` / `nullable` / `nullish` (the keyword is on the input), and for `fallback` (the keyword is on the output). `transform` output, `check`, `bigint`, `date`, and `undefined` throw when `input` or `output` is called, not when the schema is wrapped. Vercel AI SDK's `tool({ inputSchema })` calls `jsonSchema.input({ target: "draft-07" })`, so pass the wrapped schema.
+Supported targets are `draft-2020-12`, `draft-07`, and `openapi-3.0`. For schemas the `tskm json-schema` emitter represents, `output({ target: "draft-2020-12" })` matches its document, except for the `default` keywords below. `input` and `output` differ for `preprocess` (input is `{}`), for a JSON `default` on `optional` / `nullable` / `nullish` (the keyword is on the input), and for `fallback` (the keyword is on the output). The emitter does not write `default` keywords yet, so only those documents differ, not the types. `transform` output, `check`, `bigint`, `date`, and `undefined` throw when `input` or `output` is called, not when the schema is wrapped. The emitter refuses the same types by default, unless they are listed in `jsonSchema.approximate` (see [types it cannot express](#json-schema-types-it-cannot-express)). Vercel AI SDK's `tool({ inputSchema })` calls `jsonSchema.input({ target: "draft-07" })`, so pass the wrapped schema.
 
 ## Standard Schema interop
 
@@ -490,7 +539,7 @@ See [`examples/standard-schema`](examples/standard-schema) for the end-to-end lo
 
 - **In-place mode** only recognizes *single-line* `export type T = Infer<typeof X>` markers, and trailing content on that line is dropped on first conversion. It is experimental and opt-in.
 
-- **JSON Schema** runs your schema module in an isolated subprocess. It assumes the module is side-effect-free and imports cleanly under the chosen runtime (`--exec`/`execPath`). `transform`/refinements that JSON Schema can't express are warned and omitted. `minValue`/`maxValue` map to `minimum`/`maximum` and are only meaningful on a number base (on a `date` base they emit numeric bounds that don't apply to the string schema). Recursive (`lazy`/`recursive`) schemas become `$ref`/`$defs`. `recursive()` roots are named after their exports (`Category`), while other hoisted cycles keep kind-derived names (`object`, `object_2`, and so on).
+- **JSON Schema** runs your schema module in an isolated subprocess. It assumes the module is side-effect-free and imports cleanly under the chosen runtime (`--exec`/`execPath`). A type JSON Schema can't express fails its file, unless it is listed in `jsonSchema.approximate` (see [types it cannot express](#json-schema-types-it-cannot-express)). A pipe item the emitter does not know fails the file too. `minValue`/`maxValue` map to `minimum`/`maximum` and are only meaningful on a number base (on a `date` base they emit numeric bounds that don't apply to the string schema). Recursive (`lazy`/`recursive`) schemas become `$ref`/`$defs`. `recursive()` roots are named after their exports (`Category`), while other hoisted cycles keep kind-derived names (`object`, `object_2`, and so on).
 
 - **`union`** emits a single schema-level issue on failure (no per-member aggregation yet). `discriminatedUnion` also emits a single schema-level issue (path-unscoped) whose `expected` names the discriminant and its tag set, since the tag alone selects the member; an unknown or missing tag fails there rather than per member.
 

@@ -52,6 +52,52 @@ describe("schemaToJsonSchemaViaAdapter — vendor dispatch (real libraries)", ()
   })
 })
 
+describe("schemaToJsonSchemaViaAdapter — tskm unrepresentable types", () => {
+  const bigintField = {
+    kind: "schema",
+    type: "object",
+    entries: { amount: { kind: "schema", type: "bigint" } },
+    rest: "strip",
+  }
+
+  it("rejects a tskm schema the walker cannot represent, with the path and option", async () => {
+    const outcome = await schemaToJsonSchemaViaAdapter(bigintField, ctx({ rootName: "Order" }))
+    expect(outcome.kind).toBe("rejected")
+    if (outcome.kind !== "rejected") return
+    expect(outcome.errors).toEqual([
+      'Order.amount: cannot convert schema type "bigint" to JSON Schema: bigint has no JSON representation. Add "bigint" to jsonSchema.approximate (CLI: --approximate bigint) to emit it as a string instead.',
+    ])
+  })
+
+  it("converts the same schema once its type is listed in approximate", async () => {
+    const outcome = await schemaToJsonSchemaViaAdapter(
+      bigintField,
+      ctx({ rootName: "Order", approximate: ["bigint"] }),
+    )
+    expect(outcome.kind).toBe("converted")
+    if (outcome.kind !== "converted") return
+    expect(outcome.schema).toEqual({
+      type: "object",
+      properties: { amount: { type: "string" } },
+      required: ["amount"],
+      additionalProperties: false,
+    })
+    expect(outcome.warnings).toEqual(["Order.amount: approximated bigint as a string."])
+  })
+
+  it("forwards io to the tskm walker: the input side of a preprocess is {}", async () => {
+    const preprocessed = {
+      kind: "schema",
+      type: "preprocess",
+      wrapped: { kind: "schema", type: "number" },
+    }
+    const input = await schemaToJsonSchemaViaAdapter(preprocessed, ctx({ io: "input" }))
+    expect(input.kind).toBe("converted")
+    if (input.kind !== "converted") return
+    expect(input.schema).toEqual({})
+  })
+})
+
 describe("schemaToJsonSchemaViaAdapter — skip and exclusion policies", () => {
   it("skips a zod schema with an unrepresentable type, with the reason", async () => {
     const outcome = await schemaToJsonSchemaViaAdapter(z.bigint(), ctx())

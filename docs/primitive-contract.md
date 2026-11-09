@@ -23,13 +23,15 @@ Enforced by `packages/tskm/test/standard-contract.test.ts` via `assertStandardSc
 
 The emitter is a duck-typed walker (`packages/compiler/src/jsonschema.ts`). The standard emission for each new primitive is fixed here. Anything richer than the standard form is an approximation plus a vendor extension, never a silent change to an existing case.
 
+A type JSON Schema cannot express is not approximated silently either. The emitter fails the file, unless the caller lists the type in `jsonSchema.approximate`. The refused set is the one `withJsonSchema` throws for (`bigint`, `date`, `undefined`, `check`, a `transform` output), so a new primitive that cannot be represented must join that set in both walkers and in the README table.
+
 | Primitive | Standard JSON Schema form |
 | --- | --- |
 | template literal | `pattern` approximation, with the literal structure carried as a vendor extension |
 | key-typed `record(key, value)` | `propertyNames` constraining the key (a pattern for a `templateLiteral` key, an enum for a `picklist` key) plus `additionalProperties` for the value |
 | exact (closed) object | `additionalProperties: false` (already the `object` default) |
 | discriminated union | `oneOf` with `const` on the discriminant, the discriminant key surfaced as an option or vendor extension |
-| `preprocess` | compiler emitter: the inner schema (the output shape), plus a warning that the input accepts any value. `withJsonSchema` splits the directions: `output` is the inner schema, `input` is `{}` |
+| `preprocess` | the inner schema for `output`; `{}` for `input`, since the input is `unknown`. The compiler emitter and `withJsonSchema` agree on both directions |
 
 Two walkers read the same runtime schema graph: the JSON Schema walker and the structural TypeScript walker (`packages/compiler/src/structural-ts.ts`). A primitive that introduces a new `schema.type` case must add it to both walkers in the same change. If only one walker learns a case, the other falls through to its default branch and silently emits `{}` or `unknown` or `additionalProperties: false`.
 

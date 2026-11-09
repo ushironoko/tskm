@@ -4,6 +4,27 @@ import { pathToFileURL } from "node:url"
 
 export type TskmMode = "sidecar" | "inplace"
 
+/**
+ * The types JSON Schema cannot express that `tskm json-schema` may approximate, by
+ * name. Any other unrepresentable type fails its file. Each name is opt-in
+ * (`jsonSchema.approximate`, CLI `--approximate`), and the set matches the types
+ * `@tskm/core`'s `withJsonSchema` throws for:
+ * - `bigint`: emitted as a string.
+ * - `date`: emitted as a date-time string.
+ * - `undefined`: emitted as an unconstrained schema (`{}`).
+ * - `check`: the predicate is dropped.
+ * - `transform`: the schema before the transform is emitted (output side only).
+ */
+export const JSON_SCHEMA_APPROXIMATIONS = [
+  "bigint",
+  "date",
+  "undefined",
+  "check",
+  "transform",
+] as const
+
+export type JsonSchemaApproximation = (typeof JSON_SCHEMA_APPROXIMATIONS)[number]
+
 /** Options for the experimental JSON Schema output (`tskm json-schema`). */
 export interface TskmJsonSchemaOptions {
   /**
@@ -15,9 +36,15 @@ export interface TskmJsonSchemaOptions {
   /**
    * Which side of the schema to render: `output` (default, the post-transform
    * type, matching the type generator's `InferOutput` semantics) or `input`.
-   * Honored where the delegated converter supports it (zod); ignored otherwise.
+   * Honored by the tskm walker and by the delegated converters that support it (zod).
    */
   readonly io?: "input" | "output"
+  /**
+   * Types to approximate instead of failing the file, as a list of names (see
+   * {@link JSON_SCHEMA_APPROXIMATIONS}). Unlisted types are errors. Unknown names
+   * are rejected when the config is resolved.
+   */
+  readonly approximate?: ReadonlyArray<JsonSchemaApproximation>
 }
 
 /** Options for `tskm watch`. */
@@ -84,6 +111,7 @@ export interface TskmConfig {
 export interface ResolvedJsonSchemaOptions {
   readonly outDir: string | undefined
   readonly io: "input" | "output"
+  readonly approximate: ReadonlyArray<JsonSchemaApproximation>
 }
 
 export interface ResolvedWatchOptions {
@@ -154,6 +182,35 @@ export function vendorAllowList(schemaSources: ReadonlyArray<string>): ReadonlyA
   ]
 }
 
+/**
+ * Validates a list of approximation names from the config or the CLI. Matching is
+ * exact: no trimming, no case folding, no coercion of other values, and a boolean is
+ * rejected rather than read as "approximate everything". Repeats collapse. `label`
+ * names the source in the error message.
+ */
+export function parseApproximations(
+  values: unknown,
+  label: string,
+): ReadonlyArray<JsonSchemaApproximation> {
+  const known = JSON_SCHEMA_APPROXIMATIONS.join(", ")
+  if (!Array.isArray(values)) {
+    throw new Error(`tskm: ${label} must be an array of names (known values: ${known}).`)
+  }
+  const out: JsonSchemaApproximation[] = []
+  for (const value of values) {
+    if (!(JSON_SCHEMA_APPROXIMATIONS as ReadonlyArray<unknown>).includes(value)) {
+      throw new Error(
+        `tskm: ${label} has unknown value ${JSON.stringify(value)} (known values: ${known}).`,
+      )
+    }
+    const name = value as JsonSchemaApproximation
+    if (!out.includes(name)) {
+      out.push(name)
+    }
+  }
+  return out
+}
+
 /** Identity helper for authoring `tskm.config.ts` with full type inference. */
 export function defineConfig(config: TskmConfig): TskmConfig {
   return config
@@ -174,7 +231,14 @@ export function resolveConfig(config: TskmConfig, root: string): ResolvedTskmCon
     include: config.include ?? DEFAULT_INCLUDE,
     tsconfig,
     executable: config.executable,
-    jsonSchema: { outDir: config.jsonSchema?.outDir, io: config.jsonSchema?.io ?? "output" },
+    jsonSchema: {
+      outDir: config.jsonSchema?.outDir,
+      io: config.jsonSchema?.io ?? "output",
+      approximate: parseApproximations(
+        config.jsonSchema?.approximate ?? [],
+        "jsonSchema.approximate",
+      ),
+    },
     watch: { debounceMs: config.watch?.debounceMs ?? DEFAULT_DEBOUNCE_MS },
     worker: {
       execPath: config.worker?.execPath,

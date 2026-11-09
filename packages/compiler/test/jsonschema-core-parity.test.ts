@@ -46,12 +46,17 @@ import { withJsonSchema } from "../../tskm/src/json-schema.ts"
 import { schemaToJsonSchema } from "../src/jsonschema.ts"
 
 /**
- * The core Standard JSON Schema walker and the compiler emitter
- * (`tskm json-schema`) must agree on draft-2020-12 **output** for every schema
- * the emitter represents without a lossy stand-in. Schemas the emitter warns
- * about and substitutes (bigint, date, undefined, check, transform, fallback)
- * are asserted as known divergences: core throws or emits the real shape, and
- * the compiler source is intentionally not changed.
+ * The core Standard JSON Schema walker (`withJsonSchema`) and the compiler emitter
+ * (`tskm json-schema`) agree on draft-2020-12 output for every schema the emitter can
+ * represent, on both sides (`output` and `input`).
+ *
+ * The types JSON Schema cannot express (bigint, date, undefined, a check predicate, a
+ * transform's output) are refused by BOTH by default. The compiler approximates them
+ * only when the caller lists them in `jsonSchema.approximate`, and core never does, so
+ * those approximations are locked as opt-in divergences.
+ *
+ * Known gap, locked as an annotation-only difference: the compiler emits no `default`
+ * keyword (core emits one for a JSON default on optional/fallback). The types agree.
  */
 
 const draft2020 = { target: "draft-2020-12" } as const
@@ -124,6 +129,37 @@ const agree: ReadonlyArray<readonly [string, unknown]> = [
   ["nested", object({ items: array(union([string(), nullable(number())])) })],
 ]
 
+/** The input side: preprocess is `{}`, a transform keeps the pre-transform input shape. */
+const inputAgree: ReadonlyArray<readonly [string, unknown]> = [
+  ["preprocess input is {}", preprocess((value) => Number(value), number())],
+  [
+    "piped preprocess input is {}",
+    pipe(
+      preprocess((value) => Number(value), number()),
+      minValue(1),
+      maxValue(65535),
+    ),
+  ],
+  ["object with a preprocess entry", object({ n: preprocess((value) => Number(value), number()) })],
+  [
+    "transform input is the pre-transform shape",
+    pipe(
+      number(),
+      transform((n: number) => `${n}`),
+    ),
+  ],
+  [
+    "description after a transform survives on the input",
+    pipe(
+      number(),
+      transform((n: number) => `${n}`),
+      description("text"),
+    ),
+  ],
+  ["fallback input is the inner schema", fallback(string(), "x")],
+  ["nullish input", nullish(string())],
+]
+
 describe("core jsonSchema.output matches the compiler emitter", () => {
   for (const [name, schema] of agree) {
     it(name, () => {
@@ -141,87 +177,134 @@ describe("core jsonSchema.output matches the compiler emitter", () => {
   })
 })
 
-/**
- * Known differences. The compiler emitter warns and substitutes a stand-in.
- * `withJsonSchema` throws, or emits a different side, and compiler src stays as it is.
- * Each case locks both documents so a change on either side fails here.
- */
-describe("known differences from the compiler emitter", () => {
-  it("bigint: emitter emits a string, core throws", () => {
-    const emitted = schemaToJsonSchema(bigint())
-    expect(emitted.schema).toEqual({ type: "string" })
-    expect(emitted.warnings).toEqual(["tskm: bigint has no JSON representation; emitting string."])
+describe("core jsonSchema.input matches the compiler emitter", () => {
+  for (const [name, schema] of inputAgree) {
+    it(name, () => {
+      expect(coreInput(schema as Parameters<typeof coreInput>[0])).toEqual(
+        schemaToJsonSchema(schema, { io: "input" }).schema,
+      )
+    })
+  }
+})
+
+describe("unrepresentable types are refused by both by default", () => {
+  it("bigint: core throws, the compiler fails the schema with the option that approximates it", () => {
     expect(() => coreOutput(bigint())).toThrow(
       'tskm: cannot convert schema type "bigint" to JSON Schema: bigint has no JSON representation',
     )
+    expect(schemaToJsonSchema(bigint(), { rootName: "Amount" }).errors).toEqual([
+      'Amount: cannot convert schema type "bigint" to JSON Schema: bigint has no JSON representation. Add "bigint" to jsonSchema.approximate (CLI: --approximate bigint) to emit it as a string instead.',
+    ])
   })
 
-  it("date: emitter emits a date-time string, core throws", () => {
-    const emitted = schemaToJsonSchema(date())
-    expect(emitted.schema).toEqual({ type: "string", format: "date-time" })
-    expect(emitted.warnings).toEqual(["tskm: Date is serialized as an ISO date-time string."])
+  it("date: core throws, the compiler fails the schema", () => {
     expect(() => coreOutput(date())).toThrow(
       'tskm: cannot convert schema type "date" to JSON Schema: Date has no JSON representation',
     )
+    expect(schemaToJsonSchema(date(), { rootName: "When" }).errors).toEqual([
+      'When: cannot convert schema type "date" to JSON Schema: Date has no JSON representation. Add "date" to jsonSchema.approximate (CLI: --approximate date) to emit it as a date-time string instead.',
+    ])
   })
 
-  it("undefined: emitter emits {}, core throws", () => {
-    const emitted = schemaToJsonSchema(undefined_())
-    expect(emitted.schema).toEqual({})
-    expect(emitted.warnings).toEqual(["tskm: undefined has no JSON representation; emitting {}."])
+  it("undefined: core throws, the compiler fails the schema", () => {
     expect(() => coreOutput(undefined_())).toThrow(
       'tskm: cannot convert schema type "undefined" to JSON Schema: undefined has no JSON representation',
     )
+    expect(schemaToJsonSchema(undefined_(), { rootName: "Nothing" }).errors).toEqual([
+      'Nothing: cannot convert schema type "undefined" to JSON Schema: undefined has no JSON representation. Add "undefined" to jsonSchema.approximate (CLI: --approximate undefined) to emit it as an unconstrained schema instead.',
+    ])
   })
 
-  it("check: emitter drops the predicate, core throws", () => {
+  it("check: core throws, the compiler fails the schema", () => {
     const schema = pipe(
       string(),
       check(() => true),
     )
-    const emitted = schemaToJsonSchema(schema)
-    expect(emitted.schema).toEqual({ type: "string" })
-    expect(emitted.warnings).toEqual([
-      'tskm: pipe item "check" is not representable in JSON Schema; skipped.',
-    ])
     expect(() => coreOutput(schema)).toThrow(
       'tskm: cannot convert pipe item "check" to JSON Schema: a function predicate has no JSON Schema representation',
     )
+    expect(schemaToJsonSchema(schema, { rootName: "Name" }).errors).toEqual([
+      'Name: cannot convert pipe item "check" to JSON Schema: a function predicate has no JSON Schema representation. Add "check" to jsonSchema.approximate (CLI: --approximate check) to emit it without the predicate instead.',
+    ])
   })
 
-  it("transform: emitter keeps the base schema, core output throws and input is the pre-transform schema", () => {
+  it("transform on the output side: core throws, the compiler fails and names io as the other way out", () => {
     const schema = pipe(
       string(),
       transform((value: string) => value.length),
     )
-    const emitted = schemaToJsonSchema(schema)
-    expect(emitted.schema).toEqual({ type: "string" })
-    expect(emitted.warnings).toEqual([
-      'tskm: pipe item "transform" is not representable in JSON Schema; skipped.',
-    ])
     expect(coreInput(schema)).toEqual({ type: "string" })
     expect(() => coreOutput(schema)).toThrow(
       'tskm: cannot convert pipe item "transform" to JSON Schema output: the transform\'s output type is not reified at runtime. input() still describes the schema before the transform',
     )
+    expect(schemaToJsonSchema(schema, { rootName: "Doc" }).errors).toEqual([
+      'Doc: cannot convert pipe item "transform" to JSON Schema output: the transform\'s output type is not reified at runtime. Add "transform" to jsonSchema.approximate (CLI: --approximate transform) to emit it as the schema before the transform instead. Or set jsonSchema.io to "input", which needs no approximation.',
+    ])
+  })
+})
+
+/**
+ * Opt-in divergences. Core still throws for these, so the compiler's approximation is the
+ * only one of the two that exists. Each case locks the approximated document.
+ */
+describe("opt-in approximations (the compiler only; core still throws)", () => {
+  it("bigint as a string", () => {
+    expect(schemaToJsonSchema(bigint(), { approximate: ["bigint"] }).schema).toEqual({
+      type: "string",
+    })
+    expect(() => coreOutput(bigint())).toThrow()
   })
 
-  it("fallback: emitter emits {}, core unwraps the inner schema and puts default on the output", () => {
+  it("date as a date-time string", () => {
+    expect(schemaToJsonSchema(date(), { approximate: ["date"] }).schema).toEqual({
+      type: "string",
+      format: "date-time",
+    })
+    expect(() => coreOutput(date())).toThrow()
+  })
+
+  it("undefined as an unconstrained schema", () => {
+    expect(schemaToJsonSchema(undefined_(), { approximate: ["undefined"] }).schema).toEqual({})
+    expect(() => coreOutput(undefined_())).toThrow()
+  })
+
+  it("check with the predicate dropped", () => {
+    const schema = pipe(
+      string(),
+      check(() => true),
+    )
+    expect(schemaToJsonSchema(schema, { approximate: ["check"] }).schema).toEqual({
+      type: "string",
+    })
+    expect(() => coreOutput(schema)).toThrow()
+  })
+
+  it("transform on the output side as the schema before the transform", () => {
+    const schema = pipe(
+      string(),
+      transform((value: string) => value.length),
+    )
+    expect(schemaToJsonSchema(schema, { approximate: ["transform"] }).schema).toEqual({
+      type: "string",
+    })
+    expect(() => coreOutput(schema)).toThrow()
+  })
+})
+
+/**
+ * Known gap: annotation-only. The compiler emits no `default` keyword, so the types agree
+ * but the documents differ. Each case locks both documents so a change on either side fails.
+ */
+describe("known annotation differences: the compiler emits no default keyword", () => {
+  it("fallback output: core adds default on the output, the compiler does not", () => {
     const schema = fallback(string(), "x")
-    const emitted = schemaToJsonSchema(schema)
-    expect(emitted.schema).toEqual({})
-    expect(emitted.warnings).toEqual(['tskm: unknown schema type "fallback"; emitting {}.'])
-    expect(coreInput(schema)).toEqual({ type: "string" })
+    expect(schemaToJsonSchema(schema).schema).toEqual({ type: "string" })
     expect(coreOutput(schema)).toEqual({ type: "string", default: "x" })
   })
 
-  it("preprocess input: emitter has only the output shape, core input is {}", () => {
-    const schema = preprocess((value) => Number(value), number())
-    const emitted = schemaToJsonSchema(schema)
-    expect(emitted.schema).toEqual({ type: "number" })
-    expect(emitted.warnings).toEqual([
-      "tskm: preprocess changes the value before validation; emitted the output shape; input accepts any value.",
-    ])
-    expect(coreOutput(schema)).toEqual({ type: "number" })
-    expect(coreInput(schema)).toEqual({})
+  it("optional default input: core adds default on the input, the compiler does not", () => {
+    const schema = optional(string(), "anon")
+    expect(schemaToJsonSchema(schema, { io: "input" }).schema).toEqual({ type: "string" })
+    expect(coreInput(schema)).toEqual({ type: "string", default: "anon" })
   })
 })

@@ -21,8 +21,8 @@ import type { StandardJSONSchemaV1 } from "../types/standard.ts"
  *
  * `brand` and `readonly` do not change the JSON value, so they are skipped.
  * `check`, `bigint`, `date`, `undefined`, and unknown kinds throw. The compiler
- * emitter warns and substitutes a stand-in for some of those; this walker does
- * not, and the compiler source is left alone.
+ * emitter refuses the same types by default and approximates one only when the
+ * caller opts in (`jsonSchema.approximate`); this walker never approximates.
  */
 
 export type JsonSchema = { [key: string]: unknown }
