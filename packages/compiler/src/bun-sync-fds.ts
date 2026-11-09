@@ -107,18 +107,17 @@ export function withBunSyncChannelFds<T>(fn: () => T, dirs: FdDirs = DEFAULT_FD_
     const stdin = this.stdin
     if (piped && stdin !== null && stdout !== null && stdout._handle == null) {
       const created = newPipeFds(before, pipeIdentities(table))
-      const writeFd = created[0]
-      const readFd = created[1]
-      if (writeFd === undefined || readFd === undefined) {
-        // Without the pair the channel would fail on a null handle and leave this child
-        // running, so stop it here and name the cause.
+      const pair = stdioPipePair(created)
+      if (pair === undefined) {
+        // Without exactly two fds the channel would fail on a null handle, or read and write the
+        // wrong descriptor. Stop the child here and name the cause.
         this.kill()
         throw new Error(
           `tskm: could not identify the checker's stdio pipes (found ${created.length} new fds).`,
         )
       }
-      stdin._handle = pipeHandle(writeFd, table)
-      stdout._handle = pipeHandle(readFd, table)
+      stdin._handle = pipeHandle(pair[0], table)
+      stdout._handle = pipeHandle(pair[1], table)
       stdin.unref ??= () => stdin
       stdin.ref ??= () => stdin
     }
@@ -171,6 +170,20 @@ export function newPipeFds(
   return created.sort((a, b) => a - b)
 }
 
+/**
+ * The checker's two new descriptors, as `[stdin, stdout]`. Undefined unless there are exactly
+ * two, so the caller fails closed. Taking the two lowest of three could hand the channel the
+ * wrong descriptor if an extra socket, pipe, or kqueue appears during the spawn. Both
+ * ends of Bun's socketpairs are duplex, so the order does not matter for them.
+ */
+export function stdioPipePair(created: readonly number[]): readonly [number, number] | undefined {
+  const [writeFd, readFd, extra] = created
+  if (writeFd === undefined || readFd === undefined || extra !== undefined) {
+    return undefined
+  }
+  return [writeFd, readFd]
+}
+
 function numericEntries(dir: string): number[] {
   const fds: number[] = []
   for (const entry of readdirSync(dir)) {
@@ -210,6 +223,12 @@ function devFdTable(dir: string): FdTable {
         // bigint keeps inode numbers above 2^53 exact.
         const stat = fstatSync(fd, { bigint: true })
         const kind = Number(stat.mode) & S_IFMT
+        // On Darwin st_dev is a signed int32, and an AF_UNIX socket reports NODEV, read as -1.
+        // So dev can be negative, and st_ino tells sockets apart. XNU gives each AF_UNIX socket
+        // an inode from a kernel-wide counter on its first fstat, so live sockets get distinct
+        // values. Two edge
+        // cases are left to the pair check: kqueue also reports S_IFIFO (dev and ino zero), and
+        // the first socket fstat'd after boot can read ino 0 until its next fstat.
         return kind === S_IFSOCK || kind === S_IFIFO ? `${stat.dev}:${stat.ino}` : undefined
       } catch {
         // A closed fd fails fstat. The directory fd that readdir opened is S_IFDIR, so it
