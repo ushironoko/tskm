@@ -30,7 +30,10 @@ interface PipeStream {
 interface SpawnedChild {
   stdin: PipeStream | null
   stdout: PipeStream | null
+  spawnfile?: string
+  pid?: number
   kill(): boolean
+  on(event: "error", listener: () => void): unknown
   spawn(options?: { stdio?: unknown }): unknown
 }
 
@@ -55,6 +58,13 @@ export function withBunSyncChannelFds<T>(fn: () => T, procFdDir: string = PROC_F
   prototype.spawn = function spawnWithFds(this: SpawnedChild, options?: { stdio?: unknown }) {
     const before = socketFds(procFdDir)
     const result = original.call(this, options)
+    if (this.pid === undefined) {
+      // A failed spawn (ENOENT, EACCES) has no pipes to identify. Node and Bun also emit
+      // it as an 'error' event on a later tick, and with no listener that event crashes
+      // the process and hides this error, so take the listener and report the failure here.
+      this.on("error", () => {})
+      throw new Error(`tskm: could not start the checker process (${this.spawnfile ?? "unknown"}).`)
+    }
     const stdio = options?.stdio
     const piped = Array.isArray(stdio) && stdio[0] === "pipe" && stdio[1] === "pipe"
     const stdout = this.stdout

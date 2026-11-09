@@ -185,6 +185,14 @@ describe("withBunSyncChannelFds", () => {
     expect(out).toBe("OK")
   })
 
+  it.skipIf(!isBunPosix)("reports a failed spawn as the spawn failure", () => {
+    expect(() =>
+      withBunSyncChannelFds(() =>
+        spawn("/nonexistent/tskm-checker", [], { stdio: ["pipe", "pipe", "inherit"] }),
+      ),
+    ).toThrow("could not start the checker process (/nonexistent/tskm-checker)")
+  })
+
   it.skipIf(!isBunPosix)(
     "fails clearly, without patching spawn, when the fd table is missing",
     () => {
