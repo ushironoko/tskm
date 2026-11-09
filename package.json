@@ -13,6 +13,7 @@
     "test": "bun test",
     "test:coverage": "bun test --coverage",
     "test:integration": "bun test integration",
+    "test:integration:node": "node --experimental-strip-types --test packages/compiler/test/node-integration.ts",
     "smoke:node": "node scripts/node-smoke.mjs",
     "test:mutation": "bun run build && bun run --cwd packages/tskm test:mutation && bun run --cwd packages/compiler test:mutation && bun run --cwd packages/vite test:mutation",
     "test:type": "bun scripts/tsc.ts --noEmit -p tsconfig.json",
