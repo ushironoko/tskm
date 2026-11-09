@@ -115,9 +115,11 @@ jobs:
 
   # The CLI is recommended on Node, so the built dist runs here under Node 22 and 24.
   # scripts/node-smoke.mjs regenerates the committed examples with dist/cli.mjs and fails
-  # on any byte difference or stray file. The verify job runs the full suite under Bun.
+  # on any byte difference or stray file. test:integration:node runs the shared compiler
+  # integration scenarios against dist/index.mjs; verify runs the same scenarios against src
+  # under Bun. Suites that run the structural or JSON Schema worker stay in verify only.
   node-smoke:
-    name: node ${{ matrix.node }} · dist smoke
+    name: node ${{ matrix.node }} · dist smoke · compiler integration
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -155,3 +157,7 @@ jobs:
 
       - name: Smoke the built CLI under Node
         run: node scripts/node-smoke.mjs
+
+      # Runs on the Node in PATH (the matrix version), against the dist built above.
+      - name: Run the compiler integration suite under Node
+        run: bun run test:integration:node
