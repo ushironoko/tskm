@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process"
 import { resolveTsgoExecutable } from "../src/tsgo-client.ts"
+import { spawnNoEmit } from "./scenarios/support.ts"
 import { testTsgoExecutable } from "./tsgo-test-executable.ts"
 
 /**
@@ -12,13 +12,5 @@ import { testTsgoExecutable } from "./tsgo-test-executable.ts"
  */
 export function runTsgoNoEmit(projectRoot: string): { ok: boolean; output: string } {
   // Unset env: resolveTsgoExecutable(undefined) uses the typescript package's lib/tsc.
-  const executable = resolveTsgoExecutable(testTsgoExecutable())
-  const child = spawnSync(executable, ["--noEmit", "-p", "tsconfig.json"], {
-    cwd: projectRoot,
-    encoding: "utf8",
-    timeout: 120_000,
-    killSignal: "SIGKILL",
-  })
-  const output = `${child.stdout ?? ""}${child.stderr ?? ""}`
-  return { ok: child.status === 0, output }
+  return spawnNoEmit(resolveTsgoExecutable(testTsgoExecutable()), projectRoot)
 }
