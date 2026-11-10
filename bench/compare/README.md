@@ -104,13 +104,19 @@ fall inside those ranges are not resolved by this run.
 ## Memory
 
 One fresh `bun` process per library (`src/memory-worker.ts`), plus a `baseline`
-process that imports nothing.
+process that imports no library. Each process reads the JSC heap counters from `bun:jsc`:
 
-1. `Bun.gc(true)`, then `process.memoryUsage().heapUsed` (heap after load).
-2. One valid parse, GC, heap again.
-3. 50,000 valid parses, sampling `heapUsed` every 1,024 iterations.
-4. GC, heap again.
+1. `Bun.gc(true)`, then `heapStats().heapSize` and `heapStats().objectCount` (after load).
+2. One valid parse, to check the payload is accepted.
+3. 50,000 valid parses, reading `heapSize` every 1,024 iterations (a sampled peak, between
+   collections).
+4. `Bun.gc(true)`, then `heapSize` and `objectCount` again.
 5. `VmHWM` from `/proc/self/status` (peak RSS).
+
+`process.memoryUsage().heapUsed` is not used. Under Bun 1.3.13 it reads 212,874 bytes after
+a forced GC for tskm and zod, the same as an empty process, while `heapSize` reads about
+0.4 MB and 1.7 MB for them. The value is version-dependent, so a number taken from it cannot
+be compared across runs. Live object counts repeat within about 0.2% across two runs.
 
 ## Bundle
 

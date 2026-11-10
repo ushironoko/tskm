@@ -10,7 +10,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["node"],
+    "types": ["node", "bun"],
     "typeRoots": ["../../node_modules/@types"]
   },
   "include": ["src"]

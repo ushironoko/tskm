@@ -3,10 +3,15 @@ import type { LibraryName } from "./config.ts"
 
 export interface MemoryRow {
   readonly library: LibraryName | "baseline"
+  /** JSC heap bytes after a forced GC, once the library is loaded. */
   readonly heapAfterLoad: number
-  readonly heapAfterParse: number
+  readonly liveObjectsAfterLoad: number
+  /** Largest JSC heap size sampled during the parses (between collections). */
   readonly peakHeap: number
+  /** JSC heap bytes after the parses and a forced GC. */
   readonly heapAfterWork: number
+  readonly liveObjectsAfterWork: number
+  /** VmHWM: peak resident set of the process. */
   readonly peakRss: number
 }
 

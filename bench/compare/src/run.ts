@@ -114,14 +114,14 @@ function resultsMarkdown(input: {
     "",
     "## Memory",
     "",
-    "Bytes. `baseline` imports no library and parses nothing. `heap after load` is `heapUsed` after a forced GC. `peak RSS` is `VmHWM`.",
+    "Bytes unless noted. `baseline` imports no library and parses nothing. Heap is the JSC heap size from `bun:jsc` (`heapStats().heapSize`) after a forced GC. Live objects is `heapStats().objectCount` after the same GC. Peak heap is sampled every 1,024 parses. Peak RSS is `VmHWM`. Each row is one fresh process.",
     "",
-    "| library | heap after load | heap after one parse | peak heap during parses | heap after parses + GC | peak RSS |",
-    "| --- | ---: | ---: | ---: | ---: | ---: |",
+    "| library | heap after load | live objects after load | heap after 50,000 parses + GC | live objects after parses + GC | peak heap (sampled) | peak RSS |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...(["baseline", ...libraries] as const).map((name) => {
       const row = memory.get(name)
       if (!row) throw new Error(`missing memory ${name}`)
-      return `| ${name} | ${cell(row.heapAfterLoad)} | ${cell(row.heapAfterParse)} | ${cell(row.peakHeap)} | ${cell(row.heapAfterWork)} | ${cell(row.peakRss)} |`
+      return `| ${name} | ${cell(row.heapAfterLoad)} | ${cell(row.liveObjectsAfterLoad)} | ${cell(row.heapAfterWork)} | ${cell(row.liveObjectsAfterWork)} | ${cell(row.peakHeap)} | ${cell(row.peakRss)} |`
     }),
     "",
     "## Speed",
