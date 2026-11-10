@@ -786,4 +786,35 @@ describe("Standard JSON Schema — values JSON cannot carry", () => {
       maximum: 10,
     })
   })
+
+  it("names the kind of a requirement that is not a number: Date, Object, null, bigint", () => {
+    // The kind is read with Object.prototype.toString for objects and typeof otherwise, so each
+    // kind of requirement is its own case (a Date is not reported as an object).
+    expect(() => output(pipe(string(), minValue(new Date(0) as unknown as string)))).toThrow(
+      'tskm: cannot convert pipe item "min_value" to JSON Schema: its requirement is of type Date, not a finite number, so it has no minimum keyword',
+    )
+    expect(() => output(pipe(string(), minValue({} as unknown as string)))).toThrow(
+      'tskm: cannot convert pipe item "min_value" to JSON Schema: its requirement is of type Object, not a finite number, so it has no minimum keyword',
+    )
+    expect(() => output(pipe(string(), minValue(null as unknown as string)))).toThrow(
+      'tskm: cannot convert pipe item "min_value" to JSON Schema: its requirement is of type null, not a finite number, so it has no minimum keyword',
+    )
+    expect(() => output(pipe(string(), minValue(1n as unknown as string)))).toThrow(
+      'tskm: cannot convert pipe item "min_value" to JSON Schema: its requirement is of type bigint, not a finite number, so it has no minimum keyword',
+    )
+  })
+
+  it("names the keyword a non-number requirement would have set, for each numeric keyword", () => {
+    const notANumber = (type: string, keyword: string) =>
+      `tskm: cannot convert pipe item "${type}" to JSON Schema: its requirement is of type string, not a finite number, so it has no ${keyword} keyword`
+    expect(() => output(pipe(number(), maxValue("9" as unknown as number)))).toThrow(
+      notANumber("max_value", "maximum"),
+    )
+    expect(() => output(pipe(number(), multipleOf("2" as unknown as number)))).toThrow(
+      notANumber("multiple_of", "multipleOf"),
+    )
+    expect(() => output(pipe(array(number()), length("3" as unknown as number)))).toThrow(
+      notANumber("length", "minItems and maxItems"),
+    )
+  })
 })
