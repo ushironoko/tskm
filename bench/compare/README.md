@@ -127,17 +127,32 @@ esbuild 0.28.2, `bundle`, `minify`, `treeShaking`, `format: "esm"`,
 ## Type instantiations
 
 `src/types-count.ts` writes 100 separate schema constants, each with an output
-type alias, under `fixtures/<library>/` (gitignored). `skipLibCheck` is on.
-Then:
+type alias, under `fixtures/<library>/` (gitignored). The expressions are written from the
+same constants as the runtime adapters (`src/constraints.ts`). `skipLibCheck` is on, and it
+skips `.d.ts` files only, so the fixtures import the published typings (`dist/*.d.mts` for
+tskm), not the TypeScript source. Importing the source made the checker type-check tskm's
+implementation as well; that inflated tskm's count by about 44% (tsc) and 70% (tsgo).
+
+Each checker runs three times on each fixture:
 
 - `node_modules/typescript/lib/tsc.js` (run by the Bun that runs the harness) with
   `-p tsconfig.json --extendedDiagnostics --pretty false`
 - `node_modules/@typescript/native-preview/bin/tsgo` with the same flags
 
-`Instantiations` is the count. `Check time` is converted from seconds (or
-milliseconds) to milliseconds. Both checkers are devDependencies of this package at
-exact versions (`typescript` 6.0.3, `@typescript/native-preview` 7.0.0-dev.20260707.2).
-The repository root does not install `tsgo`, so the root is not used.
+Instantiation counts must match across the three runs or the harness stops. Check time is
+the median of the three runs, converted to milliseconds. Both checkers are devDependencies
+of this package at exact versions (`typescript` 6.0.3, `@typescript/native-preview`
+7.0.0-dev.20260707.2). The repository root does not install `tsgo`, so the root is not used.
+
+Importing each library with nothing else costs 0 to 2,687 instantiations (tskm 1,503,
+arktype 2,687; the others register 0). That is under 7% of the smallest 100-copy count, so
+the rows are not adjusted for it.
+
+Arktype's count moves from 786,278 to 919,418 because of the constraints, measured one
+change at a time with the same 100-copy shape: the id bound adds 32,052, and the email
+constraint (the length bound and the regex, written as arktype syntax) adds 101,088, in place
+of `string.email`. The count measures arktype's checker parsing those strings. It is the cost
+of this constraint in arktype, not a runtime figure.
 
 ## Constants
 

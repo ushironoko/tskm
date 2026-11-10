@@ -11,6 +11,8 @@ export const measuredIterations = 100_000
 export const measuredRounds = 5
 export const memoryParses = 50_000
 export const typeCopies = 100
+/** Each checker runs this many times per library; the check time reported is the median. */
+export const typeRepeats = 3
 
 export const libraries = ["tskm", "zod", "valibot", "arktype", "typebox", "effect"] as const
 

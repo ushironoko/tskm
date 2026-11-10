@@ -13,6 +13,7 @@ import {
   memoryParses,
   referenceLibraries,
   typeCopies,
+  typeRepeats,
   warmupIterations,
 } from "./config.ts"
 import { type MemoryRow, measureMemory } from "./memory.ts"
@@ -154,7 +155,7 @@ function resultsMarkdown(input: {
     "",
     "## Type instantiations",
     "",
-    `${typeCopies} copies of the schema in one project. \`skipLibCheck\` is on. Check time is milliseconds from \`--extendedDiagnostics\`.`,
+    `${typeCopies} copies of the schema in one project, each checker run ${typeRepeats} times. \`skipLibCheck\` is on. Instantiation counts are identical across the runs (checked). Check time is the median of the runs, in milliseconds, from \`--extendedDiagnostics\`.`,
     "",
     "| library | tsc instantiations | tsc check ms | tsgo instantiations | tsgo check ms |",
     "| --- | ---: | ---: | ---: | ---: |",

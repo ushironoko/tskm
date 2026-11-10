@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process"
 import { mkdirSync, writeFileSync } from "node:fs"
-import { type LibraryName, typeCopies } from "./config.ts"
+import { type LibraryName, typeCopies, typeRepeats } from "./config.ts"
 import { emailSource, maxId } from "./constraints.ts"
+import { median } from "./stats.ts"
 
 export interface TypeRow {
   readonly library: LibraryName
@@ -192,24 +193,36 @@ function runChecker(command: string, args: string[], cwd: string): string {
   return text
 }
 
+/**
+ * Runs each checker `typeRepeats` times on the same fixture. Instantiation counts are a
+ * property of the program, so they must be identical in every run (checked). Check time is
+ * wall-clock and noisy, so the row reports its median.
+ */
 export function measureTypes(name: LibraryName): readonly TypeRow[] {
   const dir = writeFixture(name)
   const cwd = dir.pathname
   const flags = ["-p", "tsconfig.json", "--extendedDiagnostics", "--pretty", "false"]
-  const tscText = runChecker(process.execPath, [tsc.pathname, ...flags], cwd)
-  const tsgoText = runChecker(tsgo.pathname, flags, cwd)
-  return [
-    {
+  const run = (checker: "tsc" | "tsgo"): TypeRow => {
+    const samples = Array.from({ length: typeRepeats }, () => {
+      const text =
+        checker === "tsc"
+          ? runChecker(process.execPath, [tsc.pathname, ...flags], cwd)
+          : runChecker(tsgo.pathname, flags, cwd)
+      return {
+        instantiations: readDiagnostic(text, "Instantiations"),
+        checkTimeMs: readDiagnostic(text, "Check time"),
+      }
+    })
+    const first = samples[0]?.instantiations ?? 0
+    if (samples.some((sample) => sample.instantiations !== first)) {
+      throw new Error(`${checker} instantiation count changed between runs for ${name}`)
+    }
+    return {
       library: name,
-      checker: "tsc",
-      instantiations: readDiagnostic(tscText, "Instantiations"),
-      checkTimeMs: readDiagnostic(tscText, "Check time"),
-    },
-    {
-      library: name,
-      checker: "tsgo",
-      instantiations: readDiagnostic(tsgoText, "Instantiations"),
-      checkTimeMs: readDiagnostic(tsgoText, "Check time"),
-    },
-  ]
+      checker,
+      instantiations: first,
+      checkTimeMs: median(samples.map((sample) => sample.checkTimeMs)),
+    }
+  }
+  return [run("tsc"), run("tsgo")]
 }

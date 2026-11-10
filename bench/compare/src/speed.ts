@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { type LibraryName, measuredIterations, measuredRounds } from "./config.ts"
+import { bounds, median } from "./stats.ts"
 
 export interface Range {
   readonly median: number
@@ -23,17 +24,8 @@ interface WorkerSample {
   readonly invalidAccepted: number
 }
 
-function median(values: readonly number[]): number {
-  const sorted = [...values].sort((a, b) => a - b)
-  const mid = Math.floor(sorted.length / 2)
-  const left = sorted[mid - 1] ?? 0
-  const right = sorted[mid] ?? 0
-  return sorted.length % 2 === 1 ? right : (left + right) / 2
-}
-
 function range(values: readonly number[]): Range {
-  const sorted = [...values].sort((a, b) => a - b)
-  return { median: median(sorted), min: sorted[0] ?? 0, max: sorted.at(-1) ?? 0 }
+  return { median: median(values), ...bounds(values) }
 }
 
 function runWorker(name: LibraryName): WorkerSample {
