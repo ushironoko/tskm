@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { cpus, totalmem } from "node:os"
 import { fileURLToPath } from "node:url"
+import { type AgreementReport, checkAgreement } from "./agreement.ts"
 import { type BundleRow, measureBundle } from "./bundle.ts"
 import {
   type LibraryName,
@@ -66,6 +67,7 @@ function cell(value: number): string {
 }
 
 function resultsMarkdown(input: {
+  readonly agreement: AgreementReport
   readonly speed: readonly SpeedRow[]
   readonly memory: readonly MemoryRow[]
   readonly bundles: readonly BundleRow[]
@@ -84,6 +86,7 @@ function resultsMarkdown(input: {
     "## Run",
     "",
     `- When: ${new Date().toISOString()}`,
+    `- Agreement: ${cell(input.agreement.checked)} inputs (${input.agreement.generatedAccepted} generated emails valid), ${input.agreement.mismatches.length} mismatches across ${input.agreement.libraries.length} libraries (\`src/agreement.ts\`, checked before timing)`,
     `- Machine: ${input.host.cpu}, ${input.host.cores} cores, ${cell(input.host.memBytes)} bytes RAM`,
     `- Kernel: ${input.host.version}`,
     `- Bun: ${input.host.bun}`,
@@ -155,6 +158,9 @@ const selected = libraries.filter((name) => only.size === 0 || only.has(name))
 buildTskm()
 const host = machine()
 const libraryVersions = versions()
+// Timing a library that disagrees with the spec would measure a different job, so the
+// agreement check runs first and stops the run on any mismatch.
+const agreement = await checkAgreement()
 const speed: SpeedRow[] = []
 const memory: MemoryRow[] = []
 const bundles: BundleRow[] = []
@@ -178,6 +184,7 @@ for (const name of selected) {
 
 if (selected.length === libraries.length) {
   const markdown = resultsMarkdown({
+    agreement,
     speed,
     memory,
     bundles,
