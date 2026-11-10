@@ -736,3 +736,54 @@ describe("Standard JSON Schema — ~standard shape", () => {
     expect("jsonSchema" in schema["~standard"]).toBe(false)
   })
 })
+
+describe("Standard JSON Schema — values JSON cannot carry", () => {
+  // `JSON.stringify` writes NaN and the infinities as null, which is a different value. Each
+  // position refuses them, and the refusal names the value.
+  it("refuses a literal that is NaN or an infinity", () => {
+    expect(() => output(literal(Number.POSITIVE_INFINITY))).toThrow(
+      'tskm: cannot convert schema type "literal" to JSON Schema: Infinity has no JSON representation',
+    )
+    expect(() => output(literal(Number.NEGATIVE_INFINITY))).toThrow(/-Infinity has no JSON/)
+    expect(() => output(literal(Number.NaN))).toThrow(/NaN has no JSON representation/)
+    expect(() => input(literal(Number.NaN))).toThrow(/NaN has no JSON representation/)
+  })
+
+  it("refuses a bigint literal, which JSON cannot carry either", () => {
+    expect(() => output(literal(1n as unknown as number))).toThrow(
+      'tskm: cannot convert schema type "literal" to JSON Schema: a bigint value has no JSON representation',
+    )
+  })
+
+  it("refuses a picklist option that is NaN or an infinity", () => {
+    expect(() => output(picklist([1, Number.NaN]))).toThrow(
+      'tskm: cannot convert schema type "picklist" option to JSON Schema: NaN has no JSON representation',
+    )
+    expect(() => output(picklist([Number.POSITIVE_INFINITY]))).toThrow(/Infinity has no JSON/)
+  })
+
+  it("refuses a numeric keyword whose requirement is not a finite number", () => {
+    expect(() => output(pipe(number(), minValue(Number.POSITIVE_INFINITY)))).toThrow(
+      'tskm: cannot convert pipe item "min_value" to JSON Schema: Infinity has no JSON representation',
+    )
+    expect(() => output(pipe(number(), maxValue(Number.NEGATIVE_INFINITY)))).toThrow(
+      'tskm: cannot convert pipe item "max_value" to JSON Schema: -Infinity has no JSON representation',
+    )
+    expect(() => output(pipe(string(), minLength(Number.NaN)))).toThrow(
+      'tskm: cannot convert pipe item "min_length" to JSON Schema: NaN has no JSON representation',
+    )
+    expect(() => output(pipe(string(), minValue("m")))).toThrow(
+      'tskm: cannot convert pipe item "min_value" to JSON Schema: its requirement is of type string, not a finite number, so it has no minimum keyword',
+    )
+  })
+
+  it("keeps the finite values and bounds unchanged", () => {
+    expect(output(literal(0))).toEqual({ const: 0 })
+    expect(output(picklist([1, -2.5, "a", true]))).toEqual({ enum: [1, -2.5, "a", true] })
+    expect(output(pipe(number(), minValue(0), maxValue(10)))).toEqual({
+      type: "number",
+      minimum: 0,
+      maximum: 10,
+    })
+  })
+})

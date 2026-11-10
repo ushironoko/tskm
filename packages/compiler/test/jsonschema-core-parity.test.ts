@@ -292,6 +292,50 @@ describe("opt-in approximations (the compiler only; core still throws)", () => {
 })
 
 /**
+ * A value JSON cannot carry (NaN and the infinities) is refused by both by default. The compiler
+ * approximates it only when `nonfinite` is listed, and core never approximates, so that opt-in is
+ * a divergence, locked here.
+ */
+describe("non-finite numbers are refused by both by default", () => {
+  it("literal(Infinity), literal(-Infinity), literal(NaN): core throws, the compiler fails the schema", () => {
+    expect(() => coreOutput(literal(Number.POSITIVE_INFINITY))).toThrow(
+      'tskm: cannot convert schema type "literal" to JSON Schema: Infinity has no JSON representation',
+    )
+    expect(() => coreOutput(literal(Number.NaN))).toThrow(/NaN has no JSON representation/)
+    expect(
+      schemaToJsonSchema(literal(Number.NEGATIVE_INFINITY), { rootName: "Limit" }).errors,
+    ).toEqual([
+      'Limit: cannot convert schema type "literal" to JSON Schema: -Infinity has no JSON representation. Add "nonfinite" to jsonSchema.approximate (CLI: --approximate nonfinite) to emit it as a schema no JSON value matches instead.',
+    ])
+  })
+
+  it("a picklist option: core throws, the compiler fails the schema", () => {
+    expect(() => coreOutput(picklist([1, Number.NaN]))).toThrow(
+      'tskm: cannot convert schema type "picklist" option to JSON Schema: NaN has no JSON representation',
+    )
+    expect(schemaToJsonSchema(picklist([1, Number.NaN]), { rootName: "Code" }).errors).toEqual([
+      'Code: cannot convert schema type "picklist" to JSON Schema: option NaN has no JSON representation. Add "nonfinite" to jsonSchema.approximate (CLI: --approximate nonfinite) to emit it by dropping the option NaN instead.',
+    ])
+  })
+
+  it("a numeric bound: core throws, the compiler fails the schema", () => {
+    const schema = pipe(number(), minValue(Number.POSITIVE_INFINITY))
+    expect(() => coreOutput(schema)).toThrow(
+      'tskm: cannot convert pipe item "min_value" to JSON Schema: Infinity has no JSON representation',
+    )
+    expect(schemaToJsonSchema(schema, { rootName: "Score" }).errors[0]).toContain(
+      'Score: cannot convert pipe item "min_value" to JSON Schema: Infinity has no JSON representation.',
+    )
+  })
+
+  it("nonfinite is an opt-in divergence: the compiler approximates, core still refuses", () => {
+    const schema = literal(Number.NaN)
+    expect(schemaToJsonSchema(schema, { approximate: ["nonfinite"] }).schema).toEqual({ not: {} })
+    expect(() => coreOutput(schema)).toThrow(/NaN has no JSON representation/)
+  })
+})
+
+/**
  * Known gap: annotation-only. The compiler emits no `default` keyword, so the types agree
  * but the documents differ. Each case locks both documents so a change on either side fails.
  */

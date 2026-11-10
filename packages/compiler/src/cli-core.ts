@@ -192,6 +192,12 @@ async function runJsonSchema(args: ParsedArgs): Promise<void> {
     const rel = relative(args.root, file.output)
     process.stdout.write(`tskm: wrote ${rel} (${file.schemaNames.join(", ")})\n`)
   }
+  for (const output of result.removed) {
+    const rel = relative(args.root, output)
+    process.stdout.write(
+      `tskm: removed ${rel}: its source produced no document, so the previous output was deleted.\n`,
+    )
+  }
   for (const diagnostic of result.diagnostics) {
     process.stderr.write(`${diagnostic}\n`)
   }

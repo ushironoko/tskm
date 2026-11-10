@@ -14,6 +14,12 @@ export type TskmMode = "sidecar" | "inplace"
  * - `undefined`: emitted as an unconstrained schema (`{}`).
  * - `check`: the predicate is dropped.
  * - `transform`: the schema before the transform is emitted (output side only).
+ * - `nonfinite`: NaN and the infinities are emitted without the value. A `literal` becomes
+ *   a schema no JSON value matches, a picklist option is dropped, and a numeric bound or
+ *   length is omitted.
+ *
+ * Standard Schema converters (zod, valibot, arktype) have no approximation. A non-finite
+ * value inside them fails the file (see the adapter).
  */
 export const JSON_SCHEMA_APPROXIMATIONS = [
   "bigint",
@@ -21,6 +27,7 @@ export const JSON_SCHEMA_APPROXIMATIONS = [
   "undefined",
   "check",
   "transform",
+  "nonfinite",
 ] as const
 
 export type JsonSchemaApproximation = (typeof JSON_SCHEMA_APPROXIMATIONS)[number]
@@ -28,9 +35,10 @@ export type JsonSchemaApproximation = (typeof JSON_SCHEMA_APPROXIMATIONS)[number
 /** Options for the experimental JSON Schema output (`tskm json-schema`). */
 export interface TskmJsonSchemaOptions {
   /**
-   * Directory (relative to the project root) the `*.schema.json` files are
-   * written to. When omitted, each JSON Schema is written next to its source as
-   * `<base>.schema.json`.
+   * Directory (relative to the project root) the JSON Schema files are written to. When
+   * omitted, each one is written next to its source as `<base>.json` (a `*.schema.ts`
+   * source gives `<base>.schema.json`). The output is removed when its source produces no
+   * document (see `generateJsonSchema`).
    */
   readonly outDir?: string
   /**

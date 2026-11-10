@@ -23,7 +23,7 @@ Enforced by `packages/tskm/test/standard-contract.test.ts` via `assertStandardSc
 
 The emitter is a duck-typed walker (`packages/compiler/src/jsonschema.ts`). The standard emission for each new primitive is fixed here. Anything richer than the standard form is an approximation plus a vendor extension, never a silent change to an existing case.
 
-A type JSON Schema cannot express is not approximated silently either. The emitter fails the file, unless the caller lists the type in `jsonSchema.approximate`. The refused set is the one `withJsonSchema` throws for (`bigint`, `date`, `undefined`, `check`, a `transform` output), so a new primitive that cannot be represented must join that set in both walkers and in the README table.
+A type JSON Schema cannot express is not approximated silently either. The emitter fails the file, unless the caller lists the type in `jsonSchema.approximate`. The refused set is the one `withJsonSchema` throws for (`bigint`, `date`, `undefined`, `check`, a `transform` output, a NaN or infinite number in a literal, picklist, or numeric bound, and a bound that is not a number), so a new primitive that cannot be represented must join that set in both walkers and in the README table.
 
 | Primitive | Standard JSON Schema form |
 | --- | --- |
