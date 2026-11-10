@@ -1,8 +1,8 @@
 # Compare
 
-Same payload, same constraints, six libraries. This package is not a workspace, so
-`bun install` at the repository root does not install it and the published
-packages do not depend on it.
+Same payload and constraints, six libraries, with one documented exception (string length;
+see "One set of constraints"). This package is not a workspace, so `bun install` at the
+repository root does not install it and the published packages do not depend on it.
 
 ```bash
 cd bench/compare
@@ -97,9 +97,11 @@ The table shows the median over the rounds and the min – max range. The worker
 accepted verdicts and the driver fails the run if a valid payload is not accepted or an
 invalid one is. Those counts also keep the parse results alive, so the loop is not removed.
 
-On the recorded machine the range across processes is large: up to about 50% for some
-libraries, while the spread within one process is 5–10%. Ratios between libraries that
-fall inside those ranges are not resolved by this run.
+In the committed run, the max/min ratio across rounds is 1.07–1.75x for ten of the twelve
+valid and invalid rows. The other two are wider: valibot's valid path (about 2.6x) and
+arktype's valid path (about 9x).
+The load average rose from 1.1 to 7.7 during the speed phase, so those two rows are the
+least reliable. Ratios between libraries that fall inside a row's range are not resolved.
 
 ## Memory
 
@@ -140,7 +142,9 @@ Each checker runs three times on each fixture:
 - `node_modules/@typescript/native-preview/bin/tsgo` with the same flags
 
 Instantiation counts must match across the three runs or the harness stops. Check time is
-the median of the three runs, converted to milliseconds. Both checkers are devDependencies
+the median of the three runs, converted to milliseconds. Check time is noisy on a shared
+machine: effect's tsc check time was 240–520 ms across the runs made for this review, so
+read the instantiation columns as the stable ones. Both checkers are devDependencies
 of this package at exact versions (`typescript` 6.0.3, `@typescript/native-preview`
 7.0.0-dev.20260707.2). The repository root does not install `tsgo`, so the root is not used.
 
@@ -153,6 +157,35 @@ change at a time with the same 100-copy shape: the id bound adds 32,052, and the
 constraint (the length bound and the regex, written as arktype syntax) adds 101,088, in place
 of `string.email`. The count measures arktype's checker parsing those strings. It is the cost
 of this constraint in arktype, not a runtime figure.
+
+## Limits
+
+Read these before quoting a number from `RESULTS.md`.
+
+- **Runtime.** Bun 1.3.13 only (the version pinned by the root `packageManager`). Node is
+  the runtime the project recommends, and V8 may rank these libraries differently from JSC.
+  Nothing here measures Node.
+- **Which call is measured.** Each row uses the call in the Calls table, not every API a
+  library has. tskm's `is`, `safeParseCompiled` and the `@tskm/compiler` output are not
+  measured. typebox's `Check` and `Compile` are not measured, and its `Parse` is set to
+  collect every issue (its default stops at the first). arktype's direct call and effect's
+  `is` are not measured either. A different call can be faster or slower.
+- **Runtime code generation.** The harness does not check which code paths a library uses.
+  `@ark/util` probes whether `new Function` is allowed (`out/functions.js`), so arktype has a
+  JIT path and a path without it. Under a Content Security Policy that forbids eval, the
+  measured paths may not apply.
+- **Email.** One regular expression for every library (see above). The libraries' built-in
+  email validators are not measured.
+- **String length.** zod and typebox count code points, while tskm, valibot, arktype and
+  effect count UTF-16 code units. The payload is ASCII, so the timed inputs are not affected,
+  but a non-ASCII name can be accepted by one set of libraries and rejected by the other.
+- **Machine.** One 8-vCPU VM shared with other workloads. The Run section records the load
+  average before and after the speed phase. Under load, the spread across processes grows
+  (see the speed table), and ratios inside a library's range are not resolved.
+- **Type instantiations** count the work of 100 copies of the schema in each checker. They
+  are a proxy for type-checking cost, not a runtime figure.
+- **Bundle** rows use each library's main entry (zod's classic `zod` entry, not `zod/mini`,
+  which appears as a separate reference row).
 
 ## Constants
 
