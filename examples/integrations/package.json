@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "bun test ./hono/app.e2e.ts ./trpc/caller.e2e.ts ./tanstack/router.e2e.ts ./tanstack/form.e2e.ts ./rhf/resolver.e2e.ts ./elysia/app.e2e.ts ./orpc/procedure.e2e.ts ./h3/event.e2e.ts ./conform/form.e2e.ts",
-    "typecheck": "tsgo --noEmit -p tsconfig.json"
+    "typecheck": "bun ../../scripts/tsc.ts --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@conform-to/react": "1.21.3",
