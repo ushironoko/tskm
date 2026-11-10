@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import { existsSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, watch as fsWatch, rmSync, writeFileSync } from "node:fs"
+import { dirname } from "node:path"
 import type { GenerateResult, WatchController } from "../../src/index.ts"
 import { withTestTsgo } from "../tsgo-test-executable.ts"
 import { type CompilerApi, fixture, type Suite } from "./support.ts"
@@ -85,9 +86,7 @@ export function watchSuites(api: CompilerApi): Suite[] {
   /**
    * A scenario body. Its controllers are closed and its artifacts removed afterwards, pass or
    * fail, as the original afterEach did. The query document is checked for leftovers once the
-   * body has finished. It is not watched while the body runs: a watcher on the project
-   * directories changes how Node delivers the echo of the initial sidecar write to watch(),
-   * which then regenerates once more.
+   * body has finished.
    */
   const scenario = (
     name: string,
@@ -142,11 +141,10 @@ export function watchSuites(api: CompilerApi): Suite[] {
           assert.equal(first?.files[0]?.mode, "inplace")
 
           const before = calls.length
-          // Inplace writes back into the source itself, so the initial pass records `target`
-          // in the runtime's self-write set; that entry can swallow the first echoed event.
-          // Re-writing on each poll tick drains the stale entry and then lands a real edit,
-          // exercising fs.watch → debounce → flush → planWatchActions(incremental) →
-          // generateFile → mergeResults without relying on event ordering.
+          // Re-write on each poll tick until a pass runs, so a coalesced or dropped fs event is
+          // retried rather than awaited. Each write is a real edit: its content differs from the
+          // text the initial inplace pass wrote. This exercises fs.watch → debounce → flush →
+          // planWatchActions(incremental) → generateFile → mergeResults.
           let toggle = false
           const fired = await waitFor(() => {
             if (calls.length > before) return true
@@ -285,6 +283,109 @@ export function watchSuites(api: CompilerApi): Suite[] {
           assert.ok(calls.length >= 1, "expected the initial generate")
           // Already closed; close() short-circuits.
           await controller.close()
+        },
+      ),
+      scenario(
+        "does not regenerate for identical bytes written before watch() (sidecar, another watcher open)",
+        query,
+        basicArtifacts,
+        60_000,
+        async (track) => {
+          writeFileSync(target, sidecarSource("size"))
+          // A second watcher on the source directory is open while the source is rewritten with
+          // the same bytes, before watch() exists. Node can deliver that write to the recursive
+          // watcher watch() attaches afterwards, even though it happened before watch() began.
+          const other = fsWatch(dirname(target), () => {})
+          try {
+            writeFileSync(target, sidecarSource("size"))
+            const calls: GenerateResult[] = []
+            const controller = track(
+              await api.watch({
+                root: fixtureRoot,
+                mode: "sidecar",
+                config: withTestTsgo({
+                  include: ["src/watchtarget.schema.ts"],
+                  tsconfig: "tsconfig.json",
+                }),
+                debounceMs: 30,
+                onGenerate: (r) => calls.push(r),
+              }),
+            )
+            assert.equal(calls.length, 1, "expected only the initial generate")
+
+            // A delivered stale event would fire within the debounce window after watch()
+            // resolves. Watching for several times that window is what makes the absence of a
+            // second pass a meaningful assertion; it is an observation window, not a wait for
+            // the fix to take effect.
+            await new Promise((r) => setTimeout(r, 600))
+            assert.equal(
+              calls.length,
+              1,
+              "identical bytes written before watch() must not regenerate",
+            )
+
+            // A real edit after watch() started still regenerates.
+            let toggle = false
+            const fired = await waitFor(() => {
+              if (calls.length > 1) return true
+              toggle = !toggle
+              writeFileSync(target, sidecarSource(toggle ? "count" : "total"))
+              return false
+            })
+            assert.equal(fired, true, "expected a re-generation after a real edit")
+            assert.equal(calls[calls.length - 1]?.files[0]?.source, target)
+
+            await controller.close()
+          } finally {
+            other.close()
+          }
+        },
+      ),
+      scenario(
+        "does not regenerate for the inplace write it made itself, with another watcher open",
+        query,
+        basicArtifacts,
+        60_000,
+        async (track) => {
+          writeFileSync(target, inplaceSource("size"))
+          const other = fsWatch(dirname(target), () => {})
+          try {
+            // Identical bytes before watch(). The initial inplace pass then writes the sentinel
+            // region, so two writes to the source are pending when watch() attaches.
+            writeFileSync(target, inplaceSource("size"))
+            const calls: GenerateResult[] = []
+            const controller = track(
+              await api.watch({
+                root: fixtureRoot,
+                mode: "inplace",
+                config: withTestTsgo({
+                  include: ["src/watchtarget.schema.ts"],
+                  tsconfig: "tsconfig.json",
+                }),
+                debounceMs: 30,
+                onGenerate: (r) => calls.push(r),
+              }),
+            )
+            assert.equal(calls.length, 1, "expected only the initial generate")
+            assert.equal(calls[0]?.files[0]?.changed, true, "the initial pass rewrote the source")
+
+            await new Promise((r) => setTimeout(r, 600))
+            assert.equal(calls.length, 1, "the echo of its own inplace write must not regenerate")
+
+            let toggle = false
+            const fired = await waitFor(() => {
+              if (calls.length > 1) return true
+              toggle = !toggle
+              writeFileSync(target, inplaceSource(toggle ? "weight" : "height"))
+              return false
+            })
+            assert.equal(fired, true, "expected a re-generation after a real edit")
+            assert.equal(calls[calls.length - 1]?.files[0]?.source, target)
+
+            await controller.close()
+          } finally {
+            other.close()
+          }
         },
       ),
     ],
