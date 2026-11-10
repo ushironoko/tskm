@@ -1,9 +1,10 @@
 import type { TskmConfig } from "../src/config.ts"
 
 /**
- * Compat CI sets this to a tsgo binary other than the pinned
- * `@typescript/native-preview` (today, `typescript@next`'s `lib/tsc`).
- * Unset means every caller keeps the native-preview default.
+ * Compat CI used to point this at a checker binary other than the one
+ * bundled with the imported `typescript` package. The sync client and the
+ * binary are one package now, so an unset value keeps that package's `lib/tsc`.
+ * An explicit path still overrides both the client and the `--noEmit` probe.
  */
 export const TSKM_TEST_TSGO_EXECUTABLE = "TSKM_TEST_TSGO_EXECUTABLE"
 

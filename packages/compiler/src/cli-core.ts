@@ -1,6 +1,11 @@
 import { existsSync, writeFileSync } from "node:fs"
 import { join, relative, resolve } from "node:path"
-import type { TskmMode } from "./config.ts"
+import {
+  JSON_SCHEMA_APPROXIMATIONS,
+  type JsonSchemaApproximation,
+  parseApproximations,
+  type TskmMode,
+} from "./config.ts"
 import { generate } from "./index.ts"
 import { generateJsonSchema } from "./jsonschema.ts"
 import { watch } from "./watch.ts"
@@ -14,13 +19,17 @@ Commands:
   init            Write a starter tskm.config.ts.
   gen             Generate types for all included sources (default: sidecar).
   watch           Generate, then re-generate on file changes.
-  json-schema     Emit JSON Schema for each schema (experimental).
+  json-schema     Emit JSON Schema for each schema (experimental; fails on types it
+                  cannot express unless approximated, see --approximate).
 
 Options:
   --root <dir>       Project root (default: cwd).
   --mode <mode>      Emit mode for gen/watch: "sidecar" (default) or "inplace".
   --out <dir>        Output dir for json-schema (default: next to each source).
   --exec <path>      Runtime used to run the json-schema worker (default: this process).
+  --approximate <list>
+                     json-schema: types to approximate instead of failing, comma-separated
+                     (${JSON_SCHEMA_APPROXIMATIONS.join(",")}). Default: none.
   --debounce <ms>    Debounce window for watch.
   --no-pretty        Emit single-line types instead of pretty-printed.
   -h, --help         Show this help.
@@ -45,6 +54,8 @@ export interface ParsedArgs {
   readonly debounceMs: number | undefined
   readonly pretty: boolean
   readonly help: boolean
+  /** Validated `--approximate` names (repeats merge); undefined when the flag is absent. */
+  readonly approximate: ReadonlyArray<JsonSchemaApproximation> | undefined
 }
 
 function parseMode(value: string | undefined): TskmMode {
@@ -61,6 +72,7 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
   let out: string | undefined
   let exec: string | undefined
   let debounceMs: number | undefined
+  let approximateRaw: string[] | undefined
   let pretty = true
   let help = false
 
@@ -97,12 +109,22 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
         throw new Error("tskm: --debounce requires a millisecond number.")
       }
       debounceMs = parsed
+    } else if (arg === "--approximate") {
+      const next = argv[++i]
+      if (!next) {
+        throw new Error(
+          `tskm: --approximate requires a comma-separated list (${JSON_SCHEMA_APPROXIMATIONS.join(", ")}).`,
+        )
+      }
+      approximateRaw = [...(approximateRaw ?? []), ...next.split(",")]
     } else if (!arg?.startsWith("-") && command === undefined) {
       command = arg
     }
   }
 
-  return { command, root, mode, out, exec, debounceMs, pretty, help }
+  const approximate =
+    approximateRaw === undefined ? undefined : parseApproximations(approximateRaw, "--approximate")
+  return { command, root, mode, out, exec, debounceMs, pretty, help, approximate }
 }
 
 export function runInit(root: string): void {
@@ -160,10 +182,11 @@ async function runWatch(args: ParsedArgs): Promise<void> {
 }
 
 async function runJsonSchema(args: ParsedArgs): Promise<void> {
+  // The flags override the config file field by field, so `tskm.config.*` still applies.
   const result = await generateJsonSchema({
     root: args.root,
-    config: args.out ? { jsonSchema: { outDir: args.out } } : undefined,
     execPath: args.exec,
+    jsonSchema: { outDir: args.out, approximate: args.approximate },
   })
   for (const file of result.files) {
     const rel = relative(args.root, file.output)
@@ -171,6 +194,13 @@ async function runJsonSchema(args: ParsedArgs): Promise<void> {
   }
   for (const diagnostic of result.diagnostics) {
     process.stderr.write(`${diagnostic}\n`)
+  }
+  if (result.errors.length > 0) {
+    // Fail closed: the affected files were not written, and CI must see the failure.
+    process.stderr.write(
+      `tskm: json-schema failed with ${result.errors.length} error(s); the affected files were not written.\n`,
+    )
+    process.exitCode = 1
   }
   if (result.files.length === 0) {
     process.stdout.write("tskm: no JSON Schema generated.\n")

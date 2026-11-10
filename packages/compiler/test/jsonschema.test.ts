@@ -140,15 +140,49 @@ describe("schemaToJsonSchema — pipe refinements", () => {
     })
   })
 
-  it("transform -> warning + constraint skipped", () => {
-    const schema = pipe(s.string(), {
-      kind: "transformation",
-      type: "transform",
-      operation: (x: unknown) => x,
-    })
-    const result = schemaToJsonSchema(schema)
+  const transformItem = {
+    kind: "transformation",
+    type: "transform",
+    operation: (x: unknown) => x,
+  }
+
+  it("transform on the output side is an error that names the approximation and io", () => {
+    const schema = pipe(s.string(), transformItem)
+    const result = schemaToJsonSchema(schema, { rootName: "Account" })
+    expect(result.errors).toEqual([
+      'Account: cannot convert pipe item "transform" to JSON Schema output: the transform\'s output type is not reified at runtime. Add "transform" to jsonSchema.approximate (CLI: --approximate transform) to emit it as the schema before the transform instead. Or set jsonSchema.io to "input", which needs no approximation.',
+    ])
+    expect(result.warnings).toHaveLength(0)
+  })
+
+  it("transform approximated: the base schema stands and a note is recorded", () => {
+    const schema = pipe(s.string(), transformItem)
+    const result = schemaToJsonSchema(schema, { rootName: "Account", approximate: ["transform"] })
     expect(result.schema).toEqual({ type: "string" })
-    expect(result.warnings.length).toBeGreaterThan(0)
+    expect(result.errors).toHaveLength(0)
+    expect(result.warnings).toEqual([
+      "Account: approximated transform as the schema before the transform.",
+    ])
+  })
+
+  it("transform on the input side needs no approximation and keeps the input shape", () => {
+    const schema = pipe(s.string(), transformItem)
+    const result = schemaToJsonSchema(schema, { io: "input" })
+    expect(result.schema).toEqual({ type: "string" })
+    expect(result.errors).toHaveLength(0)
+    expect(result.warnings).toHaveLength(0)
+  })
+
+  it("on the input side, constraints after a transform are dropped except description", () => {
+    const schema = pipe(
+      s.string(),
+      transformItem,
+      { kind: "validation", type: "min_value", requirement: 3 },
+      { kind: "metadata", type: "description", requirement: "the parsed length" },
+    )
+    const result = schemaToJsonSchema(schema, { io: "input" })
+    expect(result.schema).toEqual({ type: "string", description: "the parsed length" })
+    expect(result.errors).toHaveLength(0)
   })
 })
 
@@ -214,16 +248,20 @@ describe("schemaToJsonSchema — description metadata", () => {
 })
 
 describe("schemaToJsonSchema — preprocess", () => {
-  it("emits the inner output shape and warns that the input accepts any value", () => {
-    const result = schemaToJsonSchema({
-      kind: "schema",
-      type: "preprocess",
-      wrapped: s.number(),
-    })
+  const preprocessed = { kind: "schema", type: "preprocess", wrapped: s.number() }
+
+  it("the output side is the inner schema, with no note", () => {
+    const result = schemaToJsonSchema(preprocessed)
     expect(result.schema).toEqual({ type: "number" })
-    expect(result.warnings).toEqual([
-      "tskm: preprocess changes the value before validation; emitted the output shape; input accepts any value.",
-    ])
+    expect(result.errors).toHaveLength(0)
+    expect(result.warnings).toHaveLength(0)
+  })
+
+  it("the input side is {} because the input type is unknown, as withJsonSchema emits", () => {
+    const result = schemaToJsonSchema(preprocessed, { io: "input" })
+    expect(result.schema).toEqual({})
+    expect(result.errors).toHaveLength(0)
+    expect(result.warnings).toHaveLength(0)
   })
 
   it("folds pipe constraints onto the inner output shape", () => {
@@ -234,9 +272,29 @@ describe("schemaToJsonSchema — preprocess", () => {
     )
     const result = schemaToJsonSchema(schema)
     expect(result.schema).toEqual({ type: "number", minimum: 1, maximum: 65535 })
-    expect(result.warnings.some((warning) => warning.includes("emitted the output shape"))).toBe(
-      true,
+    expect(result.errors).toHaveLength(0)
+  })
+
+  it("on the input side a piped preprocess is {} and its constraints are not applied", () => {
+    const schema = pipe(
+      { kind: "schema", type: "preprocess", wrapped: s.number() },
+      { kind: "validation", type: "min_value", requirement: 1 },
     )
+    expect(schemaToJsonSchema(schema, { io: "input" }).schema).toEqual({})
+  })
+})
+
+describe("schemaToJsonSchema — fallback", () => {
+  // A fallback recovers a failed parse with its value, so both sides keep the inner type.
+  // The fallback value is not emitted as a `default` keyword (core emits it on the output).
+  const fallbackOf = { kind: "schema", type: "fallback", wrapped: s.string(), fallback: "x" }
+
+  it("emits the inner schema on the output side", () => {
+    expect(schemaToJsonSchema(fallbackOf).schema).toEqual({ type: "string" })
+  })
+
+  it("emits the inner schema on the input side", () => {
+    expect(schemaToJsonSchema(fallbackOf, { io: "input" }).schema).toEqual({ type: "string" })
   })
 })
 
@@ -331,25 +389,108 @@ describe("schemaToJsonSchema — recursive combinator", () => {
   })
 })
 
-describe("schemaToJsonSchema — lossy primitives warn", () => {
-  it("bigint, date, undefined, never each warn or fall back as specified", () => {
-    expect(schemaToJsonSchema({ kind: "schema", type: "bigint" }).warnings).not.toHaveLength(0)
-    const date = schemaToJsonSchema({ kind: "schema", type: "date" })
-    expect(date.schema).toEqual({ type: "string", format: "date-time" })
-    expect(date.warnings).not.toHaveLength(0)
-    expect(schemaToJsonSchema({ kind: "schema", type: "undefined" }).warnings).not.toHaveLength(0)
-    expect(schemaToJsonSchema({ kind: "schema", type: "never" }).schema).toEqual({ not: {} })
+describe("schemaToJsonSchema — unrepresentable types fail by default", () => {
+  const bigintType = { kind: "schema", type: "bigint" }
+  const dateType = { kind: "schema", type: "date" }
+  const undefinedType = { kind: "schema", type: "undefined" }
+
+  it("bigint is an error with its path, its type, and the option that approximates it", () => {
+    const r = schemaToJsonSchema(s.object({ amount: bigintType }), { rootName: "Order" })
+    expect(r.errors).toEqual([
+      'Order.amount: cannot convert schema type "bigint" to JSON Schema: bigint has no JSON representation. Add "bigint" to jsonSchema.approximate (CLI: --approximate bigint) to emit it as a string instead.',
+    ])
+    expect(r.warnings).toHaveLength(0)
   })
 
-  it("a plain happy-path schema produces no warnings", () => {
-    const { warnings } = schemaToJsonSchema(s.object({ a: s.string(), b: s.number() }))
-    expect(warnings).toHaveLength(0)
+  it("date and undefined are errors in the same shape", () => {
+    const d = schemaToJsonSchema(s.object({ createdAt: dateType }), { rootName: "User" })
+    expect(d.errors).toEqual([
+      'User.createdAt: cannot convert schema type "date" to JSON Schema: Date has no JSON representation. Add "date" to jsonSchema.approximate (CLI: --approximate date) to emit it as a date-time string instead.',
+    ])
+    const u = schemaToJsonSchema(s.object({ note: undefinedType }), { rootName: "User" })
+    expect(u.errors).toEqual([
+      'User.note: cannot convert schema type "undefined" to JSON Schema: undefined has no JSON representation. Add "undefined" to jsonSchema.approximate (CLI: --approximate undefined) to emit it as an unconstrained schema instead.',
+    ])
   })
 
-  it("nullish warns that `undefined` cannot be expressed", () => {
+  it("an opted-in approximation keeps the previous output and notes each use", () => {
+    const schema = s.object({ amount: bigintType, createdAt: dateType, note: undefinedType })
+    const r = schemaToJsonSchema(schema, {
+      rootName: "Order",
+      approximate: ["bigint", "date", "undefined"],
+    })
+    expect(r.schema).toEqual({
+      type: "object",
+      properties: {
+        amount: { type: "string" },
+        createdAt: { type: "string", format: "date-time" },
+        note: {},
+      },
+      required: ["amount", "createdAt", "note"],
+      additionalProperties: false,
+    })
+    expect(r.errors).toHaveLength(0)
+    expect(r.warnings).toEqual([
+      "Order.amount: approximated bigint as a string.",
+      "Order.createdAt: approximated date as a date-time string.",
+      "Order.note: approximated undefined as an unconstrained schema.",
+    ])
+  })
+
+  it("an approximation applies only to the type it names", () => {
+    const schema = s.object({ amount: bigintType, createdAt: dateType })
+    const r = schemaToJsonSchema(schema, { rootName: "Order", approximate: ["bigint"] })
+    expect(r.warnings).toEqual(["Order.amount: approximated bigint as a string."])
+    expect(r.errors).toEqual([
+      'Order.createdAt: cannot convert schema type "date" to JSON Schema: Date has no JSON representation. Add "date" to jsonSchema.approximate (CLI: --approximate date) to emit it as a date-time string instead.',
+    ])
+  })
+
+  it("collects every unrepresentable node in one walk instead of stopping at the first", () => {
+    const schema = s.object({ amount: bigintType, createdAt: dateType, note: undefinedType })
+    expect(schemaToJsonSchema(schema, { rootName: "Order" }).errors).toHaveLength(3)
+  })
+
+  it("names the path of tuple slots, array items, record values and keys, and quoted keys", () => {
+    const schema = s.object({
+      items: { kind: "schema", type: "tuple", items: [bigintType] },
+      tags: s.array(bigintType),
+      counts: s.record(dateType),
+      "a-b": bigintType,
+      byDate: { kind: "schema", type: "record", key: dateType, value: s.string() },
+      address: s.object({ zip: bigintType }),
+    })
+    const paths = schemaToJsonSchema(schema, { rootName: "Order" }).errors.map(
+      (error) => error.split(": ")[0],
+    )
+    expect(paths).toEqual([
+      "Order.items[0]",
+      "Order.tags[]",
+      "Order.counts[]",
+      'Order["a-b"]',
+      "Order.byDate[key]",
+      "Order.address.zip",
+    ])
+  })
+
+  it("a plain happy-path schema produces no warnings and no errors", () => {
+    const r = schemaToJsonSchema(s.object({ a: s.string(), b: s.number() }))
+    expect(r.warnings).toHaveLength(0)
+    expect(r.errors).toHaveLength(0)
+  })
+
+  it("never is representable as { not: {} } without a note", () => {
+    const r = schemaToJsonSchema({ kind: "schema", type: "never" })
+    expect(r.schema).toEqual({ not: {} })
+    expect(r.errors).toHaveLength(0)
+    expect(r.warnings).toHaveLength(0)
+  })
+
+  it("nullish is representable as null-or-inner without a note", () => {
     const r = schemaToJsonSchema({ kind: "schema", type: "nullish", wrapped: s.string() })
     expect(r.schema).toEqual({ anyOf: [{ type: "string" }, { type: "null" }] })
-    expect(r.warnings.some((w) => w.includes("undefined"))).toBe(true)
+    expect(r.warnings).toHaveLength(0)
+    expect(r.errors).toHaveLength(0)
   })
 })
 

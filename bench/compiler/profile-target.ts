@@ -2,7 +2,7 @@
  * CPU-profile target for the compiler codegen path. Opens one session (so the tsgo spawn is
  * out of the hot region) and runs `generateAll` in a loop. Spawn under `bun --cpu-prof` to
  * see where the steady-state codegen time goes: the resolver's per-marker IPC round trips,
- * discovery, emit, and the native corsa-bind frames. The tsgo binary work itself appears as
+ * discovery, emit, and the typescript/sync client frames. The native checker work itself appears as
  * native frames, so the JS-side cost (the part this repo can change) is what stands out.
  *
  *   bun --cpu-prof bench/compiler/profile-target.ts 20

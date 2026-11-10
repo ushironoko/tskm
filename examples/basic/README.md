@@ -17,13 +17,13 @@ output type. In a real project `@tskm/core` is a normal dependency and no `paths
 From the repository root (after `bun install` + `bun run build`):
 
 ```bash
-bun packages/compiler/dist/cli.mjs gen --root examples/basic
-# in a published project this is simply:  bunx tskm gen
+node packages/compiler/dist/cli.mjs gen --root examples/basic
+# in a published project this is simply:  npx tskm gen  (or bunx tskm gen)
 ```
 
 (The recursive `categorySchema` is resolved by an isolated worker that imports the schema
-module, so the worker runtime must be able to import `.ts`: bun here, or `worker.execPath`
-in `tskm.config.ts`.)
+module, so the worker runtime must be able to import `.ts`. Node 22.18+ and Node 24 do this
+natively. On an older Node, set `worker.execPath` in `tskm.config.ts`.)
 
 This rewrites `src/user.schema.gen.ts`. Sidecar mode always rewrites the file (and reports `wrote`), but
 the content is stable: once it matches the current compiler, re-running leaves the file diff-free.
@@ -35,11 +35,13 @@ the content is stable: once it matches the current compiler, re-running leaves t
 node packages/compiler/dist/cli.mjs gen --root examples/basic --mode inplace
 
 # Emit JSON Schema next to each source (experimental; needs a runtime that can import the .ts module):
-node packages/compiler/dist/cli.mjs json-schema --root examples/basic
+node packages/compiler/dist/cli.mjs json-schema --root examples/basic --approximate transform
 
 # Regenerate on every change:
 node packages/compiler/dist/cli.mjs watch --root examples/basic
 ```
+
+`category.schema.ts` has a `transform` on its output side, which JSON Schema cannot express. Without `--approximate transform`, `json-schema` exits with code 1, names `categorySchema.depth` in the error, and writes no file for that source. The `--approximate` flag emits the schema before the transform (`number`) for it. `user.schema.ts` needs no flag. A `tskm.config.ts` with `jsonSchema: { io: "input" }` describes the input side instead, which needs no approximation at all.
 
 In a Vite app, add the plugin instead of running the CLI:
 

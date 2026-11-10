@@ -1,3 +1,4 @@
+import type { JsonSchemaApproximation } from "./config.ts"
 import { type JsonSchema, schemaToJsonSchema } from "./jsonschema.ts"
 import { isTskmWalkable, readStandard } from "./worker-harness.ts"
 
@@ -13,22 +14,28 @@ import { isTskmWalkable, readStandard } from "./worker-harness.ts"
  *   4. vendor "valibot"     -> `@valibot/to-json-schema` (extra package)
  *   5. anything else        -> skipped with a reason
  *
- * Every conversion failure (unrepresentable type, missing package) collapses to
- * a `skipped` outcome — one schema's failure never aborts the file, and nothing
- * vacuous is written for it. Runs inside the isolated schema worker, so the
- * dynamic imports resolve from the USER's project.
+ * A vendor conversion failure (missing package, converter rejection) collapses to
+ * a `skipped` outcome: one schema's failure never aborts the file, and nothing
+ * vacuous is written for it. A tskm schema the walker cannot represent is `rejected`
+ * instead, which fails the file (see `jsonSchema.approximate` for the opt-in).
+ * Runs inside the isolated schema worker, so the dynamic imports resolve from the
+ * USER's project.
  */
 
 /** The draft every converter is asked for (the tskm walker's native output). */
 export const JSON_SCHEMA_TARGET = "draft-2020-12"
 
 export interface AdapterContext {
-  /** Which side to render (zod honors it; others may not distinguish). */
+  /** Which side to render (the tskm walker and zod honor it; others may not distinguish). */
   readonly io: "input" | "output"
   /** Vendors enabled by config (`schemaSources`-derived); tskm is always present. */
   readonly allowedVendors: ReadonlySet<string>
   /** Identity map for the tskm walker's `$defs` naming (see jsonschema.ts). */
   readonly exportNames?: ReadonlyMap<object, string> | undefined
+  /** The export name that starts the tskm walker's diagnostic paths (`User.createdAt`). */
+  readonly rootName?: string
+  /** Types the tskm walker may approximate instead of failing (`jsonSchema.approximate`). */
+  readonly approximate?: ReadonlyArray<JsonSchemaApproximation>
   /**
    * DI seam for the converter imports (defaults to the real dynamic `import`).
    * Exists so the missing-package branches are testable with the packages
@@ -45,6 +52,11 @@ export type AdapterOutcome =
     }
   /** Convertible in principle, but this schema failed — surface the reason. */
   | { readonly kind: "skipped"; readonly reason: string }
+  /**
+   * A tskm schema with types JSON Schema cannot express and that were not approximated.
+   * Unlike `skipped`, the parent fails the whole file: nothing is written for it.
+   */
+  | { readonly kind: "rejected"; readonly errors: ReadonlyArray<string> }
   /**
    * Vendor not in the config-derived allow-list — omitted from the document,
    * but the runtime vendor travels along so the parent can aggregate one
@@ -67,7 +79,15 @@ export async function schemaToJsonSchemaViaAdapter(
   // tskm first: walkable schemas (vendor "tskm" or the legacy kind form) use
   // the native walker, warnings and all.
   if (isTskmWalkable(value)) {
-    const { schema, warnings } = schemaToJsonSchema(value, { exportNames: ctx.exportNames })
+    const { schema, warnings, errors } = schemaToJsonSchema(value, {
+      exportNames: ctx.exportNames,
+      rootName: ctx.rootName,
+      io: ctx.io,
+      approximate: ctx.approximate,
+    })
+    if (errors.length > 0) {
+      return { kind: "rejected", errors }
+    }
     return { kind: "converted", schema, warnings }
   }
 

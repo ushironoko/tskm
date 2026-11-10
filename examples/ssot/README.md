@@ -88,17 +88,18 @@ dispatch and its metadata, the closed-shape rejection, and the warning channel.
 From the repository root (after `bun install` + `bun run build`):
 
 ```bash
-bun packages/compiler/dist/cli.mjs gen --root examples/ssot
-# in a published project this is simply:  bunx tskm gen
+node packages/compiler/dist/cli.mjs gen --root examples/ssot
+# in a published project this is simply:  npx tskm gen  (or bunx tskm gen)
 ```
 
 The recursive `nodeSchema` is resolved by an isolated worker that imports the schema module, so
-the worker runtime must be able to import `.ts` (bun here, or `worker.execPath` in `tskm.config.ts`).
+the worker runtime must be able to import `.ts`. Node 22.18+ and Node 24 do this natively. On an
+older Node, set `worker.execPath` in `tskm.config.ts`.
 
 ## Run
 
 ```bash
-bun examples/ssot/src/main.ts
+node examples/ssot/src/main.ts
 ```
 
 `tsconfig.json` maps `@tskm/core` to the workspace source via `paths` so the checker can resolve

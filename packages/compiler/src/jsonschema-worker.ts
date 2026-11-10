@@ -20,7 +20,7 @@ import { buildExportNames, runSchemaWorker } from "./worker-harness.ts"
 const contextRaw = process.argv[4]
 const context: JsonWorkerContext = contextRaw
   ? (JSON.parse(contextRaw) as JsonWorkerContext)
-  : { io: "output", allowedVendors: ["tskm", "zod", "valibot", "arktype"] }
+  : { io: "output", allowedVendors: ["tskm", "zod", "valibot", "arktype"], approximate: [] }
 const allowedVendors = new Set(context.allowedVendors)
 
 // Built once per module on first extraction: schema object identity -> the same
@@ -34,6 +34,8 @@ await runSchemaWorker<JsonWorkerEntry>(async (name, value, mod) => {
     io: context.io,
     allowedVendors,
     exportNames,
+    rootName: name,
+    approximate: context.approximate,
   })
   if (outcome.kind === "excluded") {
     // Marked, not dropped: the parent aggregates excluded vendors into one
@@ -41,7 +43,12 @@ await runSchemaWorker<JsonWorkerEntry>(async (name, value, mod) => {
     return { name, schema: {}, warnings: [], skipped: true, excludedVendor: outcome.vendor }
   }
   if (outcome.kind === "skipped") {
-    return { name, schema: {}, warnings: [outcome.reason], skipped: true }
+    // Prefixed with the export name, as the walker's own messages are.
+    return { name, schema: {}, warnings: [`${name}: ${outcome.reason}`], skipped: true }
+  }
+  if (outcome.kind === "rejected") {
+    // Fail closed: the parent writes nothing for this file.
+    return { name, schema: {}, warnings: [], errors: outcome.errors }
   }
   return { name, schema: outcome.schema, warnings: outcome.warnings }
 })
