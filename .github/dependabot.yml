@@ -10,3 +10,8 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+    ignore:
+      # Stay on changesets/action v1: v2 requires Changesets CLI v3, and this repo is on CLI v2.
+      # Its major bumps must move together with the CLI v3 migration, so skip them until then.
+      - dependency-name: "changesets/action"
+        update-types: ["version-update:semver-major"]
