@@ -21,7 +21,9 @@ export const schema = Schema.Struct({
   }),
 })
 
-const decode = Schema.decodeUnknownResult(schema)
+// Effect's default is `errors: "first"`, which stops at the first failing field. The other
+// adapters collect every issue on failure, so effect is set to `"all"` to match.
+const decode = Schema.decodeUnknownResult(schema, { errors: "all" })
 
 export function parse(input: unknown): boolean {
   const result = decode(input)

@@ -1,5 +1,11 @@
 import { Type } from "typebox"
+import { Settings } from "typebox/system"
 import { Parse } from "typebox/value"
+
+// typebox's default `maxParseErrors` is 1: `Parse` stops at the first failing field. Every other
+// adapter collects all issues on the invalid payload, so typebox is set to collect them too.
+// This is process-wide; the bench runs each library in its own process for that reason.
+Settings.Set({ maxParseErrors: Number.POSITIVE_INFINITY })
 
 export const schema = Type.Object({
   id: Type.Integer({ minimum: 1 }),

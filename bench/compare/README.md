@@ -50,7 +50,13 @@ once at import.
 | valibot | `safeParse` | `success: false` |
 | arktype | `schema["~standard"].validate` | `issues` present |
 | typebox | `Parse` from `typebox/value` | throw, caught |
-| effect | `Schema.decodeUnknownResult` (built once) | `Result.isSuccess` false |
+| effect | `Schema.decodeUnknownResult(schema, { errors: "all" })` (built once) | `Result.isSuccess` false |
+
+Error collection is the same everywhere: every adapter reports every failing field of the
+invalid payload (9 fields). tskm, zod, valibot and arktype do this by default. Two defaults
+stop early and are changed: effect's `errors` defaults to `"first"`, and typebox's
+`maxParseErrors` defaults to 1, so both are set to collect all. typebox lists 12 entries for
+those 9 fields because each branch of the `role` union is an entry.
 
 Arktype's direct call does not build a result object. The bench uses Standard
 Schema `validate`, which does. typebox 1.4.3 has no `~standard` and no
