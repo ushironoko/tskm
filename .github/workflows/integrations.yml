@@ -1,0 +1,60 @@
+name: Integrations
+
+on:
+  pull_request:
+    paths:
+      - "examples/integrations/**"
+      - "packages/tskm/**"
+      # The typecheck runs scripts/tsc.ts, which resolves the native tsc from packages/compiler.
+      - "packages/compiler/**"
+      - "scripts/tsc.ts"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/integrations.yml"
+  push:
+    branches: [main]
+    paths:
+      - "examples/integrations/**"
+      - "packages/tskm/**"
+      - "packages/compiler/**"
+      - "scripts/tsc.ts"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/integrations.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: integrations-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  integrations:
+    name: framework integrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Verify lockfile is unchanged
+        run: git diff --exit-code bun.lock
+
+      - name: Build packages
+        run: bun run build
+
+      - name: Typecheck integrations
+        run: bun run --cwd examples/integrations typecheck
+
+      - name: Run integration tests
+        run: bun run --cwd examples/integrations test

@@ -14,7 +14,12 @@ import { testTsgoExecutable } from "../tsgo-test-executable.ts"
 /** The compiler surface the scenarios drive. */
 export type CompilerApi = Pick<
   typeof Compiler,
-  "FAILURE_TYPE_FLAGS" | "createTsgoClient" | "generate" | "resolveTsgoExecutable" | "watch"
+  | "FAILURE_TYPE_FLAGS"
+  | "createTsgoClient"
+  | "generate"
+  | "generateJsonSchema"
+  | "resolveTsgoExecutable"
+  | "watch"
 >
 
 export interface Scenario {

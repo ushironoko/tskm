@@ -28,6 +28,9 @@ const allowedVendors = new Set(context.allowedVendors)
 // `Category` instead of `object`/`object_2`.
 let exportNames: ReadonlyMap<object, string> | undefined
 
+// argv[2] is the schema module. Converter packages resolve from its directory (see the adapter).
+const sourceAbs = process.argv[2]
+
 await runSchemaWorker<JsonWorkerEntry>(async (name, value, mod) => {
   exportNames ??= buildExportNames(mod, deriveTypeName)
   const outcome = await schemaToJsonSchemaViaAdapter(value, {
@@ -36,15 +39,12 @@ await runSchemaWorker<JsonWorkerEntry>(async (name, value, mod) => {
     exportNames,
     rootName: name,
     approximate: context.approximate,
+    importFrom: sourceAbs,
   })
   if (outcome.kind === "excluded") {
     // Marked, not dropped: the parent aggregates excluded vendors into one
     // diagnostic per (file, vendor). `skipped` keeps it out of the document.
     return { name, schema: {}, warnings: [], skipped: true, excludedVendor: outcome.vendor }
-  }
-  if (outcome.kind === "skipped") {
-    // Prefixed with the export name, as the walker's own messages are.
-    return { name, schema: {}, warnings: [`${name}: ${outcome.reason}`], skipped: true }
   }
   if (outcome.kind === "rejected") {
     // Fail closed: the parent writes nothing for this file.

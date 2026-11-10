@@ -9,12 +9,14 @@ import { existsSync } from "node:fs"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { registerSuite } from "./runners/node.ts"
 import { basicSuite, inplaceSuite, nullishSuite, preprocessSuite } from "./scenarios/generate.ts"
+import { jsonSchemaCliSuite, jsonSchemaSuite } from "./scenarios/json-schema.ts"
 import { standardSuites } from "./scenarios/standard.ts"
 import type { CompilerApi } from "./scenarios/support.ts"
 import { tsgoClientSuite } from "./scenarios/tsgo-client.ts"
 import { watchSuites } from "./scenarios/watch.ts"
 
 const dist = fileURLToPath(new URL("../dist/index.mjs", import.meta.url))
+const cli = fileURLToPath(new URL("../dist/cli.mjs", import.meta.url))
 if (!existsSync(dist)) {
   throw new Error(`${dist} is missing. Run \`bun run build\` first.`)
 }
@@ -29,6 +31,8 @@ for (const suite of [
   inplaceSuite(compiler),
   ...standardSuites(compiler),
   ...watchSuites(compiler),
+  jsonSchemaSuite(compiler),
+  jsonSchemaCliSuite(cli),
 ]) {
   registerSuite(suite)
 }

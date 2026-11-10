@@ -320,9 +320,9 @@ The **experimental JSON Schema** emitter is different: it walks the runtime sche
 | `string` `number` `boolean` | `string` `number` `boolean` | `{ "type": "string" }` etc. |
 | `bigint` | `bigint` | ✖ `{ "type": "string" }` with `approximate: ["bigint"]` |
 | `date` | `Date` | ✖ `{ "type": "string", "format": "date-time" }` with `approximate: ["date"]` |
-| `literal(x)` | `x` (non-finite numbers widen to `number` ⚠) | `{ "const": x }` |
+| `literal(x)` | `x` (non-finite numbers widen to `number` ⚠) | `{ "const": x }` · ✖ `NaN` and `±Infinity` have no JSON value: `{ "not": {} }` with `approximate: ["nonfinite"]` |
 | `templateLiteral(["p_", string()])` | `` `p_${string}` `` (template literal type, not widened to `string`) | `{ "type": "string", "pattern": ... }` |
-| `picklist([...])` | union of literals | `{ "enum": [...] }` |
+| `picklist([...])` | union of literals | `{ "enum": [...] }` · ✖ a `NaN` or infinite option is dropped with `approximate: ["nonfinite"]` |
 | `null_` `undefined_` | `null` `undefined` | `{ "type": "null" }` · ✖ `{}` with `approximate: ["undefined"]` |
 | `any` `unknown` `never_` | `any` `unknown` `never` | `{}` · `{}` · `{ "not": {} }` |
 | `object({...})` | `{ k: T }` (unknown keys stripped) | `{ "type": "object", "properties", "required", "additionalProperties": false }` |
@@ -340,8 +340,8 @@ The **experimental JSON Schema** emitter is different: it walks the runtime sche
 | `preprocess(fn, T)` | the output `T` | `output`: the inner `T`; `input` (`jsonSchema.io`): `{}`, since the input is `unknown` |
 | `lazy(() => T)` | recursive `T` (needs a hand-written annotation) | `$ref` / `$defs` |
 | `recursive((self) => ...)` | **named self-referential alias, materialized** | `$ref` / `$defs` (export-named) |
-| pipe `minLength`/`maxLength`/`length`/`nonEmpty` | unchanged | `minLength`/`maxLength` (or `minItems`/`maxItems`) |
-| pipe `minValue`/`maxValue`/`integer`/`multipleOf` | unchanged | `minimum`/`maximum`/`"type":"integer"`/`multipleOf` (numeric bases only) |
+| pipe `minLength`/`maxLength`/`length`/`nonEmpty` | unchanged | `minLength`/`maxLength` (or `minItems`/`maxItems`). ✖ A `NaN` or infinite length is omitted with `approximate: ["nonfinite"]` |
+| pipe `minValue`/`maxValue`/`integer`/`multipleOf` | unchanged | `minimum`/`maximum`/`"type":"integer"`/`multipleOf` (numeric bases only). ✖ A `NaN` or infinite bound is omitted with `approximate: ["nonfinite"]`. A bigint, `Date`, or string bound has no keyword form and always fails |
 | pipe `email`/`url`/`regex` | unchanged | `format: "email"`/`format: "uri"`/`pattern` |
 | pipe `description` | unchanged (metadata; never executed) | `description` (last-wins when piped repeatedly) |
 | pipe `brand`/`readonly` | unchanged (they do not change the JSON value) | no-op |
@@ -362,7 +362,7 @@ tskm: json-schema failed with 1 error(s); the affected files were not written.
 
 The path is the export name followed by the position: `orderSchema.createdAt` (a property), `orderSchema.items[0]` (a tuple slot), `orderSchema.tags[]` (an array item or record value), `orderSchema.byDate[key]` (a record key). Each error is listed, so one run shows every problem.
 
-To accept a type, list it. Known names are `bigint`, `date`, `undefined`, `check`, and `transform`; anything else is an error, and there is no switch that approximates everything:
+To accept a type, list it. Known names are `bigint`, `date`, `undefined`, `check`, `transform`, and `nonfinite`; anything else is an error, and there is no switch that approximates everything:
 
 ```ts
 // tskm.config.ts
@@ -382,17 +382,27 @@ tskm json-schema --approximate bigint,date   # the flag overrides the config fie
 | `undefined` | `{}` (an unconstrained schema) | approximated undefined as an unconstrained schema |
 | `check` | the base schema, predicate dropped | approximated check without the predicate |
 | `transform` | the schema before the transform (output side) | approximated transform as the schema before the transform |
+| `nonfinite` | a `literal` that is `NaN` or infinite: `{ "not": {} }` (no JSON value matches). A picklist option: dropped from the `enum`. A numeric bound or length: the keyword is omitted | approximated nonfinite as a schema no JSON value matches · …by dropping the option NaN · …by omitting minimum |
 
 A `transform` is exact on the input side. Set `jsonSchema: { io: "input" }` to describe what callers send, with no approximation. `io` applies to tskm schemas and to the Standard Schema converters that honor it.
+
+**Non-finite numbers.** JSON has no `NaN` and no infinity, and `JSON.stringify` writes them as `null`, which is a different value. So a literal, a picklist option, or a numeric bound that is not finite fails by default. `nonfinite` replaces each with the stand-in in the table. A bigint, `Date`, or string used as a bound (a `minValue` on a string, say) has no keyword form, so it always fails, even with `approximate` listed.
+
+**Standard Schema vendors.** A zod, valibot, or arktype schema is converted by its own converter. If that converter fails, the file fails the same way a tskm type the walker cannot express does: nothing is written, the error names the export and the vendor, and the run exits 1. Vendor schemas have no approximation. The converter package is looked up from the schema module's own directory first, so the project's copy is used, and then from the compiler's install. zod and valibot refuse a non-finite literal or enum member, because their converters would write it as `null`. Two gaps remain: a non-finite bound inside a valibot pipe, and any non-finite value that arktype converts. Those are written as `null`, and the tests pin them until a guard exists.
+
+**The previous output of a failing source.** A run either writes a source's JSON Schema file (`<base>.json`, or `<base>.schema.json` for a `*.schema.ts` source) or leaves no document for that source. When a schema module produces no document, its previous output is deleted, and the CLI prints `tskm: removed <file>: …` on stdout. This covers a source with an error and a source whose exports are all excluded from `schemaSources`. A source with no schema exports is never touched, so a hand-written `.json` beside it survives. When the module itself does not load (a syntax error, a throw at import, a timeout), tskm cannot tell whether it has schemas. It keeps the previous output and prints a `may be out of date` warning, and that run's exit code does not change. `tskm watch` does not run the JSON Schema emitter. The rule lives in `generateJsonSchema()`, which returns `removed`.
 
 **Migrating from 0.4.x.** These changes are breaking for `@tskm/compiler`:
 
 - A file with a `bigint`, `date`, `undefined`, `check`, or output-side `transform` now fails (exit 1, not written). To keep the previous output, list the types in `jsonSchema.approximate` or pass `--approximate`. For `transform` on a request body, `io: "input"` is usually the better choice.
+- A literal that is `NaN` or infinite, a picklist option that is one, and a numeric bound that is not finite now fail the file. List `nonfinite` to keep the previous output.
+- A zod, valibot, or arktype conversion failure now fails its file (exit 1). It used to print a warning, and the file was written without that export.
+- A failing schema module's previous output is deleted (the CLI prints a `removed` line). It used to stay on disk.
 - `fallback(T, v)` emits the inner `T`; it used to emit `{}`.
-- `io: "input"` applies to tskm schemas: `preprocess` is `{}`, and a transform keeps the pre-transform type. Before, `io` was ignored for tskm schemas.
+- `io: "input"` applies to tskm schemas: `preprocess` is `{}`, and a transform keeps the pre-transform type. Before, `io` was ignored for tskm schemas. It also applies to valibot schemas, which used to ignore it.
 - `preprocess` and `nullish` no longer print a warning, and `brand` / `readonly` no longer print one either, because their JSON output is exact.
-- `--out` no longer ignores `tskm.config.*`. The flag overrides `jsonSchema.outDir`, and the rest of the config still applies.
-- `generateJsonSchema()` and `schemaToJsonSchema()` return `errors`. A source with an error is not written. `schemaToJsonSchema()` still returns `warnings`.
+- `--out` no longer ignores `tskm.config.*`. The flag overrides `jsonSchema.outDir`, and the rest of the config still applies. A missing `outDir` is created (it used to crash the run).
+- `generateJsonSchema()` and `schemaToJsonSchema()` return `errors`. A source with an error is not written. `schemaToJsonSchema()` still returns `warnings`. `generateJsonSchema()` also returns `removed`.
 
 ### Standard JSON Schema on the schema
 
@@ -406,7 +416,7 @@ const User = withJsonSchema(object({ name: string() }))
 User["~standard"].jsonSchema.input({ target: "draft-07" })
 ```
 
-Supported targets are `draft-2020-12`, `draft-07`, and `openapi-3.0`. For schemas the `tskm json-schema` emitter represents, `output({ target: "draft-2020-12" })` matches its document, except for the `default` keywords below. `input` and `output` differ for `preprocess` (input is `{}`), for a JSON `default` on `optional` / `nullable` / `nullish` (the keyword is on the input), and for `fallback` (the keyword is on the output). The emitter does not write `default` keywords yet, so only those documents differ, not the types. `transform` output, `check`, `bigint`, `date`, and `undefined` throw when `input` or `output` is called, not when the schema is wrapped. The emitter refuses the same types by default, unless they are listed in `jsonSchema.approximate` (see [types it cannot express](#json-schema-types-it-cannot-express)). Vercel AI SDK's `tool({ inputSchema })` calls `jsonSchema.input({ target: "draft-07" })`, so pass the wrapped schema.
+Supported targets are `draft-2020-12`, `draft-07`, and `openapi-3.0`. For schemas the `tskm json-schema` emitter represents, `output({ target: "draft-2020-12" })` matches its document, except for the `default` keywords below. `input` and `output` differ for `preprocess` (input is `{}`), for a JSON `default` on `optional` / `nullable` / `nullish` (the keyword is on the input), and for `fallback` (the keyword is on the output). The emitter does not write `default` keywords yet, so only those documents differ, not the types. `transform` output, `check`, `bigint`, `date`, and `undefined` throw when `input` or `output` is called, not when the schema is wrapped, and so does a `NaN` or infinite literal, picklist option, or numeric bound, and a bound that is not a number. The emitter refuses the same values by default, unless they are listed in `jsonSchema.approximate` (see [types it cannot express](#json-schema-types-it-cannot-express)). `nonfinite` is the one name the emitter has beyond these, and `withJsonSchema` never approximates. Vercel AI SDK's `tool({ inputSchema })` calls `jsonSchema.input({ target: "draft-07" })`, so pass the wrapped schema.
 
 ## Standard Schema interop
 
@@ -541,7 +551,7 @@ See [`examples/standard-schema`](examples/standard-schema) for the end-to-end lo
 
 - **In-place mode** only recognizes *single-line* `export type T = Infer<typeof X>` markers, and trailing content on that line is dropped on first conversion. It is experimental and opt-in.
 
-- **JSON Schema** runs your schema module in an isolated subprocess. It assumes the module is side-effect-free and imports cleanly under the chosen runtime (`--exec`/`execPath`). A type JSON Schema can't express fails its file, unless it is listed in `jsonSchema.approximate` (see [types it cannot express](#json-schema-types-it-cannot-express)). A pipe item the emitter does not know fails the file too. `minValue`/`maxValue` map to `minimum`/`maximum` and are only meaningful on a number base (on a `date` base they emit numeric bounds that don't apply to the string schema). Recursive (`lazy`/`recursive`) schemas become `$ref`/`$defs`. `recursive()` roots are named after their exports (`Category`), while other hoisted cycles keep kind-derived names (`object`, `object_2`, and so on).
+- **JSON Schema** runs your schema module in an isolated subprocess. It assumes the module is side-effect-free and imports cleanly under the chosen runtime (`--exec`/`execPath`). A module that does not load is not converted, and the previous output is kept with a warning (see [the previous output](#json-schema-types-it-cannot-express)). A type JSON Schema can't express, or a non-finite number, fails its file, unless it is listed in `jsonSchema.approximate` (see [types it cannot express](#json-schema-types-it-cannot-express)). A pipe item the emitter does not know fails the file too. `minValue`/`maxValue` map to `minimum`/`maximum` and are only meaningful on a number base. A bound that is not a finite number (a `Date`, a bigint, a string) has no keyword form, so it fails the file. Recursive (`lazy`/`recursive`) schemas become `$ref`/`$defs`. `recursive()` roots are named after their exports (`Category`), while other hoisted cycles keep kind-derived names (`object`, `object_2`, and so on).
 
 - **`union`** emits a single schema-level issue on failure (no per-member aggregation yet). `discriminatedUnion` also emits a single schema-level issue (path-unscoped) whose `expected` names the discriminant and its tag set, since the tag alone selects the member; an unknown or missing tag fails there rather than per member.
 

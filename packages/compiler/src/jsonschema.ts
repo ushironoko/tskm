@@ -1,5 +1,5 @@
-import { globSync, writeFileSync } from "node:fs"
-import { basename, isAbsolute, join, resolve } from "node:path"
+import { existsSync, globSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import {
   type JsonSchemaApproximation,
   loadConfig,
@@ -25,9 +25,12 @@ import { resolveWorker, runWorker, type SchemaWorkerEnvelope } from "./worker-ha
  * Refinements that JSON Schema can express (min/max length, min/max value, integer,
  * multipleOf, email/url format, regex pattern, description metadata) are mapped, and
  * `lazy`/`recursive` become `$ref`/`$defs`. A type JSON Schema cannot express (`bigint`,
- * `date`, `undefined`, a `check` predicate, a `transform` output) is an error and its
- * file is not written. Each can be approximated only when it is listed in
- * `jsonSchema.approximate`. The error set matches `@tskm/core`'s `withJsonSchema`.
+ * `date`, `undefined`, a `check` predicate, a `transform` output, NaN or an infinity) is
+ * an error and its file is not written. Each can be approximated only when it is listed
+ * in `jsonSchema.approximate`. The error set matches `@tskm/core`'s `withJsonSchema`.
+ *
+ * A source that produces no document in a run loses its previous output file, so no
+ * consumer reads a document that no longer matches its source (see `generateJsonSchema`).
  */
 
 export type JsonSchema = { [key: string]: unknown }
@@ -65,17 +68,48 @@ interface WalkContext {
   readonly exportNames?: ReadonlyMap<object, string> | undefined
 }
 
-/** How each approximation reads in a warning and in the error that offers it. */
+/**
+ * How each approximation reads in a warning and in the error that offers it. `nonfinite`
+ * has three positions (a literal, a picklist option, a numeric keyword), so its caller
+ * passes the effect for the position.
+ */
 const APPROXIMATION_EFFECT: Record<JsonSchemaApproximation, string> = {
   bigint: "as a string",
   date: "as a date-time string",
   undefined: "as an unconstrained schema",
   check: "without the predicate",
   transform: "as the schema before the transform",
+  nonfinite: "as a schema no JSON value matches",
 }
 
 function isObject(value: unknown): value is SchemaLike {
   return value !== null && typeof value === "object"
+}
+
+/** NaN and the infinities: numbers JSON cannot carry (`JSON.stringify` writes them as `null`). */
+function isNonFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && !Number.isFinite(value)
+}
+
+/** The JSON values a literal or a picklist option may hold: string, boolean, null, finite number. */
+function isJsonScalar(value: unknown): boolean {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
+  )
+}
+
+/** A value's type for a diagnostic: `bigint`, `undefined`, `Date`, and so on. */
+function valueKind(value: unknown): string {
+  if (value === null) {
+    return "null"
+  }
+  if (typeof value === "object") {
+    return Object.prototype.toString.call(value).slice("[object ".length, -1)
+  }
+  return typeof value
 }
 
 export interface SchemaToJsonOptions {
@@ -148,6 +182,14 @@ function malformed(ctx: WalkContext, type: string, reason: string): JsonSchema {
   return {}
 }
 
+/** Per-use wording for an approximation (see `APPROXIMATION_EFFECT` for the default). */
+interface ApproximationNote {
+  /** How the stand-in reads, as in "approximated nonfinite by dropping the option NaN". */
+  readonly effect?: string
+  /** Extra guidance appended to the error that offers the approximation. */
+  readonly hint?: string
+}
+
 /**
  * Handles a node JSON Schema cannot express. When the caller listed `name` in
  * `approximate`, the approximation is applied and noted as a warning; otherwise an
@@ -158,14 +200,15 @@ function approximates(
   ctx: WalkContext,
   name: JsonSchemaApproximation,
   detail: string,
-  hint = "",
+  note: ApproximationNote = {},
 ): boolean {
+  const effect = note.effect ?? APPROXIMATION_EFFECT[name]
   if (ctx.approximate.has(name)) {
-    ctx.warnings.push(`${here(ctx)}: approximated ${name} ${APPROXIMATION_EFFECT[name]}.`)
+    ctx.warnings.push(`${here(ctx)}: approximated ${name} ${effect}.`)
     return true
   }
   ctx.errors.push(
-    `${here(ctx)}: ${detail}. Add "${name}" to jsonSchema.approximate (CLI: --approximate ${name}) to emit it ${APPROXIMATION_EFFECT[name]} instead.${hint}`,
+    `${here(ctx)}: ${detail}. Add "${name}" to jsonSchema.approximate (CLI: --approximate ${name}) to emit it ${effect} instead.${note.hint ?? ""}`,
   )
   return false
 }
@@ -204,6 +247,84 @@ function walk(schema: unknown, ctx: WalkContext): JsonSchema {
         : walkSchema(t, ctx)
     },
   })
+}
+
+/**
+ * `literal(value)`. A non-finite number has no JSON value: `JSON.stringify` writes it as
+ * `null`, which would accept `null` instead. Approximated as a schema no JSON value matches,
+ * which is what `never` emits.
+ */
+function literalSchema(value: unknown, ctx: WalkContext): JsonSchema {
+  if (isJsonScalar(value)) {
+    return { const: value }
+  }
+  if (isNonFiniteNumber(value)) {
+    const detail = `cannot convert schema type "literal" to JSON Schema: ${String(value)} has no JSON representation`
+    return approximates(ctx, "nonfinite", detail) ? { not: {} } : {}
+  }
+  return malformed(ctx, "literal", `a ${valueKind(value)} value has no JSON representation`)
+}
+
+/**
+ * `picklist(options)`. A non-finite option is dropped from the `enum` when `nonfinite` is
+ * listed, since no JSON value equals it. Any other non-JSON option is an error.
+ */
+function picklistSchema(options: unknown, ctx: WalkContext): JsonSchema {
+  if (!Array.isArray(options)) {
+    return malformed(ctx, "picklist", "options is not an array")
+  }
+  const members: unknown[] = []
+  for (const option of options) {
+    if (isJsonScalar(option)) {
+      members.push(option)
+    } else if (isNonFiniteNumber(option)) {
+      const text = String(option)
+      approximates(
+        ctx,
+        "nonfinite",
+        `cannot convert schema type "picklist" to JSON Schema: option ${text} has no JSON representation`,
+        { effect: `by dropping the option ${text}` },
+      )
+    } else {
+      reportError(
+        ctx,
+        `cannot convert schema type "picklist" to JSON Schema: a ${valueKind(option)} option has no JSON representation`,
+      )
+    }
+  }
+  return { enum: members }
+}
+
+/**
+ * A pipe requirement that becomes a numeric keyword (`minimum`, `multipleOf`, `minLength`,
+ * ...). It must be a finite JS number. A non-finite number is approximated by omitting the
+ * keyword, and returns `undefined`. Any other value (a bigint, a Date, a string) has no
+ * keyword form, so it is always an error. `keyword` names the keyword(s) in the messages.
+ */
+function numericRequirement(
+  ctx: WalkContext,
+  item: SchemaLike,
+  requirement: unknown,
+  keyword: string,
+): number | undefined {
+  if (typeof requirement === "number" && Number.isFinite(requirement)) {
+    return requirement
+  }
+  const type = String(item.type)
+  if (isNonFiniteNumber(requirement)) {
+    approximates(
+      ctx,
+      "nonfinite",
+      `cannot convert pipe item "${type}" to JSON Schema: ${String(requirement)} has no JSON representation`,
+      { effect: `by omitting ${keyword}` },
+    )
+    return undefined
+  }
+  reportError(
+    ctx,
+    `cannot convert pipe item "${type}" to JSON Schema: its requirement is of type ${valueKind(requirement)}, not a finite number, so it has no ${keyword} keyword`,
+  )
+  return undefined
 }
 
 function walkSchema(schema: SchemaLike, ctx: WalkContext): JsonSchema {
@@ -246,14 +367,9 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): JsonSchema {
     case "never":
       return { not: {} }
     case "literal":
-      return { const: schema.literal }
-    case "picklist": {
-      const options = schema.options
-      if (!Array.isArray(options)) {
-        return malformed(ctx, "picklist", "options is not an array")
-      }
-      return { enum: options }
-    }
+      return literalSchema(schema.literal, ctx)
+    case "picklist":
+      return picklistSchema(schema.options, ctx)
     case "object":
       return walkObject(schema, ctx)
     case "array": {
@@ -431,6 +547,13 @@ function walkPipe(schema: SchemaLike & { pipe: unknown[] }, ctx: WalkContext): J
   return out
 }
 
+/** Sets a numeric keyword unless its requirement was omitted (see `numericRequirement`). */
+function assignNumber(out: JsonSchema, key: string, value: number | undefined): void {
+  if (value !== undefined) {
+    out[key] = value
+  }
+}
+
 /** Folds one pipe item's constraint onto the (mutable) accumulated JSON Schema. */
 function applyItem(
   item: SchemaLike,
@@ -440,31 +563,35 @@ function applyItem(
 ): void {
   const type = item.type
   const requirement = item.requirement
+  const minKey = `min${lengthKeyword}`
+  const maxKey = `max${lengthKeyword}`
   switch (type) {
     case "min_length":
-      out[`min${lengthKeyword}`] = requirement
+      assignNumber(out, minKey, numericRequirement(ctx, item, requirement, minKey))
       return
     case "max_length":
-      out[`max${lengthKeyword}`] = requirement
+      assignNumber(out, maxKey, numericRequirement(ctx, item, requirement, maxKey))
       return
-    case "length":
-      out[`min${lengthKeyword}`] = requirement
-      out[`max${lengthKeyword}`] = requirement
+    case "length": {
+      const value = numericRequirement(ctx, item, requirement, `${minKey} and ${maxKey}`)
+      assignNumber(out, minKey, value)
+      assignNumber(out, maxKey, value)
       return
+    }
     case "non_empty":
-      out[`min${lengthKeyword}`] = 1
+      out[minKey] = 1
       return
     case "min_value":
-      out.minimum = requirement
+      assignNumber(out, "minimum", numericRequirement(ctx, item, requirement, "minimum"))
       return
     case "max_value":
-      out.maximum = requirement
+      assignNumber(out, "maximum", numericRequirement(ctx, item, requirement, "maximum"))
       return
     case "integer":
       out.type = "integer"
       return
     case "multiple_of":
-      out.multipleOf = requirement
+      assignNumber(out, "multipleOf", numericRequirement(ctx, item, requirement, "multipleOf"))
       return
     case "email":
       out.format = "email"
@@ -506,7 +633,7 @@ function applyItem(
         ctx,
         "transform",
         'cannot convert pipe item "transform" to JSON Schema output: the transform\'s output type is not reified at runtime',
-        ' Or set jsonSchema.io to "input", which needs no approximation.',
+        { hint: ' Or set jsonSchema.io to "input", which needs no approximation.' },
       )
       return
     default:
@@ -544,13 +671,20 @@ export interface JsonSchemaFile {
 
 export interface JsonSchemaResult {
   readonly files: ReadonlyArray<JsonSchemaFile>
-  /** Every diagnostic line in source order: approximation notes and errors. */
+  /** Every diagnostic line in source order: approximation notes, warnings, and errors. */
   readonly diagnostics: ReadonlyArray<string>
   /**
-   * The error lines: types that cannot be represented and were not approximated. A
-   * source with any error is not written. Non-empty means the run failed.
+   * The error lines: types that cannot be represented and were not approximated, and
+   * Standard Schema conversions that failed. A source with any error is not written.
+   * Non-empty means the run failed.
    */
   readonly errors: ReadonlyArray<string>
+  /**
+   * Output files this run deleted, because their source is a schema module that produced
+   * no document (its schemas failed, or none were emitted). Each path is the file tskm
+   * would have written for that source.
+   */
+  readonly removed: ReadonlyArray<string>
 }
 
 export function jsonSchemaOutputPath(sourceFileAbs: string, config: ResolvedTskmConfig): string {
@@ -586,9 +720,10 @@ function collectSources(config: ResolvedTskmConfig): string[] {
 
 /**
  * The per-export envelope entry — the single declaration both ends of the
- * worker protocol import (the structural worker's pattern). A `skipped` entry
- * carries only its reason: its warnings surface, but nothing enters the
- * document for it. An entry with `errors` makes its whole source file unwritten.
+ * worker protocol import (the structural worker's pattern). An entry with `errors`
+ * makes its whole source file unwritten. A `skipped` entry (an export whose vendor is
+ * outside the allow-list, see `excludedVendor`) is left out of the document, and its
+ * diagnostic is aggregated per vendor.
  */
 export interface JsonWorkerEntry {
   readonly name: string
@@ -649,8 +784,13 @@ export async function generateJsonSchema(
   const files: JsonSchemaFile[] = []
   const diagnostics: string[] = []
   const errors: string[] = []
+  const removed: string[] = []
+  // Outputs this run has written. An `outDir` can flatten two sources to one output path, and
+  // a failing source must not delete a file that another source just wrote.
+  const written = new Set<string>()
 
   for (const sourceAbs of sources) {
+    const output = jsonSchemaOutputPath(sourceAbs, config)
     // Each source imports the user's module in an isolated, SIGKILL-guarded child;
     // per-file serialization is acceptable for this experimental path.
     const result = runWorker<SchemaWorkerEnvelope<JsonWorkerEntry>>(workerAbs, sourceAbs, {
@@ -662,6 +802,14 @@ export async function generateJsonSchema(
     })
     if (result.diagnostic !== undefined) {
       diagnostics.push(result.diagnostic)
+      // The module did not load, so nothing is known about its schemas. The previous output is
+      // kept (tskm cannot show that it wrote that file), and the run's exit code does not change.
+      // The warning says so instead.
+      if (!written.has(output) && existsSync(output)) {
+        diagnostics.push(
+          `tskm: ${output}: may be out of date: ${sourceAbs} could not be loaded, so its previous output was kept.`,
+        )
+      }
       continue
     }
 
@@ -693,24 +841,57 @@ export async function generateJsonSchema(
     }
     diagnostics.push(...sourceErrors)
     errors.push(...sourceErrors)
-    // Fail closed: a file with any schema that cannot be represented is not written at
-    // all, so no consumer reads a document that silently lacks or approximates a type.
-    if (sourceErrors.length > 0) {
-      continue
-    }
     const emittable = schemas.filter((entry) => !entry.skipped)
-    if (emittable.length === 0) {
+    // Fail closed: a file with any schema that cannot be represented is not written at all, so
+    // no consumer reads a document that silently lacks or approximates a type. The same holds
+    // when no export is emitted at all. The previous output then no longer matches its source,
+    // so it is removed. A file with no schema exports is not a schema module: it is never touched.
+    if (sourceErrors.length > 0 || emittable.length === 0) {
+      if (schemas.length > 0) {
+        removeStaleOutput(output, written, removed, errors)
+      }
       continue
     }
 
-    const output = jsonSchemaOutputPath(sourceAbs, config)
     const document: Record<string, JsonSchema> = {}
     for (const entry of emittable) {
       document[entry.name] = entry.schema
     }
-    writeFileSync(output, `${JSON.stringify(document, null, 2)}\n`)
+    try {
+      // `outDir` may not exist yet; a failed write is reported, not thrown, so the other sources still run.
+      mkdirSync(dirname(output), { recursive: true })
+      writeFileSync(output, `${JSON.stringify(document, null, 2)}\n`)
+    } catch (error) {
+      errors.push(`tskm: ${output}: could not write the JSON Schema: ${String(error)}.`)
+      // The previous document no longer matches its source either.
+      removeStaleOutput(output, written, removed, errors)
+      continue
+    }
+    written.add(output)
     files.push({ source: sourceAbs, output, schemaNames: emittable.map((s) => s.name) })
   }
 
-  return { files, diagnostics, errors }
+  return { files, diagnostics, errors, removed }
+}
+
+/**
+ * Deletes the previous output of a schema module that produced no document this run. Only a
+ * regular file is removed. A failed delete is an error, so the run fails instead of leaving
+ * the stale file without notice.
+ */
+function removeStaleOutput(
+  output: string,
+  written: ReadonlySet<string>,
+  removed: string[],
+  errors: string[],
+): void {
+  if (written.has(output) || statSync(output, { throwIfNoEntry: false })?.isFile() !== true) {
+    return
+  }
+  try {
+    rmSync(output)
+    removed.push(output)
+  } catch (error) {
+    errors.push(`tskm: ${output}: could not delete the previous output: ${String(error)}.`)
+  }
 }

@@ -1,3 +1,4 @@
+import { createRequire } from "node:module"
 import type { JsonSchemaApproximation } from "./config.ts"
 import { type JsonSchema, schemaToJsonSchema } from "./jsonschema.ts"
 import { isTskmWalkable, readStandard } from "./worker-harness.ts"
@@ -9,24 +10,30 @@ import { isTskmWalkable, readStandard } from "./worker-harness.ts"
  * per-provider errors, never a provider swap inside the walker):
  *
  *   1. tskm-walkable        -> the native duck-typed walker (jsonschema.ts)
- *   2. spec 1.1 `~standard.jsonSchema` (arktype) -> its io-specific method
+ *   2. spec 1.1 `~standard.jsonSchema` (zod 4.4+, arktype) -> its io-specific method
  *   3. vendor "zod"         -> `z.toJSONSchema` (zod core, user's node_modules)
  *   4. vendor "valibot"     -> `@valibot/to-json-schema` (extra package)
- *   5. anything else        -> skipped with a reason
+ *   5. anything else        -> rejected: the vendor provides no converter
  *
- * A vendor conversion failure (missing package, converter rejection) collapses to
- * a `skipped` outcome: one schema's failure never aborts the file, and nothing
- * vacuous is written for it. A tskm schema the walker cannot represent is `rejected`
- * instead, which fails the file (see `jsonSchema.approximate` for the opt-in).
- * Runs inside the isolated schema worker, so the dynamic imports resolve from the
- * USER's project.
+ * Every conversion failure is `rejected`: a missing converter package, a converter that
+ * throws, or a non-finite literal, enum member, or bound that the converter would write as
+ * `null`. The parent fails the whole file, as it does for a tskm type the walker cannot
+ * express, so nothing is written for it. A vendor schema has no approximation. A vendor
+ * outside the allow-list (see `schemaSources`) is `excluded` instead: that is configuration,
+ * and the document says so.
+ *
+ * Runs inside the isolated schema worker. The converter packages resolve from the schema
+ * module's own directory first (see `importConverter`).
  */
 
 /** The draft every converter is asked for (the tskm walker's native output). */
 export const JSON_SCHEMA_TARGET = "draft-2020-12"
 
+const VENDOR_HINT =
+  "Vendor schemas have no approximation: change the schema, or leave the vendor out of schemaSources."
+
 export interface AdapterContext {
-  /** Which side to render (the tskm walker and zod honor it; others may not distinguish). */
+  /** Which side to render (the tskm walker, zod, arktype, and valibot honor it). */
   readonly io: "input" | "output"
   /** Vendors enabled by config (`schemaSources`-derived); tskm is always present. */
   readonly allowedVendors: ReadonlySet<string>
@@ -37,9 +44,14 @@ export interface AdapterContext {
   /** Types the tskm walker may approximate instead of failing (`jsonSchema.approximate`). */
   readonly approximate?: ReadonlyArray<JsonSchemaApproximation>
   /**
-   * DI seam for the converter imports (defaults to the real dynamic `import`).
-   * Exists so the missing-package branches are testable with the packages
-   * installed — never set in production paths.
+   * The absolute path of the schema module. Converter packages resolve from its directory
+   * first, as the module's own imports do, so the project's installed copy is used.
+   */
+  readonly importFrom?: string
+  /**
+   * DI seam for the converter imports (defaults to `importConverter`). Exists so the
+   * missing-package branches are testable with the packages installed — never set in
+   * production paths.
    */
   readonly importModule?: (specifier: string) => Promise<unknown>
 }
@@ -50,11 +62,9 @@ export type AdapterOutcome =
       readonly schema: JsonSchema
       readonly warnings: ReadonlyArray<string>
     }
-  /** Convertible in principle, but this schema failed — surface the reason. */
-  | { readonly kind: "skipped"; readonly reason: string }
   /**
-   * A tskm schema with types JSON Schema cannot express and that were not approximated.
-   * Unlike `skipped`, the parent fails the whole file: nothing is written for it.
+   * The schema cannot be converted: a tskm type the walker cannot express and that was not
+   * approximated, or a Standard Schema whose converter failed. The parent fails the whole file.
    */
   | { readonly kind: "rejected"; readonly errors: ReadonlyArray<string> }
   /**
@@ -68,14 +78,100 @@ export type AdapterOutcome =
 
 /** The spec 1.1 converter surface: io-keyed methods taking a target option. */
 interface NativeJsonSchemaConverter {
-  readonly input?: (options: { target: string }) => unknown
-  readonly output?: (options: { target: string }) => unknown
+  readonly input?: (options: Record<string, unknown>) => unknown
+  readonly output?: (options: Record<string, unknown>) => unknown
+}
+
+/** The parts of the zod and valibot modules this adapter calls. */
+interface ZodModule {
+  readonly z?: { readonly toJSONSchema?: unknown }
+}
+interface ValibotModule {
+  readonly toJsonSchema?: unknown
+}
+
+/**
+ * Imports a converter package. The project's copy comes first: it is resolved from the schema
+ * module's directory, the way the module's own imports resolve. The compiler's own resolution is
+ * the fallback, which covers a converter installed next to the compiler (the monorepo layout).
+ * A package that is not installed in the project fails here, and the caller reports it.
+ */
+function importConverter(specifier: string, from: string | undefined): Promise<unknown> {
+  if (from !== undefined) {
+    try {
+      return Promise.resolve(createRequire(from)(specifier))
+    } catch {
+      // Not installed for this project: fall through to the compiler's own resolution.
+    }
+  }
+  return import(specifier)
+}
+
+/** NaN and the infinities: converters write them as `null`, which is a different value. */
+function isNonFinite(value: unknown): boolean {
+  return typeof value === "number" && !Number.isFinite(value)
+}
+
+interface ZodDefLike {
+  readonly type?: unknown
+  readonly values?: unknown
+  readonly entries?: unknown
+  readonly checks?: unknown
+}
+
+/**
+ * zod's `override` hook, which zod calls for every node it converts (through `libraryOptions`
+ * on the native converter, and as an option on `z.toJSONSchema`). zod writes a non-finite
+ * literal value, enum member, or check bound as `null`, so the node is refused. Reads zod's
+ * `_zod.def`, the structure zod's own converter reads.
+ */
+function zodNonFiniteGuard({ zodSchema }: { zodSchema: unknown }): undefined {
+  const def = (zodSchema as { _zod?: { def?: ZodDefLike } } | undefined)?._zod?.def
+  if (def === undefined) {
+    return undefined
+  }
+  const literals = def.type === "literal" && Array.isArray(def.values) ? def.values : []
+  const members =
+    def.type === "enum" && typeof def.entries === "object" && def.entries !== null
+      ? Object.values(def.entries)
+      : []
+  const bounds = Array.isArray(def.checks)
+    ? def.checks.flatMap((check: { _zod?: { def?: object } } | undefined) =>
+        Object.values(check?._zod?.def ?? {}),
+      )
+    : []
+  const offending = [...literals, ...members, ...bounds].find(isNonFinite)
+  if (offending !== undefined) {
+    throw new Error(`${String(offending)} has no JSON representation`)
+  }
+  return undefined
+}
+
+/**
+ * `@valibot/to-json-schema`'s `overrideSchema` hook, called for each schema it converts. It
+ * refuses a literal or a picklist option that is non-finite, which valibot would write as `null`.
+ * (valibot's pipe actions, such as `minValue(Infinity)`, are not passed to this hook.)
+ */
+function valibotNonFiniteGuard({ valibotSchema }: { valibotSchema: unknown }): undefined {
+  const schema = (valibotSchema ?? {}) as { type?: unknown; literal?: unknown; options?: unknown }
+  const values =
+    schema.type === "literal"
+      ? [schema.literal]
+      : schema.type === "picklist" && Array.isArray(schema.options)
+        ? schema.options
+        : []
+  const offending = values.find(isNonFinite)
+  if (offending !== undefined) {
+    throw new Error(`${String(offending)} has no JSON representation`)
+  }
+  return undefined
 }
 
 export async function schemaToJsonSchemaViaAdapter(
   value: unknown,
   ctx: AdapterContext,
 ): Promise<AdapterOutcome> {
+  const root = ctx.rootName ?? "schema"
   // tskm first: walkable schemas (vendor "tskm" or the legacy kind form) use
   // the native walker, warnings and all.
   if (isTskmWalkable(value)) {
@@ -93,74 +189,98 @@ export async function schemaToJsonSchemaViaAdapter(
 
   const std = readStandard(value)
   if (!std) {
-    return { kind: "skipped", reason: "not a Standard Schema value" }
+    return {
+      kind: "rejected",
+      errors: [`${root}: cannot convert the value to JSON Schema: it is not a Standard Schema.`],
+    }
   }
   if (!ctx.allowedVendors.has(std.vendor)) {
     return { kind: "excluded", vendor: std.vendor }
   }
 
-  // Spec 1.1 native converter (`~standard.jsonSchema.output({ target })`,
-  // arktype ships it): the vendor's own conversion is the most faithful.
+  const reject = (reason: string, hint = VENDOR_HINT): AdapterOutcome => ({
+    kind: "rejected",
+    errors: [`${root}: cannot convert ${std.vendor} schema to JSON Schema: ${reason}. ${hint}`],
+  })
+
+  // Spec 1.1 native converter (`~standard.jsonSchema.output({ target })`, zod 4.4+
+  // and arktype ship it): the vendor's own conversion is the most faithful.
   const marker = (value as Record<string, unknown>)["~standard"] as Record<string, unknown>
   const native = marker.jsonSchema as NativeJsonSchemaConverter | undefined
   const method = native?.[ctx.io]
   if (typeof method === "function") {
     try {
-      const schema = method.call(native, { target: JSON_SCHEMA_TARGET }) as JsonSchema
+      const options: Record<string, unknown> = { target: JSON_SCHEMA_TARGET }
+      if (std.vendor === "zod") {
+        options.libraryOptions = { override: zodNonFiniteGuard }
+      }
+      const schema = method.call(native, options) as JsonSchema
       return { kind: "converted", schema, warnings: [] }
     } catch (err) {
-      return {
-        kind: "skipped",
-        reason: `the ${std.vendor} JSON Schema converter rejected the schema (${String(err)})`,
-      }
+      return reject(`the ${std.vendor} JSON Schema converter rejected the schema (${String(err)})`)
     }
   }
 
-  const importModule = ctx.importModule ?? ((specifier: string) => import(specifier))
+  const importModule =
+    ctx.importModule ?? ((specifier: string) => importConverter(specifier, ctx.importFrom))
 
   if (std.vendor === "zod") {
-    let toJSONSchema: typeof import("zod")["z"]["toJSONSchema"]
+    let zod: ZodModule
     try {
-      ;({
-        z: { toJSONSchema },
-      } = (await importModule("zod")) as typeof import("zod"))
+      zod = (await importModule("zod")) as ZodModule
     } catch {
-      return { kind: "skipped", reason: 'could not import "zod" from the project' }
+      return reject(
+        'could not import "zod" from the project',
+        "Install zod in the project, or leave the vendor out of schemaSources.",
+      )
+    }
+    const toJSONSchema = zod.z?.toJSONSchema
+    if (typeof toJSONSchema !== "function") {
+      return reject(
+        'the installed "zod" has no z.toJSONSchema (zod 4 provides it)',
+        "Upgrade to zod 4, or leave the vendor out of schemaSources.",
+      )
     }
     try {
-      const schema = toJSONSchema(value as Parameters<typeof toJSONSchema>[0], {
+      const schema = toJSONSchema(value, {
         io: ctx.io,
         unrepresentable: "throw",
+        override: zodNonFiniteGuard,
       }) as JsonSchema
       return { kind: "converted", schema, warnings: [] }
     } catch (err) {
-      return { kind: "skipped", reason: `z.toJSONSchema rejected the schema (${String(err)})` }
+      return reject(`z.toJSONSchema rejected the schema (${String(err)})`)
     }
   }
 
   if (std.vendor === "valibot") {
-    let toJsonSchema: typeof import("@valibot/to-json-schema")["toJsonSchema"]
+    let converter: ValibotModule
     try {
-      ;({ toJsonSchema } = (await importModule(
-        "@valibot/to-json-schema",
-      )) as typeof import("@valibot/to-json-schema"))
+      converter = (await importModule("@valibot/to-json-schema")) as ValibotModule
     } catch {
-      return {
-        kind: "skipped",
-        reason:
-          'converting valibot schemas requires "@valibot/to-json-schema" in your project (`bun add -D @valibot/to-json-schema`)',
-      }
+      return reject(
+        '"@valibot/to-json-schema" is not installed in the project',
+        "Install it (`bun add -D @valibot/to-json-schema`), or leave the vendor out of schemaSources.",
+      )
+    }
+    const toJsonSchema = converter.toJsonSchema
+    if (typeof toJsonSchema !== "function") {
+      return reject('"@valibot/to-json-schema" has no toJsonSchema export')
     }
     try {
-      const schema = toJsonSchema(value as Parameters<typeof toJsonSchema>[0]) as JsonSchema
+      // `typeMode` is left at valibot's default for the output side: valibot then refuses a
+      // pipeline that has a transform, which is the fail-closed behavior. The input side stops
+      // before the first transform, so it is exact and needs no default.
+      const schema = toJsonSchema(value, {
+        ...(ctx.io === "input" ? { typeMode: "input" } : {}),
+        errorMode: "throw",
+        overrideSchema: valibotNonFiniteGuard,
+      }) as JsonSchema
       return { kind: "converted", schema, warnings: [] }
     } catch (err) {
-      return {
-        kind: "skipped",
-        reason: `@valibot/to-json-schema rejected the schema (${String(err)})`,
-      }
+      return reject(`@valibot/to-json-schema rejected the schema (${String(err)})`)
     }
   }
 
-  return { kind: "skipped", reason: `vendor "${std.vendor}" provides no JSON Schema converter` }
+  return reject(`vendor "${std.vendor}" provides no JSON Schema converter`)
 }

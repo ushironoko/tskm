@@ -1,0 +1,33 @@
+{
+  "name": "@tskm/example-integrations",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test ./*/*.e2e.ts",
+    "typecheck": "bun ../../scripts/tsc.ts --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@conform-to/react": "1.21.3",
+    "@hono/standard-validator": "0.4.1",
+    "@hookform/resolvers": "7.0.1",
+    "@orpc/server": "1.16.1",
+    "@tanstack/form-core": "1.33.5",
+    "@tanstack/react-router": "1.170.46",
+    "@trpc/server": "11.22.1",
+    "@tskm/core": "workspace:*",
+    "ai": "7.0.159",
+    "elysia": "1.4.30",
+    "h3": "2.0.8",
+    "hono": "4.13.16",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-hook-form": "7.91.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "happy-dom": "21.0.4"
+  }
+}

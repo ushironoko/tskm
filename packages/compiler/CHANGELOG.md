@@ -1,5 +1,54 @@
 # @tskm/compiler
 
+## 0.5.0
+
+### Minor Changes
+
+- b450d8f: `tskm json-schema` fails closed on Standard Schema conversion failures, stale output, and non-finite numbers.
+
+  - A zod, valibot, or arktype schema whose converter fails now fails its file, as a tskm type the walker cannot express does. Nothing is written for the file, the error names the export and the vendor, and the command exits with code 1. It used to print a warning, and the file was written without that export. Vendor schemas have no approximation.
+  - When a schema module produces no document in a run, its previous output is deleted, and the CLI prints a `removed` line. It used to stay on disk for downstream tools to read. A source with no schema exports is never touched. A module that does not load keeps its previous output, with a `may be out of date` warning, and the exit code does not change. `generateJsonSchema()` returns `removed`.
+  - `NaN`, `Infinity`, and `-Infinity` in a `literal`, a picklist option, or a numeric bound (`minValue`, `maxValue`, `multipleOf`, the length checks) fail the file. They used to be written as `null`. The new `nonfinite` name in `jsonSchema.approximate` (or `--approximate nonfinite`) approximates them: a literal becomes a schema no JSON value matches, an option is dropped, and a bound is omitted. A bigint, `Date`, or string used as a bound fails the file, even with an approximation listed.
+  - zod and valibot refuse a non-finite literal and enum member through their own converter hooks. Valibot schemas now honor `jsonSchema.io: "input"`. A missing `outDir` is created instead of crashing the run.
+
+- 10a3f9b: `tskm json-schema` fails closed on types JSON Schema cannot express, and approximates them only when they are listed.
+
+  `bigint`, `date`, `undefined`, a `check` predicate, and a `transform`'s output used to be emitted as approximations with a warning. They now fail their file: nothing is written for it, the error names the export, the path inside it, the type, and the option that accepts it, and the command exits with code 1. The set matches what `@tskm/core`'s `withJsonSchema` throws for.
+
+  To keep the previous output, list the types: `jsonSchema.approximate: ["bigint", "date", "undefined", "check", "transform"]` in `tskm.config.ts`, or `--approximate bigint,date` on the CLI. Each listed type emits the same stand-in as before and notes each use as a warning. Unknown names are errors, and a boolean is not accepted. For a `transform` on a request body, `jsonSchema.io: "input"` describes the input side exactly.
+
+  Other changes in this release:
+
+  - `fallback(T, v)` emits the inner `T`. It used to emit `{}`.
+  - `jsonSchema.io: "input"` now applies to tskm schemas: `preprocess` is `{}`, and a transform keeps the pre-transform type. It was ignored before.
+  - `preprocess`, `nullish`, `brand`, and `readonly` no longer print warnings, because their JSON output is exact.
+  - `--out` no longer drops the rest of `tskm.config.*`. The flag overrides `jsonSchema.outDir`.
+  - `generateJsonSchema()` returns `errors`, and a source with an error is not written. `schemaToJsonSchema()` returns `errors` as well as `warnings`.
+
+  The README section "JSON Schema: types it cannot express" lists the migration steps.
+
+- 6e76ac7: Pin `@typescript/native-preview` to exactly `7.0.0-dev.20260707.2` and bump `@corsa-bind/napi` to `1.15.0`.
+
+  The peerDependency was an open lower bound (`>=7.0.0-dev.20260601.1`), which allowed installs to resolve `7.0.0-dev.20260604.1` and later builds where `openProject` fails. The peer is now an exact version so those builds cannot be selected. `@corsa-bind/napi` moves from `0.35.0` to `1.15.0`.
+
+  Exact peer makes npm ERESOLVE for installs still on `7.0.0-dev.20260601.1` through `7.0.0-dev.20260603.1`, so this is a minor bump in 0.x. Upgrade `@typescript/native-preview` to `7.0.0-dev.20260707.2`.
+
+- 1b60eb8: Add `preprocess` / `preprocessAsync`.
+
+  `preprocess(fn, schema)` maps an untrusted value before the inner schema validates it. The caller writes the conversion. The input type is `unknown`. The output type stays the inner schema's output (`PreprocessSchema<TWrapped>`). A throw or rejection becomes a `type: "preprocess"` issue and the inner schema does not run. Non-`Error` throws use `String(error)`.
+
+  The compiler's structural TypeScript walker and JSON Schema walker both unwrap `type: "preprocess"` to the inner output shape. JSON Schema warns that the emitted schema is the output shape and that the input accepts any value.
+
+- 0483e8f: Drive the checker through TypeScript's `typescript/sync` API instead of `@corsa-bind/napi` and the pinned `@typescript/native-preview` binary.
+
+  Query documents are an in-memory file-system overlay, so a generate run no longer writes `*.tskm-query.ts`. `@tskm/compiler` now peer-depends on `typescript` `>=7.1.0-beta <8`. The 7.0 `typescript/unstable/sync` surface is not adapted: its snapshot and virtual filesystem are a different client, not an import-path change. `node` stays `>=22`.
+
+### Patch Changes
+
+- 0483e8f: Bun on macOS: the checker's sync channel finds its pipes through `/dev/fd` when `/proc/self/fd` does not exist, instead of throwing. Linux is unchanged.
+- 29bb6d5: Under Bun, the checker's sync channel now stops the checker and throws `tskm: could not identify the checker's stdio pipes` unless its spawn opens exactly two new pipes or sockets. Taking the two lowest of three or more could hand stdin or stdout the wrong descriptor.
+- d577165: Fix `watch()` running one extra generate on Node after a source was written just before `watch()` started, when another file watcher was open on the same directory. Watch now decides whether a source changed by comparing its content with the content its output was generated from, not by the file-system event. A rewrite with identical bytes no longer regenerates (on Node and Bun), a real edit still does, and the compiler's own sidecar and inplace writes still don't trigger a pass.
+
 ## 0.4.1
 
 ### Patch Changes

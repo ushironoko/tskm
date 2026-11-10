@@ -9,6 +9,7 @@ const sourceB = `${root}/src/b.ts`
 const ctx: WatchPlanContext = {
   tsconfigPath: tsconfig,
   knownSources: new Set([sourceA, sourceB]),
+  isCurrent: () => false,
 }
 
 function change(path: string): WatchEvent {
@@ -62,5 +63,48 @@ describe("planWatchActions — the gate", () => {
   it("discards accumulated source changes once any event forces a full rebuild", () => {
     const plan = planWatchActions([change(sourceA), rename(`${root}/src/c.ts`)], ctx)
     expect(plan).toEqual({ full: true, files: [] })
+  })
+})
+
+describe("planWatchActions — content over events", () => {
+  // Stands in for session.isCurrent: these sources' outputs match their content.
+  const current = (...paths: string[]): WatchPlanContext => ({
+    ...ctx,
+    isCurrent: (path) => paths.includes(path),
+  })
+
+  it("drops a change to a known source whose output is current", () => {
+    expect(planWatchActions([change(sourceA)], current(sourceA))).toEqual({
+      full: false,
+      files: [],
+    })
+  })
+
+  it("still regenerates a known source whose output is not current", () => {
+    expect(planWatchActions([change(sourceA)], current(sourceB))).toEqual({
+      full: false,
+      files: [sourceA],
+    })
+  })
+
+  it("drops a rename of a known source whose output is current", () => {
+    expect(planWatchActions([rename(sourceA)], current(sourceA))).toEqual({
+      full: false,
+      files: [],
+    })
+  })
+
+  it("keeps a rename of a known source whose output is not current a full rebuild", () => {
+    expect(planWatchActions([rename(sourceA)], current())).toEqual({ full: true, files: [] })
+  })
+
+  it("does not let a current source hide a structural change in the same batch", () => {
+    const plan = planWatchActions([change(sourceA), rename(`${root}/src/c.ts`)], current(sourceA))
+    expect(plan).toEqual({ full: true, files: [] })
+  })
+
+  it("consults isCurrent only for known sources", () => {
+    const util = `${root}/src/util.ts`
+    expect(planWatchActions([change(util)], current(util))).toEqual({ full: true, files: [] })
   })
 })

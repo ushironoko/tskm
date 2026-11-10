@@ -20,9 +20,11 @@ import type { StandardJSONSchemaV1 } from "../types/standard.ts"
  *   before the transform and still describes the incoming value.
  *
  * `brand` and `readonly` do not change the JSON value, so they are skipped.
- * `check`, `bigint`, `date`, `undefined`, and unknown kinds throw. The compiler
- * emitter refuses the same types by default and approximates one only when the
- * caller opts in (`jsonSchema.approximate`); this walker never approximates.
+ * `check`, `bigint`, `date`, `undefined`, and unknown kinds throw. So does a value JSON
+ * cannot carry: a NaN or infinite number in a literal, a picklist option, or a numeric
+ * keyword, and a numeric keyword whose requirement is not a finite number (a bigint, a
+ * Date, a string). The compiler emitter refuses the same values by default and approximates
+ * them only when the caller opts in (`jsonSchema.approximate`); this walker never approximates.
  */
 
 export type JsonSchema = { [key: string]: unknown }
@@ -56,6 +58,46 @@ function fail(message: string): never {
 
 function isObject(value: unknown): value is SchemaLike {
   return value !== null && typeof value === "object"
+}
+
+/** A value's type for an error message: `bigint`, `undefined`, `Date`, and so on. */
+function kindOf(value: unknown): string {
+  if (value === null) return "null"
+  if (typeof value === "object") return Object.prototype.toString.call(value).slice(8, -1)
+  return typeof value
+}
+
+/**
+ * A literal value or a picklist option. JSON has no NaN and no infinity, and `JSON.stringify`
+ * writes them as `null`, so they are refused. So is any other non-JSON value (a bigint, a symbol,
+ * undefined). Strings, booleans, null, and finite numbers pass through.
+ */
+function jsonScalar(value: unknown, where: string): unknown {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  const reason =
+    typeof value === "number"
+      ? `${String(value)} has no JSON representation`
+      : `a ${kindOf(value)} value has no JSON representation`
+  return fail(`cannot convert ${where} to JSON Schema: ${reason}`)
+}
+
+/**
+ * The requirement of a pipe item that becomes a numeric keyword (`minimum`, `multipleOf`,
+ * `minLength`, ...). It must be a finite JS number. A non-finite number has no JSON value, and
+ * any other type (a bigint, a Date, a string) has no keyword form.
+ */
+function numericRequirement(item: SchemaLike, requirement: unknown, keyword: string): number {
+  if (typeof requirement === "number" && Number.isFinite(requirement)) return requirement
+  const type = String(item.type)
+  if (typeof requirement === "number") {
+    fail(
+      `cannot convert pipe item "${type}" to JSON Schema: ${String(requirement)} has no JSON representation`,
+    )
+  }
+  return fail(
+    `cannot convert pipe item "${type}" to JSON Schema: its requirement is of type ${kindOf(requirement)}, not a finite number, so it has no ${keyword} keyword`,
+  )
 }
 
 function createCycleGuard(): CycleGuardState {
@@ -296,12 +338,14 @@ function walkSchema(schema: SchemaLike, ctx: WalkContext): JsonSchema {
     case "never":
       return { not: {} }
     case "literal":
-      return { const: schema.literal }
+      return { const: jsonScalar(schema.literal, 'schema type "literal"') }
     case "picklist":
       if (!Array.isArray(schema.options)) {
         fail('cannot convert schema type "picklist" to JSON Schema: options is not an array')
       }
-      return { enum: schema.options }
+      return {
+        enum: schema.options.map((option) => jsonScalar(option, 'schema type "picklist" option')),
+      }
     case "object":
       return walkObject(schema, ctx)
     case "array":
@@ -462,31 +506,35 @@ function walkPipe(schema: SchemaLike & { pipe: unknown[] }, ctx: WalkContext): J
 function applyItem(item: SchemaLike, out: JsonSchema, lengthKeyword: "Items" | "Length"): void {
   const type = item.type
   const requirement = item.requirement
+  const minKey = `min${lengthKeyword}`
+  const maxKey = `max${lengthKeyword}`
   switch (type) {
     case "min_length":
-      out[`min${lengthKeyword}`] = requirement
+      out[minKey] = numericRequirement(item, requirement, minKey)
       return
     case "max_length":
-      out[`max${lengthKeyword}`] = requirement
+      out[maxKey] = numericRequirement(item, requirement, maxKey)
       return
-    case "length":
-      out[`min${lengthKeyword}`] = requirement
-      out[`max${lengthKeyword}`] = requirement
+    case "length": {
+      const value = numericRequirement(item, requirement, `${minKey} and ${maxKey}`)
+      out[minKey] = value
+      out[maxKey] = value
       return
+    }
     case "non_empty":
-      out[`min${lengthKeyword}`] = 1
+      out[minKey] = 1
       return
     case "min_value":
-      out.minimum = requirement
+      out.minimum = numericRequirement(item, requirement, "minimum")
       return
     case "max_value":
-      out.maximum = requirement
+      out.maximum = numericRequirement(item, requirement, "maximum")
       return
     case "integer":
       out.type = "integer"
       return
     case "multiple_of":
-      out.multipleOf = requirement
+      out.multipleOf = numericRequirement(item, requirement, "multipleOf")
       return
     case "email":
       out.format = "email"

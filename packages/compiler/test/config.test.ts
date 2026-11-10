@@ -128,8 +128,17 @@ describe("resolveConfig — schemaSources", () => {
 describe("parseApproximations — exact names only", () => {
   it("accepts every known name and keeps the given order", () => {
     expect(
-      parseApproximations(["transform", "bigint", "date", "undefined", "check"], "--approximate"),
-    ).toEqual(["transform", "bigint", "date", "undefined", "check"])
+      parseApproximations(
+        ["transform", "bigint", "date", "undefined", "check", "nonfinite"],
+        "--approximate",
+      ),
+    ).toEqual(["transform", "bigint", "date", "undefined", "check", "nonfinite"])
+  })
+
+  it("rejects other spellings of the non-finite name (the name is exactly nonfinite)", () => {
+    for (const value of ["nonFinite", "non-finite", "infinity", "nan"]) {
+      expect(() => parseApproximations([value], "--approximate")).toThrow("has unknown value")
+    }
   })
 
   it("accepts an empty list as no approximation", () => {
@@ -139,7 +148,7 @@ describe("parseApproximations — exact names only", () => {
   it("does not trim, fold case, or coerce: each near miss is an unknown value", () => {
     for (const value of [" date", "Date", "bigints", "", "true", 1]) {
       expect(() => parseApproximations([value], "--approximate")).toThrow(
-        `tskm: --approximate has unknown value ${JSON.stringify(value)} (known values: bigint, date, undefined, check, transform).`,
+        `tskm: --approximate has unknown value ${JSON.stringify(value)} (known values: bigint, date, undefined, check, transform, nonfinite).`,
       )
     }
   })
@@ -214,13 +223,13 @@ describe("resolveConfig — overrides", () => {
     expect(() =>
       resolveConfig({ jsonSchema: { approximate: ["bigint", "Date"] as never } }, "/proj"),
     ).toThrow(
-      'tskm: jsonSchema.approximate has unknown value "Date" (known values: bigint, date, undefined, check, transform).',
+      'tskm: jsonSchema.approximate has unknown value "Date" (known values: bigint, date, undefined, check, transform, nonfinite).',
     )
   })
 
   it("rejects a boolean jsonSchema.approximate: the option is a list, not a switch", () => {
     expect(() => resolveConfig({ jsonSchema: { approximate: true as never } }, "/proj")).toThrow(
-      "tskm: jsonSchema.approximate must be an array of names (known values: bigint, date, undefined, check, transform).",
+      "tskm: jsonSchema.approximate must be an array of names (known values: bigint, date, undefined, check, transform, nonfinite).",
     )
   })
 

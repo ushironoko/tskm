@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { globSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path"
 import type { ResolvedTskmConfig, TskmMode } from "./config.ts"
@@ -52,12 +53,24 @@ export interface TskmSession {
   generateFile(sourceAbs: string, pretty?: boolean): PerFileResult
   /** Generates types for every included source file. */
   generateAll(pretty?: boolean): GenerateResult
+  /**
+   * True when the output last generated for `sourceAbs` was produced from exactly the file's
+   * current content (in inplace mode, the text that pass wrote). False when no successful pass
+   * has covered the file, when its content has changed since, or when it cannot be read. Only
+   * content is compared, never events: a write is not a change.
+   */
+  isCurrent(sourceAbs: string): boolean
   close(): void
 }
 
 /** True for paths the compiler itself produces, which must never be scanned as sources. */
 function isGeneratedArtifact(absPath: string): boolean {
   return absPath.endsWith(".gen.ts") || absPath.endsWith(".tskm-query.ts")
+}
+
+/** Content fingerprint of a source's text. Equal text always yields an equal digest. */
+function digestOf(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex")
 }
 
 export interface TargetSplit {
@@ -134,7 +147,9 @@ interface PreparedFile {
   readonly prefixDiagnostics: ReadonlyArray<string>
 }
 
-type PrepareResult = { kind: "skip"; diagnostics: string[] } | ({ kind: "ok" } & PreparedFile)
+type PrepareResult =
+  | { kind: "skip"; sourceText: string; diagnostics: string[] }
+  | ({ kind: "ok" } & PreparedFile)
 
 export function createSession(config: ResolvedTskmConfig): TskmSession {
   const client: TsgoClient = createTsgoClient({
@@ -142,6 +157,14 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     tsconfigPath: config.tsconfig,
     executable: config.executable,
   })
+
+  /**
+   * Per source: the digest of the content its current output was generated from. An entry is
+   * written only when a pass leaves the output in step with the file (it wrote the output, or the
+   * file has no targets). A missing entry means "not known to be current", so the next event for
+   * the file regenerates it. See {@link TskmSession.isCurrent}.
+   */
+  const digests = new Map<string, string>()
 
   const prepareTargets = (sourceAbs: string): PrepareResult => {
     const sourceText = readFileSync(sourceAbs, "utf8")
@@ -205,7 +228,11 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     })
 
     if (targets.length === 0) {
-      return { kind: "skip", diagnostics: [...discovery.diagnostics, ...extraDiagnostics] }
+      return {
+        kind: "skip",
+        sourceText,
+        diagnostics: [...discovery.diagnostics, ...extraDiagnostics],
+      }
     }
 
     // The split happens AFTER the inplace alias filter so recursive markers keep
@@ -343,6 +370,8 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
         pretty,
         version: GENERATOR_VERSION,
       })
+      // The file now holds `emitted.content` (the same text when nothing was rewritten).
+      digests.set(sourceAbs, digestOf(emitted.content))
       return {
         file: {
           source: sourceAbs,
@@ -359,10 +388,10 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     // it, keeping their zero-cost path): "the type resolved" and "the sidecar
     // compiles" are separate guarantees. Leaked vendor internals or annotation
     // types the import slot cannot satisfy fail HERE, before anything is
-    // written. Verify-then-write (not write-then-rollback): rewriting the
-    // sidecar on failure would look like a foreign change to watch's self-write
-    // tracking and risk a rebuild loop; a `.tskm-query.ts` sibling is excluded
-    // from watch and always cleaned up by withQueryFile.
+    // written. Verify-then-write (not write-then-rollback): a sidecar written and
+    // then rolled back would briefly hold content that never passed the gate. A
+    // `.tskm-query.ts` sibling is excluded from watch and always cleaned up by
+    // withQueryFile.
     const needsVerify = resolved.some(
       (r) => r.vendorHint !== undefined || r.recursiveAnnotation !== undefined,
     )
@@ -403,6 +432,7 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     }
 
     const emitted = emitSidecar(sourceAbs, resolved, { pretty })
+    digests.set(sourceAbs, digestOf(sourceText))
     return {
       file: {
         source: sourceAbs,
@@ -416,11 +446,28 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
   }
 
   const generateFile: TskmSession["generateFile"] = (sourceAbs, pretty = true) => {
+    // Forget the old digest first: if this pass throws, the file must not look current.
+    digests.delete(sourceAbs)
     const prep = prepareTargets(sourceAbs)
     if (prep.kind === "skip") {
+      digests.set(sourceAbs, digestOf(prep.sourceText))
       return { file: null, diagnostics: prep.diagnostics }
     }
     return resolveAndFinalize(sourceAbs, prep, pretty, false)
+  }
+
+  const isCurrent: TskmSession["isCurrent"] = (sourceAbs) => {
+    const recorded = digests.get(sourceAbs)
+    if (recorded === undefined) {
+      return false
+    }
+    let text: string
+    try {
+      text = readFileSync(sourceAbs, "utf8")
+    } catch {
+      return false
+    }
+    return digestOf(text) === recorded
   }
 
   /**
@@ -464,6 +511,8 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
   }
 
   const generateAll: TskmSession["generateAll"] = (pretty = true) => {
+    // A full pass regenerates every source, so no earlier digest still describes an output.
+    digests.clear()
     const sources = collectSources(config)
     if (sources.length === 0) {
       return {
@@ -501,10 +550,13 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     try {
       registerQueries(docs, sourcesToNotify)
       for (const { sourceAbs, prep } of prepared) {
-        const result =
-          prep.kind === "skip"
-            ? { file: null, diagnostics: prep.diagnostics }
-            : resolveAndFinalize(sourceAbs, prep, pretty, true)
+        let result: PerFileResult
+        if (prep.kind === "skip") {
+          digests.set(sourceAbs, digestOf(prep.sourceText))
+          result = { file: null, diagnostics: prep.diagnostics }
+        } else {
+          result = resolveAndFinalize(sourceAbs, prep, pretty, true)
+        }
         diagnostics.push(...result.diagnostics)
         if (result.file) {
           files.push(result.file)
@@ -521,6 +573,7 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     collectSources: () => collectSources(config),
     generateFile,
     generateAll,
+    isCurrent,
     close: () => client.close(),
   }
 }
