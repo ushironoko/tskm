@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test"
 import {
-  cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -63,7 +63,13 @@ afterAll(() => {
  */
 function copyFixture(name: string): string {
   const root = mkdtempSync(join(tmpdir(), `tskm-${name}-`))
-  cpSync(`${fixture(name)}/src`, `${root}/src`, { recursive: true })
+  mkdirSync(`${root}/src`)
+  for (const file of readdirSync(`${fixture(name)}/src`)) {
+    // Stryker's in-place mode prefixes every instrumented source with this line while it runs, so a
+    // copy taken during a mutation run would carry it into the output. The committed text has none.
+    const text = readFileSync(`${fixture(name)}/src/${file}`, "utf8")
+    writeFileSync(`${root}/src/${file}`, text.replace(/^\/\/ @ts-nocheck\n/, ""))
+  }
   const tsconfig = JSON.parse(readFileSync(`${fixture(name)}/tsconfig.json`, "utf8")) as {
     compilerOptions: { paths: Record<string, string[]> }
   }
