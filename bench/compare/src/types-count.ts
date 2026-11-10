@@ -9,9 +9,11 @@ export interface TypeRow {
   readonly checkTimeMs: number
 }
 
-const repoRoot = new URL("../../../", import.meta.url)
-const tsc = new URL("node_modules/typescript/lib/tsc.js", repoRoot)
-const tsgo = new URL("node_modules/@typescript/native-preview/bin/tsgo", repoRoot)
+// Both checkers are devDependencies of this package at exact versions (see package.json).
+// They are not taken from the repository root, which does not install tsgo.
+const benchRoot = new URL("../", import.meta.url)
+const tsc = new URL("node_modules/typescript/lib/tsc.js", benchRoot)
+const tsgo = new URL("node_modules/@typescript/native-preview/bin/tsgo", benchRoot)
 
 const expressions: Record<
   LibraryName,
@@ -159,23 +161,32 @@ function writeFixture(name: LibraryName): URL {
   return dir
 }
 
-function readCount(text: string, label: string): number {
+/** Reads one `--extendedDiagnostics` line. `Check time` is printed in seconds ("0.27s") or
+ * milliseconds ("270ms") depending on the checker; every other value is a plain integer. */
+function readDiagnostic(text: string, label: string): number {
   const line = text.split("\n").find((entry) => entry.trimStart().startsWith(`${label}:`))
   if (!line) throw new Error(`missing ${label}\n${text}`)
   const raw = line
     .slice(line.indexOf(":") + 1)
     .trim()
     .replaceAll(",", "")
-  const seconds = raw.endsWith("s") ? Number(raw.slice(0, -1)) * 1000 : Number(raw)
-  if (!Number.isFinite(seconds)) throw new Error(`bad ${label}: ${line}`)
-  return seconds
+  if (label === "Check time") {
+    const match = /^(\d+(?:\.\d+)?)(ms|s)$/.exec(raw)
+    if (!match) throw new Error(`bad ${label}: ${line}`)
+    return Number(match[1]) * (match[2] === "s" ? 1000 : 1)
+  }
+  if (!/^\d+$/.test(raw)) throw new Error(`bad ${label}: ${line}`)
+  return Number(raw)
 }
 
 function runChecker(command: string, args: string[], cwd: string): string {
   const child = spawnSync(command, args, { cwd, encoding: "utf8" })
+  if (child.error) throw new Error(`${command} could not be started: ${child.error.message}`)
   const text = `${child.stdout}\n${child.stderr}`
+  // A fixture with type errors exits non-zero, so a broken copy fails the run instead of
+  // producing a count for a partly-checked program.
   if (child.status !== 0) {
-    throw new Error(`${command} failed in ${cwd}\n${text}`)
+    throw new Error(`${command} exited with ${child.status} in ${cwd}\n${text}`)
   }
   return text
 }
@@ -190,14 +201,14 @@ export function measureTypes(name: LibraryName): readonly TypeRow[] {
     {
       library: name,
       checker: "tsc",
-      instantiations: readCount(tscText, "Instantiations"),
-      checkTimeMs: readCount(tscText, "Check time"),
+      instantiations: readDiagnostic(tscText, "Instantiations"),
+      checkTimeMs: readDiagnostic(tscText, "Check time"),
     },
     {
       library: name,
       checker: "tsgo",
-      instantiations: readCount(tsgoText, "Instantiations"),
-      checkTimeMs: readCount(tsgoText, "Check time"),
+      instantiations: readDiagnostic(tsgoText, "Instantiations"),
+      checkTimeMs: readDiagnostic(tsgoText, "Check time"),
     },
   ]
 }

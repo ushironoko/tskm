@@ -89,11 +89,14 @@ esbuild 0.28.2, `bundle`, `minify`, `treeShaking`, `format: "esm"`,
 type alias, under `fixtures/<library>/` (gitignored). `skipLibCheck` is on.
 Then:
 
-- `node node_modules/typescript/lib/tsc.js -p tsconfig.json --extendedDiagnostics --pretty false`
+- `node_modules/typescript/lib/tsc.js` (run by the Bun that runs the harness) with
+  `-p tsconfig.json --extendedDiagnostics --pretty false`
 - `node_modules/@typescript/native-preview/bin/tsgo` with the same flags
 
-`Instantiations` is the count. `Check time` is converted from seconds to
-milliseconds. Both binaries are the ones installed at the repository root.
+`Instantiations` is the count. `Check time` is converted from seconds (or
+milliseconds) to milliseconds. Both checkers are devDependencies of this package at
+exact versions (`typescript` 6.0.3, `@typescript/native-preview` 7.0.0-dev.20260707.2).
+The repository root does not install `tsgo`, so the root is not used.
 
 ## Constants
 

@@ -75,8 +75,8 @@ function resultsMarkdown(input: {
     `- Kernel: ${input.host.version}`,
     `- Bun: ${input.host.bun}`,
     `- esbuild: ${packageVersion("esbuild")} (minify, tree-shake, gzip level 9)`,
-    `- typescript: ${packageVersionFromRoot("typescript")} (\`tsc\`)`,
-    `- @typescript/native-preview: ${packageVersionFromRoot("@typescript/native-preview")} (\`tsgo\`)`,
+    `- typescript: ${packageVersion("typescript")} (\`tsc\`)`,
+    `- @typescript/native-preview: ${packageVersion("@typescript/native-preview")} (\`tsgo\`)`,
     `- Copies for type instantiations: ${typeCopies}`,
     `- Speed: warmup ${cell(warmupIterations)}, then ${measuredRuns} runs of ${cell(measuredIterations)}, median`,
     `- Memory parses: ${cell(memoryParses)}`,
@@ -134,11 +134,6 @@ function resultsMarkdown(input: {
     "",
   ]
   return lines.join("\n")
-}
-
-function packageVersionFromRoot(name: string): string {
-  const rootRequire = createRequire(new URL("../../../package.json", import.meta.url))
-  return (rootRequire(`${name}/package.json`) as { version: string }).version
 }
 
 const only = new Set(process.argv.slice(2))
