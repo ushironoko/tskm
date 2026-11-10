@@ -1,9 +1,12 @@
 import { type } from "arktype"
 
+// `email` is the expression in constraints.ts written as a literal: arktype needs the literal
+// for its type checker (a computed string fails with TS2589). agreement.ts checks they match.
 export const schema = type({
-  id: "number.integer >= 1",
+  id: "1 <= number.integer <= 9007199254740991",
   name: "1 <= string <= 100",
-  email: "string.email",
+  email:
+    "(3 <= string <= 100) & /^[\\w+-]+(?:\\.[\\w+-]+)*@[\\da-zA-Z]+(?:[.-][\\da-zA-Z]+)*\\.[a-zA-Z]{2,}$/",
   role: "'admin' | 'member' | 'guest'",
   tags: "(1 <= string <= 30)[]",
   active: "boolean",

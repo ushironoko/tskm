@@ -14,12 +14,14 @@ import {
   safeParse,
   string,
 } from "../../../../packages/tskm/dist/index.mjs"
+import { maxId } from "../constraints.ts"
 
 const bounded = (min: number, max: number) => pipe(string(), minLength(min), maxLength(max))
 
 export const schema = object({
-  id: pipe(number(), integer(), minValue(1)),
+  id: pipe(number(), integer(), minValue(1), maxValue(maxId)),
   name: bounded(1, 100),
+  // email() uses the same expression as constraints.ts (with the `i` flag); agreement.ts checks it.
   email: pipe(string(), minLength(3), maxLength(100), email()),
   role: picklist(["admin", "member", "guest"]),
   tags: array(bounded(1, 30)),

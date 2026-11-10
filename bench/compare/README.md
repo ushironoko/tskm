@@ -19,24 +19,42 @@ One object:
 
 | field | constraint |
 | --- | --- |
-| `id` | integer `>= 1` |
-| `name` | string length 1..100 |
-| `email` | string length 3..100 and an email check |
+| `id` | integer, `1 <= id <= 2^53 - 1` |
+| `name` | string, length 1..100 |
+| `email` | string, length 3..100, matches the expression in `src/constraints.ts` |
 | `role` | `"admin"` \| `"member"` \| `"guest"` |
 | `tags` | array of strings, each length 1..30 |
 | `active` | boolean |
 | `score` | integer 0..100 |
-| `address.city` | string length 1..50 |
-| `address.zip` | string length 1..12 |
+| `address.city` | string, length 1..50 |
+| `address.zip` | string, length 1..12 |
+
+Undeclared keys are accepted and stripped from the output by every library.
 
 The valid value is `src/payload.ts` (`ada@example.com`, role `admin`). The invalid
 value fails each of those groups (`id: 0`, empty name, `not-an-email`, role
 `owner`, a `""` tag, `active: "yes"`, `score: 101`, empty address).
 
-`effect` 4.1.2 has no email format. Its email check is `Schema.isPattern` with
-the same expression as `@tskm/core`'s `email()`. `arktype`'s `string.email` is
-not also bounded to length 3..100; the string syntax used here does not combine
-those constraints.
+### One set of constraints
+
+Every adapter enforces the table above with the same predicate. `src/agreement.ts` checks
+this before anything is timed: 62 hand-written cases (the boundary of every group, wrong
+types, coercion such as `"7"` for `id`, extra keys) and 2,000 generated emails. The expected
+verdicts come from the table, not from a library, and any disagreement stops the run.
+
+- **Email.** One regular expression (`src/constraints.ts`) for every library. The
+  libraries' own email validators disagree with it, so none is used: zod's `z.email()`
+  accepts `o'neil@example.com`, typebox's `format: "email"` accepts `a@b` and `a@b.c`, and
+  arktype's `string.email` accepts `a..b@example.com` and ignores the length bound. tskm's
+  `email()` uses the same expression with the `i` flag. The others reach it through
+  `z.string().regex`, `v.regex`, typebox `pattern`, an arktype `/.../` literal, and
+  effect's `Schema.isPattern`.
+- **Integer.** `id` is bounded to the safe-integer range. zod's `int()` and effect's `isInt()`
+  already are. Without the bound, tskm, valibot, typebox and arktype accept `2^53`.
+- **Known difference, not asserted.** String length. zod and typebox count code points;
+  tskm, valibot, arktype and effect count UTF-16 code units. A 51-emoji name (102 units) is
+  accepted by zod and typebox only. The payload is ASCII, so the timed inputs are not
+  affected. The agreement output reports this row.
 
 ## Calls
 

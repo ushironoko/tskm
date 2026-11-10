@@ -1,6 +1,7 @@
 import { Type } from "typebox"
 import { Settings } from "typebox/system"
 import { Parse } from "typebox/value"
+import { emailSource, maxId } from "../constraints.ts"
 
 // typebox's default `maxParseErrors` is 1: `Parse` stops at the first failing field. Every other
 // adapter collects all issues on the invalid payload, so typebox is set to collect them too.
@@ -8,9 +9,10 @@ import { Parse } from "typebox/value"
 Settings.Set({ maxParseErrors: Number.POSITIVE_INFINITY })
 
 export const schema = Type.Object({
-  id: Type.Integer({ minimum: 1 }),
+  id: Type.Integer({ minimum: 1, maximum: maxId }),
   name: Type.String({ minLength: 1, maxLength: 100 }),
-  email: Type.String({ format: "email", minLength: 3, maxLength: 100 }),
+  // `pattern`, not `format: "email"`: typebox's email format accepts "a@b" and "a@b.c".
+  email: Type.String({ pattern: emailSource, minLength: 3, maxLength: 100 }),
   role: Type.Union([Type.Literal("admin"), Type.Literal("member"), Type.Literal("guest")]),
   tags: Type.Array(Type.String({ minLength: 1, maxLength: 30 })),
   active: Type.Boolean(),

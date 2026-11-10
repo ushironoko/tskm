@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { type LibraryName, typeCopies } from "./config.ts"
+import { emailSource, maxId } from "./constraints.ts"
 
 export interface TypeRow {
   readonly library: LibraryName
@@ -22,7 +23,7 @@ const expressions: Record<
   tskm: {
     imports: `import { array, boolean, email, integer, maxLength, maxValue, minLength, minValue, number, object, picklist, pipe, string, type InferOutput } from "../../../../packages/tskm/dist/index.mjs"`,
     body: `object({
-  id: pipe(number(), integer(), minValue(1)),
+  id: pipe(number(), integer(), minValue(1), maxValue(${maxId})),
   name: pipe(string(), minLength(1), maxLength(100)),
   email: pipe(string(), minLength(3), maxLength(100), email()),
   role: picklist(["admin", "member", "guest"]),
@@ -41,7 +42,7 @@ const expressions: Record<
     body: `z.object({
   id: z.number().int().min(1),
   name: z.string().min(1).max(100),
-  email: z.email().min(3).max(100),
+  email: z.string().min(3).max(100).regex(/${emailSource}/),
   role: z.enum(["admin", "member", "guest"]),
   tags: z.array(z.string().min(1).max(30)),
   active: z.boolean(),
@@ -56,9 +57,9 @@ const expressions: Record<
   valibot: {
     imports: `import * as v from "valibot"`,
     body: `v.object({
-  id: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  id: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
   name: v.pipe(v.string(), v.minLength(1), v.maxLength(100)),
-  email: v.pipe(v.string(), v.minLength(3), v.maxLength(100), v.email()),
+  email: v.pipe(v.string(), v.minLength(3), v.maxLength(100), v.regex(/${emailSource}/)),
   role: v.picklist(["admin", "member", "guest"]),
   tags: v.array(v.pipe(v.string(), v.minLength(1), v.maxLength(30))),
   active: v.boolean(),
@@ -73,9 +74,9 @@ const expressions: Record<
   arktype: {
     imports: `import { type } from "arktype"`,
     body: `type({
-  id: "number.integer >= 1",
+  id: "1 <= number.integer <= ${maxId}",
   name: "1 <= string <= 100",
-  email: "string.email",
+  email: ${JSON.stringify(`(3 <= string <= 100) & /${emailSource}/`)},
   role: "'admin' | 'member' | 'guest'",
   tags: "(1 <= string <= 30)[]",
   active: "boolean",
@@ -90,9 +91,9 @@ const expressions: Record<
   typebox: {
     imports: `import { Type, type Static } from "typebox"`,
     body: `Type.Object({
-  id: Type.Integer({ minimum: 1 }),
+  id: Type.Integer({ minimum: 1, maximum: ${maxId} }),
   name: Type.String({ minLength: 1, maxLength: 100 }),
-  email: Type.String({ format: "email", minLength: 3, maxLength: 100 }),
+  email: Type.String({ pattern: ${JSON.stringify(emailSource)}, minLength: 3, maxLength: 100 }),
   role: Type.Union([Type.Literal("admin"), Type.Literal("member"), Type.Literal("guest")]),
   tags: Type.Array(Type.String({ minLength: 1, maxLength: 30 })),
   active: Type.Boolean(),
@@ -107,9 +108,9 @@ const expressions: Record<
   effect: {
     imports: `import * as Schema from "effect/Schema"`,
     body: `Schema.Struct({
-  id: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+  id: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(${maxId})),
   name: Schema.String.check(Schema.isBetweenLength(1, 100)),
-  email: Schema.String.check(Schema.isBetweenLength(3, 100), Schema.isPattern(/^[\\w+-]+(?:\\.[\\w+-]+)*@[\\da-z]+(?:[.-][\\da-z]+)*\\.[a-z]{2,}$/i)),
+  email: Schema.String.check(Schema.isBetweenLength(3, 100), Schema.isPattern(/${emailSource}/)),
   role: Schema.Literals(["admin", "member", "guest"]),
   tags: Schema.Array(Schema.String.check(Schema.isBetweenLength(1, 30))),
   active: Schema.Boolean,

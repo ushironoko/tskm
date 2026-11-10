@@ -1,14 +1,15 @@
 import * as Result from "effect/Result"
 import * as Schema from "effect/Schema"
+import { emailPattern, maxId } from "../constraints.ts"
 
 const bounded = (min: number, max: number) => Schema.String.check(Schema.isBetweenLength(min, max))
 
-// effect 4.1.2 has no email format. The pattern is the same expression tskm's
-// email() uses, so the check is a single regex rather than a missing constraint.
-const emailPattern = /^[\w+-]+(?:\.[\w+-]+)*@[\da-z]+(?:[.-][\da-z]+)*\.[a-z]{2,}$/i
-
 export const schema = Schema.Struct({
-  id: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+  id: Schema.Finite.check(
+    Schema.isInt(),
+    Schema.isGreaterThanOrEqualTo(1),
+    Schema.isLessThanOrEqualTo(maxId),
+  ),
   name: bounded(1, 100),
   email: Schema.String.check(Schema.isBetweenLength(3, 100), Schema.isPattern(emailPattern)),
   role: Schema.Literals(["admin", "member", "guest"]),

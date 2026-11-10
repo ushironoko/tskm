@@ -1,9 +1,11 @@
 import * as z from "zod"
+import { emailPattern } from "../constraints.ts"
 
 export const schema = z.object({
+  // zod's int() is a safe-integer check, so 2^53 is rejected here as in every other library.
   id: z.number().int().min(1),
   name: z.string().min(1).max(100),
-  email: z.email().min(3).max(100),
+  email: z.string().min(3).max(100).regex(emailPattern),
   role: z.enum(["admin", "member", "guest"]),
   tags: z.array(z.string().min(1).max(30)),
   active: z.boolean(),
