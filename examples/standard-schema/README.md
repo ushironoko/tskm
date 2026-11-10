@@ -21,14 +21,14 @@ out or extend the list via `tskm.config.ts` (`schemaSources: [...]`).
 From the repository root (after `bun install` + `bun run build`):
 
 ```bash
-bun packages/compiler/dist/cli.mjs gen --root examples/standard-schema
-# in a published project this is simply:  bunx tskm gen
+node packages/compiler/dist/cli.mjs gen --root examples/standard-schema
+# in a published project this is simply:  npx tskm gen  (or bunx tskm gen)
 ```
 
 ## Run
 
 ```bash
-bun examples/standard-schema/src/main.ts
+node examples/standard-schema/src/main.ts
 ```
 
 ## Notes

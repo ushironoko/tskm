@@ -38,7 +38,6 @@ export { type ArraySchema, array } from "./schemas/array.ts"
 export { type ArraySchemaAsync, arrayAsync } from "./schemas/arrayAsync.ts"
 export { type BigintSchema, bigint } from "./schemas/bigint.ts"
 export { type BooleanSchema, boolean } from "./schemas/boolean.ts"
-export { coerce } from "./schemas/coerce.ts"
 export { type DateSchema, date } from "./schemas/date.ts"
 export {
   type DiscriminatedUnionMembers,
@@ -127,7 +126,7 @@ export type {
   PipeItem,
   StandardProps,
 } from "./types/schema.ts"
-export type { StandardSchemaV1 } from "./types/standard.ts"
+export type { StandardJSONSchemaV1, StandardSchemaV1 } from "./types/standard.ts"
 
 // ---- Utilities ----
 export { isTskmError, type TskmError, tskmError } from "./utils/errors.ts"

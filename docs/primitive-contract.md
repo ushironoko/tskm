@@ -9,7 +9,8 @@ Each requirement below names the test that checks it, so the contract is enforce
 The Standard Schema v1 interface is vendored verbatim in `packages/tskm/src/types/standard.ts`, so the external surface is fixed. Every primitive must hold to it:
 
 - `~standard.validate` returns a plain result for a sync schema and a `Promise` for an async one. It never mixes the two for one schema.
-- `~standard.types` is a present, type-level-only carrier of `input` and `output`. It exposes those two members and no other. It is absent at runtime (the runtime `~standard` object stays `version`/`vendor`/`validate`), so it must never be read as a runtime value. A primitive must keep this carrier shape and add no other member.
+- `~standard.types` is a present, type-level-only carrier of `input` and `output`. It exposes those two members and no other. It is absent at runtime, so it must never be read as a runtime value.
+- The runtime `~standard` object stays `version`, `vendor`, and `validate`. A primitive must not add another runtime member. Standard JSON Schema is opt-in: `withJsonSchema` from `@tskm/core/json-schema` returns a new object whose `~standard` also has `jsonSchema`, and it does not mutate the argument.
 - The external `Issue` stays exactly `{ message, path? }`. The rich internal issue (`kind`, `type`, `expected`, `received`, `input`, and any future severity-like field) must never cross the `_getStandardProps` boundary.
 
 The boundary is the strict allowlist in the conformance harness. The harness rejects any key on a returned issue other than `message` and `path`, so a new internal field cannot leak even by accident.
@@ -22,13 +23,15 @@ Enforced by `packages/tskm/test/standard-contract.test.ts` via `assertStandardSc
 
 The emitter is a duck-typed walker (`packages/compiler/src/jsonschema.ts`). The standard emission for each new primitive is fixed here. Anything richer than the standard form is an approximation plus a vendor extension, never a silent change to an existing case.
 
+A type JSON Schema cannot express is not approximated silently either. The emitter fails the file, unless the caller lists the type in `jsonSchema.approximate`. The refused set is the one `withJsonSchema` throws for (`bigint`, `date`, `undefined`, `check`, a `transform` output), so a new primitive that cannot be represented must join that set in both walkers and in the README table.
+
 | Primitive | Standard JSON Schema form |
 | --- | --- |
 | template literal | `pattern` approximation, with the literal structure carried as a vendor extension |
 | key-typed `record(key, value)` | `propertyNames` constraining the key (a pattern for a `templateLiteral` key, an enum for a `picklist` key) plus `additionalProperties` for the value |
 | exact (closed) object | `additionalProperties: false` (already the `object` default) |
 | discriminated union | `oneOf` with `const` on the discriminant, the discriminant key surfaced as an option or vendor extension |
-| `preprocess` / `coerce` | the inner schema (the output shape), plus a warning that the input accepts any value. Input-direction emission (`{}`) waits on StandardJSONSchemaV1 |
+| `preprocess` | the inner schema for `output`; `{}` for `input`, since the input is `unknown`. The compiler emitter and `withJsonSchema` agree on both directions |
 
 Two walkers read the same runtime schema graph: the JSON Schema walker and the structural TypeScript walker (`packages/compiler/src/structural-ts.ts`). A primitive that introduces a new `schema.type` case must add it to both walkers in the same change. If only one walker learns a case, the other falls through to its default branch and silently emits `{}` or `unknown` or `additionalProperties: false`.
 

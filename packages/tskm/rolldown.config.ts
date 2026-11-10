@@ -3,7 +3,11 @@ import { dts } from "rolldown-plugin-dts"
 
 // minify stays off so the quoted Standard-Schema keys ("~standard" etc.) are never mangled
 export default defineConfig({
-  input: "src/index.ts",
+  input: {
+    index: "src/index.ts",
+    // The walker is only reachable from this entry. The main entry does not import it.
+    "json-schema": "src/json-schema.ts",
+  },
   // pure library: no Node/browser globals, so emit platform-neutral output
   platform: "neutral",
   plugins: [dts({ tsconfig: "tsconfig.json" })],

@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process"
 import { resolveTsgoExecutable } from "../src/tsgo-client.ts"
+import { spawnNoEmit } from "./scenarios/support.ts"
 import { testTsgoExecutable } from "./tsgo-test-executable.ts"
 
 /**
@@ -11,14 +11,6 @@ import { testTsgoExecutable } from "./tsgo-test-executable.ts"
  * its declared alias name fails HERE (TS2304), not silently downstream.
  */
 export function runTsgoNoEmit(projectRoot: string): { ok: boolean; output: string } {
-  // Unset env: resolveTsgoExecutable(undefined) keeps the native-preview default.
-  const executable = resolveTsgoExecutable(testTsgoExecutable())
-  const child = spawnSync(executable, ["--noEmit", "-p", "tsconfig.json"], {
-    cwd: projectRoot,
-    encoding: "utf8",
-    timeout: 120_000,
-    killSignal: "SIGKILL",
-  })
-  const output = `${child.stdout ?? ""}${child.stderr ?? ""}`
-  return { ok: child.status === 0, output }
+  // Unset env: resolveTsgoExecutable(undefined) uses the typescript package's lib/tsc.
+  return spawnNoEmit(resolveTsgoExecutable(testTsgoExecutable()), projectRoot)
 }

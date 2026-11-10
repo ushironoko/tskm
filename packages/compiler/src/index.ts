@@ -1,6 +1,8 @@
 import { resolve } from "node:path"
 import {
   defineConfig,
+  JSON_SCHEMA_APPROXIMATIONS,
+  type JsonSchemaApproximation,
   loadConfig,
   type ResolvedTskmConfig,
   resolveConfig,
@@ -24,6 +26,8 @@ export {
   type JsonSchema,
   type JsonSchemaOptions,
   type JsonSchemaResult,
+  type SchemaToJsonOptions,
+  type SchemaToJsonResult,
   schemaToJsonSchema,
 } from "./jsonschema.ts"
 export { type ResolvedSchema, type ResolveResult, resolveSchemas } from "./resolve.ts"
@@ -43,8 +47,15 @@ export {
   TYPE_TO_STRING_FLAGS,
 } from "./tsgo-client.ts"
 export { type WatchController, type WatchOptions, watch } from "./watch.ts"
-export type { ResolvedTskmConfig, TskmConfig, TskmJsonSchemaOptions, TskmMode, TskmWatchOptions }
-export { defineConfig, loadConfig, resolveConfig }
+export type {
+  JsonSchemaApproximation,
+  ResolvedTskmConfig,
+  TskmConfig,
+  TskmJsonSchemaOptions,
+  TskmMode,
+  TskmWatchOptions,
+}
+export { defineConfig, JSON_SCHEMA_APPROXIMATIONS, loadConfig, resolveConfig }
 
 export interface GenerateOptions {
   /** Project root used to resolve the config and as the checker cwd. */

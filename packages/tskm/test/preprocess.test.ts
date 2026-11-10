@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test"
 import {
   array,
   boolean,
-  coerce,
   is,
   isTskmError,
   maxValue,
@@ -45,9 +44,14 @@ async function failureAsync(schema: Parameters<typeof safeParseAsync>[0], input:
   return result
 }
 
-describe("coerce helpers", () => {
-  it("coerces the fsss port cases through pipe validations", () => {
-    const port = pipe(coerce.number(), minValue(1), maxValue(65535))
+function decimalString(value: unknown): unknown {
+  if (typeof value !== "string") return value
+  return Number(value)
+}
+
+describe("preprocess", () => {
+  it("validates the converted value in a later pipe step", () => {
+    const port = pipe(preprocess(decimalString, number()), minValue(1), maxValue(65535))
     expect(port.type).toBe("preprocess")
     expect(parse(port, "8080")).toBe(8080)
     expect(parse(port, 3000)).toBe(3000)
@@ -58,51 +62,27 @@ describe("coerce helpers", () => {
     expect(nope.output).toBeNaN()
   })
 
-  it("keeps the inner schema type on wrapped and preprocess as the surface type", () => {
-    const schema = coerce.number("port")
-    expect(schema.type).toBe("preprocess")
-    expect(schema.reference).toBe(preprocess)
-    expect(schema.wrapped.type).toBe("number")
-    expect(schema.wrapped.message).toBe("port")
-    expect(failure(schema, "nope").issues[0]?.message).toBe("port")
-    expect(coerce.string("s").wrapped.message).toBe("s")
-    expect(coerce.boolean("b").wrapped.message).toBe("b")
-    expect(coerce.bigint("g").wrapped.message).toBe("g")
-    expect(coerce.date("d").wrapped.message).toBe("d")
+  it("rejects strings outside an explicit decimal grammar", () => {
+    const port = preprocess(
+      (value) => (typeof value === "string" && /^[0-9]+$/.test(value) ? Number(value) : value),
+      number(),
+    )
+    expect(parse(port, "8080")).toBe(8080)
+    const empty = failure(port, "")
+    expect(empty.issues[0]?.type).toBe("number")
+    expect(empty.output).toBe("")
+    const hex = failure(port, "0x1F")
+    expect(hex.issues[0]?.type).toBe("number")
+    expect(hex.output).toBe("0x1F")
+    const padded = failure(port, " 8080 ")
+    expect(padded.issues[0]?.type).toBe("number")
+    expect(padded.output).toBe(" 8080 ")
+    const exponent = failure(port, "1e3")
+    expect(exponent.issues[0]?.type).toBe("number")
+    expect(exponent.output).toBe("1e3")
   })
 
-  it("matches Zod constructor coercion, including the documented footguns", () => {
-    expect(parse(coerce.number(), "")).toBe(0)
-    expect(parse(coerce.number(), true)).toBe(1)
-    expect(parse(coerce.number(), null)).toBe(0)
-    expect(parse(coerce.string(), null)).toBe("null")
-    expect(parse(coerce.string(), 1)).toBe("1")
-    expect(parse(coerce.boolean(), "false")).toBe(true)
-    expect(parse(coerce.boolean(), "")).toBe(false)
-    expect(parse(coerce.boolean(), 0)).toBe(false)
-    expect(parse(coerce.boolean(), 1)).toBe(true)
-    expect(parse(coerce.date(), null).getTime()).toBe(0)
-    expect(parse(coerce.bigint(), "10")).toBe(10n)
-    expect(parse(coerce.bigint(), 10)).toBe(10n)
-    const invalidDate = failure(coerce.date(), "nope")
-    expect(invalidDate.issues[0]?.type).toBe("date")
-  })
-
-  it("turns a throwing constructor into a preprocess issue", () => {
-    const bad = failure(coerce.bigint(), "1.5")
-    expect(bad.output).toBe("1.5")
-    expect(bad.issues).toHaveLength(1)
-    expect(bad.issues[0]?.type).toBe("preprocess")
-    expect(bad.issues[0]?.message.startsWith("Invalid preprocess:")).toBe(true)
-    const result = coerce.bigint()["~standard"].validate("nope")
-    expect(result).not.toBeInstanceOf(Promise)
-    if (result instanceof Promise) {
-      throw new Error("sync validate must not return a promise")
-    }
-    expect(result.issues?.length).toBeGreaterThan(0)
-  })
-
-  it("coerces inside optional and array instead of skipping the wrapper", () => {
+  it("runs inside optional and array instead of skipping the wrapper", () => {
     let calls = 0
     const wrapped = optional(
       preprocess((value) => {
@@ -114,18 +94,16 @@ describe("coerce helpers", () => {
     expect(calls).toBe(0)
     expect(parse(wrapped, "4")).toBe(4)
     expect(calls).toBe(1)
-    expect(parse(array(coerce.number()), ["1", "2"])).toEqual([1, 2])
+    expect(parse(array(preprocess(decimalString, number())), ["1", "2"])).toEqual([1, 2])
   })
 
   it("reports a number failure on the object key path", () => {
-    const schema = object({ port: coerce.number() })
+    const schema = object({ port: preprocess(decimalString, number()) })
     const result = failure(schema, { port: "nope" })
     expect(result.issues[0]?.type).toBe("number")
     expect(result.issues[0]?.path).toEqual([{ key: "port" }])
   })
-})
 
-describe("preprocess", () => {
   it("converts string flags without Boolean()", () => {
     const verbose = preprocess((value) => {
       if (typeof value !== "string") return value
@@ -153,14 +131,14 @@ describe("preprocess", () => {
     expect(ran).toBe(true)
 
     ran = false
-    const coerced = pipe(
-      coerce.number(),
+    const converted = pipe(
+      preprocess(decimalString, number()),
       transform(() => {
         ran = true
         return 1
       }),
     )
-    const result = failure(coerced, "nope")
+    const result = failure(converted, "nope")
     expect(result.issues[0]?.type).toBe("number")
     expect(ran).toBe(false)
   })
@@ -268,7 +246,9 @@ describe("preprocess", () => {
   })
 
   it("rejects a preprocess placeholder in templateLiteral", () => {
-    expect(() => templateLiteral([coerce.number()])).toThrow(/unsupported placeholder/)
+    expect(() => templateLiteral([preprocess(decimalString, number())])).toThrow(
+      /unsupported placeholder/,
+    )
   })
 
   it("keeps schema metadata and an unset issues list on a clean run", () => {
@@ -406,8 +386,9 @@ describe("preprocess", () => {
   })
 
   it("uses the inner expects string so a union message stays readable", () => {
-    expect(coerce.number().expects).toBe("number")
-    const schema = union([coerce.number(), string()])
+    const converted = preprocess(decimalString, number())
+    expect(converted.expects).toBe("number")
+    const schema = union([converted, string()])
     expect(schema.expects).toBe("number | string")
     const result = failure(schema, undefined)
     expect(result.issues[0]?.message).toBe(
@@ -417,13 +398,13 @@ describe("preprocess", () => {
 
   it("does not change the original value that is() accepts", () => {
     const value = "8080"
-    expect(is(coerce.number(), value)).toBe(true)
+    expect(is(preprocess(decimalString, number()), value)).toBe(true)
     expect(value).toBe("8080")
   })
 })
 
 describe("preprocessAsync", () => {
-  it("coerces through an async operation and an async inner schema", async () => {
+  it("converts through an async operation and an async inner schema", async () => {
     const marked = preprocessAsync(async (value) => value, string())
     expect(marked.kind).toBe("schema")
     expect(marked.type).toBe("preprocess")

@@ -5,6 +5,7 @@ import { object, objectAsync, string, union } from "../src/index.ts"
  * Runtime guard for issue #20 AC3: populating `~standard.types` is type-level only. The
  * runtime props object must stay exactly version/vendor/validate, with no `types` field
  * added (the present `types` is a phantom carrier asserted in the type, never built).
+ * Standard JSON Schema is opt-in via `withJsonSchema` and is not on this object.
  */
 describe("~standard runtime shape is unchanged (#20)", () => {
   const cases = {

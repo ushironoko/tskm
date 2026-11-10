@@ -75,6 +75,58 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--debounce"])).toThrow("--debounce requires a millisecond number")
   })
 
+  it("--approximate is undefined when absent, so the config's list applies", () => {
+    expect(parseArgs([]).approximate).toBeUndefined()
+  })
+
+  it("--approximate takes a comma-separated list of known names", () => {
+    expect(parseArgs(["--approximate", "bigint,date"]).approximate).toEqual(["bigint", "date"])
+    expect(parseArgs(["--approximate", "transform"]).approximate).toEqual(["transform"])
+  })
+
+  it("repeated --approximate flags merge, and repeats collapse", () => {
+    expect(
+      parseArgs(["--approximate", "bigint", "--approximate", "date,bigint"]).approximate,
+    ).toEqual(["bigint", "date"])
+  })
+
+  it("--approximate rejects an unknown name and lists the known names", () => {
+    expect(() => parseArgs(["--approximate", "bigint,Date"])).toThrow(
+      'tskm: --approximate has unknown value "Date" (known values: bigint, date, undefined, check, transform).',
+    )
+  })
+
+  it("--approximate rejects a space-separated near miss instead of trimming it", () => {
+    expect(() => parseArgs(["--approximate", "bigint, date"])).toThrow(
+      'tskm: --approximate has unknown value " date"',
+    )
+  })
+
+  it("--approximate without a value throws and lists the names", () => {
+    expect(() => parseArgs(["--approximate"])).toThrow(
+      "--approximate requires a comma-separated list (bigint, date, undefined, check, transform)",
+    )
+  })
+
+  it("help lists --approximate with its names", async () => {
+    const savedWrite = process.stdout.write.bind(process.stdout)
+    const savedArgv = process.argv
+    let out = ""
+    process.stdout.write = ((chunk: Uint8Array | string) => {
+      out += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString()
+      return true
+    }) as typeof process.stdout.write
+    process.argv = ["bun", "cli", "--help"]
+    try {
+      await main()
+    } finally {
+      process.argv = savedArgv
+      process.stdout.write = savedWrite as typeof process.stdout.write
+    }
+    expect(out).toContain("--approximate <list>")
+    expect(out).toContain("bigint,date,undefined,check,transform")
+  })
+
   it("a leading-dash unknown flag does not become the command", () => {
     expect(parseArgs(["--unknown"]).command).toBeUndefined()
     expect(parseArgs(["--unknown", "gen"]).command).toBe("gen")

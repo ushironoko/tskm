@@ -96,7 +96,16 @@ describe("cli-core main() — real command execution", () => {
   it.skipIf(!bun)(
     "`json-schema` emits a schema file and reports the written file with its schema names",
     async () => {
-      install(["json-schema", "--root", fixtureRoot, "--exec", bun as string])
+      // The fixture's transform is not representable: the file opts into its approximation.
+      install([
+        "json-schema",
+        "--root",
+        fixtureRoot,
+        "--exec",
+        bun as string,
+        "--approximate",
+        "transform",
+      ])
       await main()
 
       expect(existsSync(jsonOutput)).toBe(true)
@@ -107,4 +116,27 @@ describe("cli-core main() — real command execution", () => {
     },
     60_000,
   )
+
+  it.skipIf(!bun)(
+    "`json-schema` fails closed by default: exit 1, the path and option are printed, no file is written",
+    async () => {
+      install(["json-schema", "--root", fixtureRoot, "--exec", bun as string])
+      await main()
+
+      expect(existsSync(jsonOutput)).toBe(false)
+      expect(process.exitCode).toBe(1)
+      expect(stderr).toContain("accountSchema.nameLength")
+      expect(stderr).toContain('cannot convert pipe item "transform" to JSON Schema output')
+      expect(stderr).toContain("--approximate transform")
+      expect(stderr).toContain("json-schema failed with 1 error(s)")
+      expect(stdout).toContain("tskm: no JSON Schema generated.")
+    },
+    60_000,
+  )
+
+  it("`json-schema` rejects an unknown --approximate name before running anything", async () => {
+    install(["json-schema", "--root", fixtureRoot, "--approximate", "bigint,Date"])
+    await expect(main()).rejects.toThrow('--approximate has unknown value "Date"')
+    expect(existsSync(jsonOutput)).toBe(false)
+  })
 })
