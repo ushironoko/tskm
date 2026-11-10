@@ -39,6 +39,11 @@ export interface WatchPlanContext {
   readonly tsconfigPath: string
   /** Abs paths from `session.collectSources()`. */
   readonly knownSources: ReadonlySet<string>
+  /**
+   * True when the output for this path was generated from its current content (see
+   * {@link TskmSession.isCurrent}). Consulted for known sources only.
+   */
+  readonly isCurrent: (absPath: string) => boolean
 }
 
 export interface WatchPlan {
@@ -73,6 +78,14 @@ export function planWatchActions(
     }
     if (event.path === ctx.tsconfigPath) {
       full = true
+      continue
+    }
+    // An event reports that something was written, not that its content changed. A known
+    // source whose output already matches its content is not a change, whatever the event
+    // kind. That covers writes made before watch() began (Node can deliver them to a watcher
+    // attached later on the same directory) and rewrites with identical bytes. A source that
+    // is gone or differs still falls through to the rules below.
+    if (ctx.knownSources.has(event.path) && ctx.isCurrent(event.path)) {
       continue
     }
     // A rename is an add/delete/move: the source set itself changed, so the safe
@@ -118,27 +131,13 @@ export async function watch(options: WatchOptions = {}): Promise<WatchController
   const session = createSession(config)
   const pretty = options.pretty
 
-  // Abs paths this process just wrote (sidecars, or in inplace mode the source itself).
-  // The kernel reports those writes back through fs.watch; suppressing the very next
-  // event for each path stops a generate pass from retriggering itself. Cleared every
-  // tick so a genuine user edit landing later is still seen.
-  const selfWrites = new Set<string>()
+  options.onGenerate?.(session.generateAll(pretty))
 
-  function recordSelfWrites(result: GenerateResult): void {
-    for (const file of result.files) {
-      if (file.changed) {
-        selfWrites.add(file.output)
-      }
-    }
-  }
-
-  function emit(result: GenerateResult): void {
-    recordSelfWrites(result)
-    options.onGenerate?.(result)
-  }
-
-  emit(session.generateAll(pretty))
-
+  // Events are only hints about what to look at. Whether a source needs regenerating is
+  // decided at flush time by comparing its content with what its output was generated
+  // from (session.isCurrent). That covers this process's own writes (sidecars are artifacts,
+  // and an inplace rewrite is recorded with the text it wrote) and writes that predate
+  // watch(), which fs.watch can still report.
   const pending = new Map<string, WatchEvent>()
   let timer: ReturnType<typeof setTimeout> | undefined
   let closed = false
@@ -155,14 +154,11 @@ export async function watch(options: WatchOptions = {}): Promise<WatchController
     const plan = planWatchActions(batch, {
       tsconfigPath: config.tsconfig,
       knownSources,
+      isCurrent: session.isCurrent,
     })
 
-    // A fresh tick: the prior pass's writes have been observed (or never arrived),
-    // so any path edited from here on must be treated as a real change.
-    selfWrites.clear()
-
     if (plan.full) {
-      emit(session.generateAll(pretty))
+      options.onGenerate?.(session.generateAll(pretty))
       return
     }
     if (plan.files.length === 0) {
@@ -172,7 +168,7 @@ export async function watch(options: WatchOptions = {}): Promise<WatchController
       const { file, diagnostics } = session.generateFile(sourceAbs, pretty)
       return { files: file ? [file] : [], diagnostics }
     })
-    emit(mergeResults(results))
+    options.onGenerate?.(mergeResults(results))
   }
 
   let watcher: FSWatcher | undefined
@@ -184,9 +180,9 @@ export async function watch(options: WatchOptions = {}): Promise<WatchController
     if (!abs.endsWith(".ts") && abs !== config.tsconfig) {
       return
     }
-    // Drop the echo of our own write so a generate pass can't retrigger itself.
-    if (selfWrites.has(abs)) {
-      selfWrites.delete(abs)
+    // Our own outputs are never inputs. Their echoes are dropped here, so they neither wait on
+    // nor restart the debounce; the planner would drop them too.
+    if (isGeneratedArtifact(abs)) {
       return
     }
     const eventKind: WatchEvent["kind"] = kind === "rename" ? "rename" : "change"
