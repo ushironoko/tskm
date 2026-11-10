@@ -19,4 +19,5 @@ test("tanstack form onChange accepts a tskm schema", () => {
 test("tanstack form onChange rejects an invalid value", () => {
   const result = formWith(invalidUser as unknown as typeof validUser).validateSync("change")
   expect(result.hasErrored).toBe(true)
+  expect(Object.keys(result.fieldsErrorMap).sort()).toEqual(["age", "email", "name"])
 })

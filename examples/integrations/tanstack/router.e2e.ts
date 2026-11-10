@@ -5,6 +5,7 @@ import {
   createRoute,
   createRouter,
 } from "@tanstack/react-router"
+import { type IssueLike, issueFields } from "../src/issues.ts"
 import { userSchema } from "../src/user-schema.ts"
 
 const rootRoute = createRootRoute()
@@ -37,9 +38,10 @@ test("tanstack router validateSearch accepts a tskm schema", async () => {
 })
 
 test("tanstack router validateSearch rejects an invalid search", async () => {
-  // Search validation throws inside route matching. `load()` still resolves and
-  // records the SearchParamError on the index match.
+  // Search validation throws inside route matching. `load()` still resolves and records
+  // the error on the index match, with the Standard Schema issues on its cause.
   const loaded = await loadAt("/?name=&email=not-an-email&age=nope")
   expect(loaded.match.status).toBe("error")
-  expect(loaded.match.error).toBeDefined()
+  const { cause } = loaded.match.error as Error & { cause: { issues: IssueLike[] } }
+  expect(issueFields(cause.issues)).toEqual(["age", "email", "name"])
 })

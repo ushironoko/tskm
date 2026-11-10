@@ -94,6 +94,6 @@ test("conform future useForm rejects an invalid submission", async () => {
   const result = await submit({ name: "", email: "not-an-email" })
   expect(result.kind).toBe("error")
   if (result.kind !== "error") return
-  expect(result.fieldErrors.name?.length).toBeGreaterThan(0)
-  expect(result.fieldErrors.email?.length).toBeGreaterThan(0)
+  // profileSchema has only name and email, so exactly those two fields must fail.
+  expect(Object.keys(result.fieldErrors).sort()).toEqual(["email", "name"])
 })

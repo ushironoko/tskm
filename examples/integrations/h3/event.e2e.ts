@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { H3, readValidatedBody } from "h3"
+import { type IssueLike, issueFields } from "../src/issues.ts"
 import { invalidUser, userSchema, validUser } from "../src/user-schema.ts"
 
 function createApp() {
@@ -28,4 +29,6 @@ test("h3 readValidatedBody accepts a tskm schema", async () => {
 test("h3 readValidatedBody rejects an invalid body", async () => {
   const response = await post(invalidUser)
   expect(response.status).toBe(400)
+  const body = (await response.json()) as { data: { issues: IssueLike[] } }
+  expect(issueFields(body.data.issues)).toEqual(["age", "email", "name"])
 })

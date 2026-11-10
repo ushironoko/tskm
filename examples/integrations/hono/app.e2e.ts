@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { sValidator } from "@hono/standard-validator"
 import { Hono } from "hono"
+import { type IssueLike, issueFields } from "../src/issues.ts"
 import { invalidUser, userSchema, validUser } from "../src/user-schema.ts"
 
 function createApp() {
@@ -26,4 +27,6 @@ test("hono sValidator accepts a tskm schema", async () => {
 test("hono sValidator rejects an invalid body", async () => {
   const response = await post(invalidUser)
   expect(response.status).toBe(400)
+  const body = (await response.json()) as { error: IssueLike[] }
+  expect(issueFields(body.error)).toEqual(["age", "email", "name"])
 })

@@ -19,5 +19,5 @@ test("standardSchemaResolver accepts a tskm schema", async () => {
 test("standardSchemaResolver rejects an invalid value", async () => {
   const result = await resolver(invalidUser as unknown as typeof validUser, undefined, options)
   expect(result.values).toEqual({})
-  expect(result.errors).not.toEqual({})
+  expect(Object.keys(result.errors).sort()).toEqual(["age", "email", "name"])
 })

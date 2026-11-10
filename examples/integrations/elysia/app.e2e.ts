@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { Elysia } from "elysia"
+import { type IssueLike, issueFields } from "../src/issues.ts"
 import { invalidUser, userSchema, validUser } from "../src/user-schema.ts"
 
 function createApp() {
@@ -27,4 +28,6 @@ test("elysia body accepts a tskm schema", async () => {
 test("elysia body rejects an invalid payload", async () => {
   const response = await post(invalidUser)
   expect(response.status).toBe(422)
+  const body = (await response.json()) as { errors: IssueLike[] }
+  expect(issueFields(body.errors)).toEqual(["age", "email", "name"])
 })
