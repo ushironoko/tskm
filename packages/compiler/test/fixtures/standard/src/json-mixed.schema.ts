@@ -12,6 +12,3 @@ export const zodSchema = z.object({ label: z.string(), count: z.number().optiona
 export const valibotSchema = v.object({ name: v.string() })
 
 export const arkSchema = type({ flag: "boolean" })
-
-// Unrepresentable in JSON Schema: must be SKIPPED with a reason, never written.
-export const bigSchema = z.bigint()

@@ -82,6 +82,7 @@ describe("parseArgs", () => {
   it("--approximate takes a comma-separated list of known names", () => {
     expect(parseArgs(["--approximate", "bigint,date"]).approximate).toEqual(["bigint", "date"])
     expect(parseArgs(["--approximate", "transform"]).approximate).toEqual(["transform"])
+    expect(parseArgs(["--approximate", "nonfinite"]).approximate).toEqual(["nonfinite"])
   })
 
   it("repeated --approximate flags merge, and repeats collapse", () => {
@@ -92,7 +93,7 @@ describe("parseArgs", () => {
 
   it("--approximate rejects an unknown name and lists the known names", () => {
     expect(() => parseArgs(["--approximate", "bigint,Date"])).toThrow(
-      'tskm: --approximate has unknown value "Date" (known values: bigint, date, undefined, check, transform).',
+      'tskm: --approximate has unknown value "Date" (known values: bigint, date, undefined, check, transform, nonfinite).',
     )
   })
 
@@ -104,7 +105,7 @@ describe("parseArgs", () => {
 
   it("--approximate without a value throws and lists the names", () => {
     expect(() => parseArgs(["--approximate"])).toThrow(
-      "--approximate requires a comma-separated list (bigint, date, undefined, check, transform)",
+      "--approximate requires a comma-separated list (bigint, date, undefined, check, transform, nonfinite)",
     )
   })
 
