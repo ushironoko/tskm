@@ -56,9 +56,10 @@ Arktype's direct call does not build a result object. The bench uses Standard
 Schema `validate`, which does. typebox 1.4.3 has no `~standard` and no
 `safeParse`; `Parse` returns the value or throws.
 
-tskm is imported from `packages/tskm/src` in this repository (package version
-in `packages/tskm/package.json`). The others resolve from this directory's
-`node_modules`.
+tskm is imported from the built `packages/tskm/dist` (the files npm installs; the
+harness rebuilds it before measuring, so it matches `src`). Importing `src` makes Bun
+transpile TypeScript at load time: in a memory probe that added about 9% to peak RSS
+(104 MB vs 95 MB). The others resolve from this directory's `node_modules`.
 
 ## Speed
 

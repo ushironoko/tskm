@@ -20,7 +20,7 @@ const expressions: Record<
   { readonly imports: string; readonly body: string; readonly typeOf: string }
 > = {
   tskm: {
-    imports: `import { array, boolean, email, integer, maxLength, maxValue, minLength, minValue, number, object, picklist, pipe, string, type InferOutput } from "../../../../packages/tskm/src/index.ts"`,
+    imports: `import { array, boolean, email, integer, maxLength, maxValue, minLength, minValue, number, object, picklist, pipe, string, type InferOutput } from "../../../../packages/tskm/dist/index.mjs"`,
     body: `object({
   id: pipe(number(), integer(), minValue(1)),
   name: pipe(string(), minLength(1), maxLength(100)),

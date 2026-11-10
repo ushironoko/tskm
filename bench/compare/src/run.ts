@@ -1,6 +1,8 @@
+import { spawnSync } from "node:child_process"
 import { readFileSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { cpus, totalmem } from "node:os"
+import { fileURLToPath } from "node:url"
 import { type BundleRow, measureBundle } from "./bundle.ts"
 import {
   type LibraryName,
@@ -24,6 +26,17 @@ function packageVersion(name: string): string {
 function tskmVersion(): string {
   const file = new URL("../../../packages/tskm/package.json", import.meta.url)
   return (JSON.parse(readFileSync(file, "utf8")) as { version: string }).version
+}
+
+/** tskm is measured from its built `dist`, the files npm installs (Bun transpiles `src` on
+ * load, which adds memory and time that a user of the package never pays). Rebuild first so
+ * `dist` cannot be stale. */
+function buildTskm(): void {
+  const cwd = fileURLToPath(new URL("../../../packages/tskm/", import.meta.url))
+  const child = spawnSync(process.execPath, ["run", "build"], { cwd, encoding: "utf8" })
+  if (child.error || child.status !== 0) {
+    throw new Error(`building @tskm/core failed\n${child.stdout}\n${child.stderr}${child.error}`)
+  }
 }
 
 function versions(): Record<LibraryName, string> {
@@ -139,6 +152,7 @@ function resultsMarkdown(input: {
 const only = new Set(process.argv.slice(2))
 const selected = libraries.filter((name) => only.size === 0 || only.has(name))
 
+buildTskm()
 const host = machine()
 const libraryVersions = versions()
 const speed: SpeedRow[] = []

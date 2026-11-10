@@ -13,7 +13,7 @@ import {
   pipe,
   safeParse,
   string,
-} from "../../../../packages/tskm/src/index.ts"
+} from "../../../../packages/tskm/dist/index.mjs"
 
 const bounded = (min: number, max: number) => pipe(string(), minLength(min), maxLength(max))
 
