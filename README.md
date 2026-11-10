@@ -70,7 +70,7 @@ export const categorySchema = recursive((self) =>
 
 export type Category = {
   name: string;
-  children: Category[]
+  children: Category[];
 }
 ```
 
@@ -267,6 +267,8 @@ The compiler never reads your schema at runtime. The inferred type only exists i
    The compiler then asks the **TypeScript 7.1 checker** (`typescript/sync`: `getTypeAtPosition` and `typeToString`, no truncation, anonymous structural form) for the type at each marker. The client is the official sync API, peer-dependent on `typescript` `>=7.1.0-beta <8`, which also ships the native `tsc` binary. The prettified (`__P`) rendering is used for top-level objects; everything else keeps the raw form, because `__P` applied to a top-level `Date`, `Map`, `Set`, or branded primitive would expand the entire prototype. Because the answer comes from the type system, types produced by `transform`, generics, or conditional types all resolve correctly.
 
 3. **Emit.** The resolved type is pretty-printed deterministically and written to a sidecar `*.gen.ts`, together with any imports the rendered type needs: vendor brand markers (zod's `$brand`, valibot's `Brand`) and exported self-annotation types of recursive external schemas. An aliased re-export is rebound on import. The query overlay is dropped when the run finishes, and your source is never modified.
+
+   **Named parts.** A part of a type that is itself an exported object schema of the same module is written by that schema's name, and its alias is declared once. With `addressSchema` exported and used by `userSchema`, the sidecar reads `address: Address` inside `User`, and `Address` is the object type from `addressSchema`. A discriminated union whose members are exported reads the same way (`Home | Work`), and a union of objects is named where it is used. The rule compares printed text: a part that prints exactly like another alias's object body is that alias, so a name never changes a type. Two limits are deliberate. A part from another module stays inline, because naming it would need an import from that module's sidecar, and that sidecar may not exist or may be pruned. And a name is never written where it would clash with an identifier the sidecar imports, such as valibot's `Brand`. Primitives, literal unions, brands, and arrays are not named by this rule.
 
    Failure is always closed. A schema that resolves to `any` / `unknown` / `never` keeps the previous output, with a diagnostic. A file carrying external schemas is additionally verified against the real checker before it is written; a render that would not compile is reported with the unresolved identifier names, and nothing is overwritten.
 

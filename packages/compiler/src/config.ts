@@ -74,8 +74,10 @@ export interface TskmCodegenOptions {
   /**
    * When `true`, a non-recursive named `export const` schema is emitted as its own
    * `export type` alias and referenced by name from other generated types, instead of
-   * being inlined at every reference site. Default `false` (output is byte-identical to
-   * the inline form). Enabling it routes non-recursive tskm schemas through the structural
+   * being inlined at every reference site. Default `false`. Object parts are already named
+   * by default (see named-parts.ts), so this option is only needed for what that pass leaves
+   * inline: it names every shared non-recursive tskm schema by identity, including primitives,
+   * literals, and brands. Enabling it routes non-recursive tskm schemas through the structural
    * worker, so a file that previously took the zero-cost checker path now spawns it.
    */
   readonly nameSharedSchemas?: boolean

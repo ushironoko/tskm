@@ -81,12 +81,12 @@ describe("schemaToTypeString — per-type TS bodies", () => {
       // InferObjectOutput has no `?` modifier — optionality lives in the value union.
       "object with optional key keeps the key required",
       s.object({ id: s.string(), nick: s.optional(s.string()) }),
-      "{ id: string; nick: string | undefined }",
+      "{ id: string; nick: string | undefined; }",
     ],
     [
       "object with nullish key keeps the key required",
       s.object({ id: s.string(), alt: s.nullish(s.string()) }),
-      "{ id: string; alt: string | null | undefined }",
+      "{ id: string; alt: string | null | undefined; }",
     ],
     ["empty object", s.object({}), "{}"],
     ["validation-only pipe keeps the base type", pipe(s.string(), minLength(3)), "string"],
@@ -129,7 +129,7 @@ describe("schemaToTypeString — recursion", () => {
         child: s.optional(root),
       })
     const result = walk(root, "Tree", new Map<object, string>([[root, "Tree"]]))
-    expect(result.typeString).toBe("{ name: string; score: number; child: Tree | undefined }")
+    expect(result.typeString).toBe("{ name: string; score: number; child: Tree | undefined; }")
     expect(result.bearsOpaque).toBe(false)
     expect(result.bearsUnsupported).toBe(false)
     expect(result.warnings).toHaveLength(0)
@@ -138,7 +138,7 @@ describe("schemaToTypeString — recursion", () => {
   it("materializes the self-cycle as a named back-edge (hoisted once)", () => {
     const root = categoryRoot()
     const result = walk(root, "Category", new Map<object, string>([[root, "Category"]]))
-    expect(result.typeString).toBe("{ name: string; children: Category[] }")
+    expect(result.typeString).toBe("{ name: string; children: Category[]; }")
     expect(result.bearsOpaque).toBe(false)
     expect(result.unsupported).toBe(false)
     expect(result.warnings).toHaveLength(0)
@@ -155,7 +155,7 @@ describe("schemaToTypeString — recursion", () => {
     }
     root.getter = () => body
     const result = walk(root, "Node", new Map<object, string>([[root, "Node"]]))
-    expect(result.typeString).toBe("{ next: Node | undefined }")
+    expect(result.typeString).toBe("{ next: Node | undefined; }")
     expect(result.unsupported).toBe(false)
   })
 
@@ -178,7 +178,7 @@ describe("schemaToTypeString — recursion", () => {
     const root: Record<string, unknown> = { kind: "schema", type: "recursive" }
     root.getter = () => s.object({ name: s.string() })
     const result = walk(root, "Plain", new Map<object, string>([[root, "Plain"]]))
-    expect(result.typeString).toBe("{ name: string }")
+    expect(result.typeString).toBe("{ name: string; }")
   })
 
   it("short-circuits references to OTHER exported schemas by their alias name", () => {
@@ -193,8 +193,8 @@ describe("schemaToTypeString — recursion", () => {
     ])
     const resultA = schemaToTypeString(a, { rootName: "A", typeNames })
     const resultB = schemaToTypeString(b, { rootName: "B", typeNames })
-    expect(resultA.typeString).toBe("{ b: B | undefined }")
-    expect(resultB.typeString).toBe("{ a: A | undefined }")
+    expect(resultA.typeString).toBe("{ b: B | undefined; }")
+    expect(resultB.typeString).toBe("{ a: A | undefined; }")
     expect(resultA.unsupported).toBe(false)
   })
 
@@ -219,7 +219,7 @@ describe("schemaToTypeString — recursion", () => {
     const root: Record<string, unknown> = { kind: "schema", type: "recursive" }
     root.getter = () => s.object({ meta: helper, kids: s.array(root) })
     const result = walk(root, "Tree", new Map<object, string>([[root, "Tree"]]))
-    expect(result.typeString).toBe("{ meta: { tag: string }; kids: Tree[] }")
+    expect(result.typeString).toBe("{ meta: { tag: string; }; kids: Tree[]; }")
     expect(result.unsupported).toBe(false)
   })
 
@@ -277,7 +277,7 @@ describe("schemaToTypeString — Tier-2 transform floor", () => {
     }
     root.getter = () => body
     const result = walk(root, "Category", new Map<object, string>([[root, "Category"]]))
-    expect(result.typeString).toBe("{ age: unknown; children: Category[] }")
+    expect(result.typeString).toBe("{ age: unknown; children: Category[]; }")
     expect(result.bearsOpaque).toBe(true)
     expect(result.opaquePaths.some((p) => p.includes(".entries[age].pipe[1]"))).toBe(true)
     expect(result.warnings.some((w) => w.includes(".entries[age]") && w.includes("unknown"))).toBe(
@@ -291,7 +291,7 @@ describe("schemaToTypeString — Tier-2 transform floor", () => {
     root.getter = () => body
     const result = walk(root, "Node", new Map<object, string>([[root, "Node"]]))
     expect(result.typeString).toBe(
-      '{ id: string; parent: Node | undefined } & { readonly "~brand": "Node" }',
+      '{ id: string; parent: Node | undefined; } & { readonly "~brand": "Node" }',
     )
     expect(result.bearsOpaque).toBe(false)
     expect(result.dataKeys).toEqual(["id", "parent"])
@@ -329,7 +329,7 @@ describe("schemaToTypeString — fail-closed guards", () => {
     // a schema object is expected (e.g. an entry that is the number 42) cannot be typed,
     // so it degrades to 'unknown' instead of dereferencing a non-object.
     const result = walk(s.object({ bad: 42 }))
-    expect(result.typeString).toBe("{ bad: unknown }")
+    expect(result.typeString).toBe("{ bad: unknown; }")
     expect(result.warnings.some((w) => /non-object schema/.test(w))).toBe(true)
   })
 
@@ -337,7 +337,7 @@ describe("schemaToTypeString — fail-closed guards", () => {
     // null is typeof 'object' but isObject rejects it explicitly; without that guard a
     // null entry would crash the walk, so the fail-closed path must catch it too.
     const result = walk(s.object({ bad: null }))
-    expect(result.typeString).toBe("{ bad: unknown }")
+    expect(result.typeString).toBe("{ bad: unknown; }")
     expect(result.warnings.some((w) => /non-object schema/.test(w))).toBe(true)
   })
 
@@ -404,25 +404,25 @@ describe("schemaToTypeString — faithful optional-property mode (#17)", () => {
 
   it("emits `k?:` with `undefined` stripped for an optional entry", () => {
     expect(walk(objectWith({ id: s.string(), nick: s.optional(s.string()) })).typeString).toBe(
-      "{ id: string; nick?: string }",
+      "{ id: string; nick?: string; }",
     )
   })
 
   it("emits `k?:` keeping `null` for a nullish entry", () => {
     expect(walk(objectWith({ id: s.string(), alt: s.nullish(s.number()) })).typeString).toBe(
-      "{ id: string; alt?: number | null }",
+      "{ id: string; alt?: number | null; }",
     )
   })
 
   it("leaves required entries unchanged under the mode", () => {
     expect(walk(objectWith({ id: s.string(), n: s.number() })).typeString).toBe(
-      "{ id: string; n: number }",
+      "{ id: string; n: number; }",
     )
   })
 
   it("without the flag, optional keys stay required (byte-identical default)", () => {
     expect(walk(s.object({ id: s.string(), nick: s.optional(s.string()) })).typeString).toBe(
-      "{ id: string; nick: string | undefined }",
+      "{ id: string; nick: string | undefined; }",
     )
   })
 })
@@ -451,7 +451,7 @@ describe("schemaToTypeString — templateLiteral and discriminatedUnion (#18, #1
         s.object({ kind: s.literal("s"), side: s.number() }),
       ],
     }
-    expect(walk(du).typeString).toBe('{ kind: "c"; r: number } | { kind: "s"; side: number }')
+    expect(walk(du).typeString).toBe('{ kind: "c"; r: number; } | { kind: "s"; side: number; }')
   })
 })
 

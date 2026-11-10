@@ -8,5 +8,5 @@ export type Node = {
       K in `attr_${string}`
     ]?: number
   };
-  children: Node[]
+  children: Node[];
 }

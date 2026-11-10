@@ -19,7 +19,9 @@ tooling. The `--cpu-prof-md` pass also writes a grep-friendly markdown call summ
 - `lib/report.ts` persists and compares baselines and renders the tables.
 - `validator/` holds the workload suite, the bench entry, and the profile target.
 - `compiler/` holds the codegen bench, the profile target, and the fixture project under
-  `fixtures/perf`.
+  `fixtures/perf`. `compiler/named-parts-size.ts` measures the named-parts sidecar: it builds the
+  400-schema sample in a temp directory and reports its byte size and the tsc instantiation count.
+  Run it against another tree with `--compiler <path>/packages/compiler/src/index.ts`.
 - `baselines/` holds the committed reference numbers. `results/` (gitignored) holds profiles
   and the generated report.
 

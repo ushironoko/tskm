@@ -24,6 +24,24 @@ const VENDOR_LEAK_TABLE: ReadonlyArray<LeakedTypeImport> = [
 ]
 
 /**
+ * The local identifiers a sidecar can import: vendor brand markers and the exported
+ * self-annotation types of recursive external schemas. A generated alias that shares one
+ * of these names must never be referenced by name (named parts, see named-parts.ts): the
+ * reference would make the import necessary, and the import would clash with the alias.
+ */
+export function reservedSidecarNames(
+  targets: ReadonlyArray<{ readonly recursiveAnnotation?: { readonly name: string } }>,
+): ReadonlySet<string> {
+  const names = new Set<string>(VENDOR_LEAK_TABLE.map((entry) => entry.token))
+  for (const target of targets) {
+    if (target.recursiveAnnotation) {
+      names.add(target.recursiveAnnotation.name)
+    }
+  }
+  return names
+}
+
+/**
  * Derives the sidecar's `import type` lines from the resolved metadata. Both
  * sources are double-gated so a coincidental name can never pull in a bogus
  * import: vendor leaks require the matching `vendorHint` AND a whole-word token

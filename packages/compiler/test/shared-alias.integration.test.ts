@@ -6,10 +6,11 @@ import { generate } from "../src/index.ts"
 import { withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
-// End-to-end for the opt-in named-sibling-alias mode (issue #22). A shared non-recursive
-// sub-schema (`addressSchema`) is referenced by several discriminated-union members. With
-// the flag off it inlines at every site; with it on it is emitted once and referenced by
-// name. The on output must also type-check under real tsgo.
+// End-to-end for named sibling aliases (issue #22, and issue #59 for the default). A shared
+// non-recursive sub-schema (`addressSchema`) is referenced by several discriminated-union
+// members. It is emitted once and referenced by name: by default through the named-parts pass,
+// and with `nameSharedSchemas` through the structural walker. Both outputs must also type-check
+// under real tsgo.
 const fixtureRoot = fileURLToPath(new URL("./fixtures/shared-alias", import.meta.url))
 const src = (file: string): string =>
   fileURLToPath(new URL(`./fixtures/shared-alias/src/${file}`, import.meta.url))
@@ -43,13 +44,15 @@ const run = (nameSharedSchemas: boolean, include = "src/union.schema.ts") =>
   })
 
 describe.skipIf(!bun)("named sibling aliases (#22, real worker + tsgo)", () => {
-  it("off (default): the shared sub-schema is inlined at every reference site", async () => {
+  it("off (default): the shared sub-schema is still named, by the named-parts pass", async () => {
+    // The default needs no flag: a shared object part is referenced by name (named-parts.ts).
+    // The walker flag below is a separate, opt-in route to the same names.
     await run(false)
     const gen = readFileSync(genFile, "utf8")
-    // The members inline the address shape and the union inlines its members.
-    expect(gen).toContain("export type Place = {")
-    expect(gen).not.toContain("export type Place = Home | Work")
-    expect(gen).not.toContain("address: Address")
+    expect(gen).toContain("export type Address = {")
+    expect(gen).toContain("address: Address")
+    expect(gen).toContain("export type Place = Home | Work")
+    expect(gen.match(/street: string/g)?.length).toBe(1)
     rmSync(genFile)
   }, 120_000)
 

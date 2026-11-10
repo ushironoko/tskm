@@ -363,7 +363,10 @@ function walkObject(schema: SchemaLike, ctx: WalkContext): string {
       fields.push(`${renderKey(key)}: ${rendered}`)
     }
   }
-  return fields.length === 0 ? "{}" : `{ ${fields.join("; ")} }`
+  // Spelled like the checker prints an object (every member ends in `;`), so a body the walker
+  // renders and a body the checker renders are the same text for the same type. Named parts
+  // (named-parts.ts) match on that text.
+  return fields.length === 0 ? "{}" : `{ ${fields.map((field) => `${field}; `).join("")}}`
 }
 
 /**
