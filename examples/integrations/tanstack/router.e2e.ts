@@ -5,8 +5,8 @@ import {
   createRoute,
   createRouter,
 } from "@tanstack/react-router"
-import { type IssueLike, issueFields } from "../src/issues.ts"
-import { userSchema } from "../src/user-schema.ts"
+import { type IssueLike, issueFields } from "../shared/issues.ts"
+import { userSchema } from "../shared/user-schema.ts"
 
 const rootRoute = createRootRoute()
 const indexRoute = createRoute({

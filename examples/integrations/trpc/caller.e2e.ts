@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { initTRPC } from "@trpc/server"
-import { type IssueLike, issueFields, rejectionOf } from "../src/issues.ts"
-import { invalidUser, userSchema, validUser } from "../src/user-schema.ts"
+import { type IssueLike, issueFields, rejectionOf } from "../shared/issues.ts"
+import { invalidUser, userSchema, validUser } from "../shared/user-schema.ts"
 
 const t = initTRPC.create()
 const appRouter = t.router({

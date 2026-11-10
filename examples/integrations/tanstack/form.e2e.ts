@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { FormApi } from "@tanstack/form-core"
-import { invalidUser, userSchema, validUser } from "../src/user-schema.ts"
+import { invalidUser, userSchema, validUser } from "../shared/user-schema.ts"
 
 function formWith(values: typeof validUser) {
   return new FormApi({

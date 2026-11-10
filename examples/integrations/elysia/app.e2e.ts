@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Elysia } from "elysia"
-import { type IssueLike, issueFields } from "../src/issues.ts"
-import { invalidUser, userSchema, validUser } from "../src/user-schema.ts"
+import { type IssueLike, issueFields } from "../shared/issues.ts"
+import { invalidUser, userSchema, validUser } from "../shared/user-schema.ts"
 
 function createApp() {
   return new Elysia().post("/users", ({ body }) => body, {

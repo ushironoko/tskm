@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { standardSchemaResolver } from "@hookform/resolvers/standard-schema"
-import { invalidUser, userSchema, validUser } from "../src/user-schema.ts"
+import { invalidUser, userSchema, validUser } from "../shared/user-schema.ts"
 
 const resolver = standardSchemaResolver(userSchema)
 

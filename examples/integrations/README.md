@@ -25,9 +25,14 @@ and validates with `schema["~standard"].validate`. The sample does not pass
 the Conform schema is `name` + `email` rather than `userSchema`'s `age: number()`
 (`"36"` is not a number). The DOM for that test comes from `happy-dom`.
 
-The shared schema is [`src/user-schema.ts`](src/user-schema.ts): `name` (non-empty
-string), `email`, and `age` (number). Each `*.e2e.ts` file checks one success and
-one failure.
+The shared schema is [`shared/user-schema.ts`](shared/user-schema.ts): `name`
+(non-empty string), `email`, and `age` (number). Each `*.e2e.ts` file checks one
+success and one failure, and the failure asserts which fields the issues name.
+
+The shared code lives in `shared/`, not `src/`. `scripts/node-smoke.mjs` runs
+`tskm gen` on every example that has a `src/` directory, and the generator emits a
+`.gen.ts` for each schema module under `src/`. This example is not a generation
+project, so it stays out of that path.
 
 Files are named `*.e2e.ts` so the root `bun test` does not pick them up. CI runs
 them from [`.github/workflows/integrations.yml`](../../.github/workflows/integrations.yml).

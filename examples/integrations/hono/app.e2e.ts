@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test"
 import { sValidator } from "@hono/standard-validator"
 import { Hono } from "hono"
-import { type IssueLike, issueFields } from "../src/issues.ts"
-import { invalidUser, userSchema, validUser } from "../src/user-schema.ts"
+import { type IssueLike, issueFields } from "../shared/issues.ts"
+import { invalidUser, userSchema, validUser } from "../shared/user-schema.ts"
 
 function createApp() {
   return new Hono().post("/users", sValidator("json", userSchema), (c) => {

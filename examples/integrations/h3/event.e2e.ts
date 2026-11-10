@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { H3, readValidatedBody } from "h3"
-import { type IssueLike, issueFields } from "../src/issues.ts"
-import { invalidUser, userSchema, validUser } from "../src/user-schema.ts"
+import { type IssueLike, issueFields } from "../shared/issues.ts"
+import { invalidUser, userSchema, validUser } from "../shared/user-schema.ts"
 
 function createApp() {
   const app = new H3()
