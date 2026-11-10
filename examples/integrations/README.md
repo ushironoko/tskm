@@ -45,3 +45,6 @@ bun run --cwd examples/integrations test
 `@tskm/core` resolves through the workspace link to the built `dist`, the same
 entry a consumer installs, for both the typecheck and the tests. So `bun run build`
 must run first. Without it the tests fail with `Cannot find module '@tskm/core'`.
+
+`test` runs every `*/*.e2e.ts` file, so a new framework directory is picked up
+without editing `package.json`.
