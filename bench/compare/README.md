@@ -87,9 +87,19 @@ transpile TypeScript at load time: in a memory probe that added about 9% to peak
 
 ## Speed
 
-`process.hrtime.bigint`. Warmup is 20,000 valid parses. Then 5 runs of 100,000
-valid parses and 5 runs of 100,000 invalid parses. The tables use the median.
-The boolean is accumulated so the loop is not removed.
+`process.hrtime.bigint`. Each library runs in its own fresh process
+(`src/speed-worker.ts`). A process warms up with 100,000 valid and 100,000 invalid parses,
+then times 100,000 valid and 100,000 invalid parses. The driver (`src/speed.ts`) repeats
+this for 5 rounds and interleaves the libraries within each round, so a slow period on the
+shared machine hits every library in that round alike.
+
+The table shows the median over the rounds and the min – max range. The worker counts the
+accepted verdicts and the driver fails the run if a valid payload is not accepted or an
+invalid one is. Those counts also keep the parse results alive, so the loop is not removed.
+
+On the recorded machine the range across processes is large: up to about 50% for some
+libraries, while the spread within one process is 5–10%. Ratios between libraries that
+fall inside those ranges are not resolved by this run.
 
 ## Memory
 

@@ -9,13 +9,13 @@ import {
   type LibraryName,
   libraries,
   measuredIterations,
-  measuredRuns,
+  measuredRounds,
   memoryParses,
   typeCopies,
   warmupIterations,
 } from "./config.ts"
 import { type MemoryRow, measureMemory } from "./memory.ts"
-import { measureSpeed, type SpeedRow } from "./speed.ts"
+import { measureSpeed, type Range, type SpeedRow } from "./speed.ts"
 import { measureTypes, type TypeRow } from "./types-count.ts"
 
 const require = createRequire(import.meta.url)
@@ -62,8 +62,17 @@ function machine() {
   }
 }
 
+/** 1, 5 and 15 minute load averages. Other processes share this machine, so record them. */
+function loadAverage(): string {
+  return readFileSync("/proc/loadavg", "utf8").split(" ").slice(0, 3).join(" ")
+}
+
 function cell(value: number): string {
   return value.toLocaleString("en-US")
+}
+
+function spread(range: Range): string {
+  return `${cell(Math.round(range.min))} – ${cell(Math.round(range.max))}`
 }
 
 function resultsMarkdown(input: {
@@ -74,6 +83,7 @@ function resultsMarkdown(input: {
   readonly types: readonly TypeRow[]
   readonly versions: Record<LibraryName, string>
   readonly host: ReturnType<typeof machine>
+  readonly load: { readonly start: string; readonly end: string }
 }): string {
   const speed = new Map(input.speed.map((row) => [row.library, row]))
   const memory = new Map(input.memory.map((row) => [row.library, row]))
@@ -94,7 +104,8 @@ function resultsMarkdown(input: {
     `- typescript: ${packageVersion("typescript")} (\`tsc\`)`,
     `- @typescript/native-preview: ${packageVersion("@typescript/native-preview")} (\`tsgo\`)`,
     `- Copies for type instantiations: ${typeCopies}`,
-    `- Speed: warmup ${cell(warmupIterations)}, then ${measuredRuns} runs of ${cell(measuredIterations)}, median`,
+    `- Speed: each library in a fresh process; warmup ${cell(warmupIterations)} per payload, then ${measuredRounds} interleaved rounds of ${cell(measuredIterations)} valid and ${cell(measuredIterations)} invalid parses. Table: median, with min – max over rounds.`,
+    `- Load average (1, 5, 15 min): before speed ${input.load.start}; after speed ${input.load.end}`,
     `- Memory parses: ${cell(memoryParses)}`,
     "",
     "## Versions",
@@ -115,14 +126,14 @@ function resultsMarkdown(input: {
     "",
     "## Speed",
     "",
-    "ops/s, median. Valid input is the shared payload. Invalid input fails every constraint group.",
+    "ops/s. Valid input is the shared payload. Invalid input fails every constraint group. Each cell is the median over the rounds, with the min – max range below it in the next column.",
     "",
-    "| library | valid ops/s | valid ns/op | invalid ops/s |",
-    "| --- | ---: | ---: | ---: |",
+    "| library | valid ops/s | valid min – max | valid ns/op | invalid ops/s | invalid min – max |",
+    "| --- | ---: | ---: | ---: | ---: | ---: |",
     ...libraries.map((name) => {
       const row = speed.get(name)
       if (!row) throw new Error(`missing speed ${name}`)
-      return `| ${name} | ${cell(row.validOpsPerSec)} | ${row.validNsPerOp.toFixed(1)} | ${cell(row.invalidOpsPerSec)} |`
+      return `| ${name} | ${cell(Math.round(row.validOpsPerSec.median))} | ${spread(row.validOpsPerSec)} | ${row.validNsPerOp.toFixed(1)} | ${cell(Math.round(row.invalidOpsPerSec.median))} | ${spread(row.invalidOpsPerSec)} |`
     }),
     "",
     "## Bundle gzip",
@@ -161,10 +172,14 @@ const libraryVersions = versions()
 // Timing a library that disagrees with the spec would measure a different job, so the
 // agreement check runs first and stops the run on any mismatch.
 const agreement = await checkAgreement()
-const speed: SpeedRow[] = []
 const memory: MemoryRow[] = []
 const bundles: BundleRow[] = []
 const types: TypeRow[] = []
+
+const loadStart = loadAverage()
+console.log("speed (interleaved rounds)")
+const speed: SpeedRow[] = measureSpeed(selected)
+const loadEnd = loadAverage()
 
 if (only.size === 0 || only.has("baseline")) {
   console.log("memory baseline")
@@ -172,8 +187,6 @@ if (only.size === 0 || only.has("baseline")) {
 }
 
 for (const name of selected) {
-  console.log(`speed ${name}`)
-  speed.push(await measureSpeed(name))
   console.log(`memory ${name}`)
   memory.push(measureMemory(name))
   console.log(`bundle ${name}`)
@@ -191,6 +204,7 @@ if (selected.length === libraries.length) {
     types,
     versions: libraryVersions,
     host,
+    load: { start: loadStart, end: loadEnd },
   })
   writeFileSync(new URL("../RESULTS.md", import.meta.url), markdown)
   console.log(markdown)
