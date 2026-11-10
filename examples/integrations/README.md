@@ -42,6 +42,6 @@ bun run --cwd examples/integrations typecheck
 bun run --cwd examples/integrations test
 ```
 
-`bun run build` is required for the tests: they import the workspace package,
-whose `exports` point at `dist`. Typecheck resolves `@tskm/core` to the package
-source via this example's `tsconfig` `paths`.
+`@tskm/core` resolves through the workspace link to the built `dist`, the same
+entry a consumer installs, for both the typecheck and the tests. So `bun run build`
+must run first. Without it the tests fail with `Cannot find module '@tskm/core'`.

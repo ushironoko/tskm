@@ -12,10 +12,7 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["bun"],
-    "paths": {
-      "@tskm/core": ["../../packages/tskm/src/index.ts"]
-    }
+    "types": ["bun"]
   },
   "include": ["src", "hono", "trpc", "tanstack", "rhf", "elysia", "orpc", "h3", "conform"]
 }
