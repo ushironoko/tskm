@@ -18,6 +18,20 @@ private example, which is not part of a published tskm package.
 | oRPC | `os.input` | `input(userSchema)` (validation only; no OpenAPI) |
 | h3 | `readValidatedBody` | `readValidatedBody(event, userSchema)` |
 | Conform | `configureForms()` + `useForm` (future) | `useForm(profileSchema)` with the defaults |
+| Vercel AI SDK (`ai` 7) | `tool({ inputSchema })` | `inputSchema: withJsonSchema(userSchema)` (mock model) |
+
+The AI SDK is the one framework here that reads a JSON Schema. It takes
+`schema["~standard"].jsonSchema`, which `withJsonSchema` from `@tskm/core/json-schema`
+adds, so the sample wraps `userSchema` explicitly. A plain tskm schema has no
+`jsonSchema` member, and the SDK rejects it with `does not support JSON Schema
+conversion`. The model is a `MockLanguageModelV4` from `ai/test`, so the test sends no
+request. [`ai-sdk/tool.e2e.ts`](ai-sdk/tool.e2e.ts) checks the document the model
+receives, a valid call, an invalid call (rejected by tskm), a plain schema, and a
+schema tskm cannot express.
+
+No OpenAPI document is generated here. `@orpc/openapi` 1.16.1 has no path for a
+Standard Schema's `jsonSchema`, and hono-openapi 1.5.0 rejects a `tskm` vendor
+(`Unsupported schema vendor`). Each would need its own converter for tskm.
 
 Conform's future API already accepts any Standard Schema (`~standard.version === 1`)
 and validates with `schema["~standard"].validate`. The sample does not pass
@@ -26,8 +40,9 @@ the Conform schema is `name` + `email` rather than `userSchema`'s `age: number()
 (`"36"` is not a number). The DOM for that test comes from `happy-dom`.
 
 The shared schema is [`shared/user-schema.ts`](shared/user-schema.ts): `name`
-(non-empty string), `email`, and `age` (number). Each `*.e2e.ts` file checks one
-success and one failure, and the failure asserts which fields the issues name.
+(non-empty string), `email`, and `age` (number). Each `*.e2e.ts` file checks a success
+and a failure. Where the framework reports the issues, the failure asserts which fields
+they name.
 
 The shared code lives in `shared/`, not `src/`. `scripts/node-smoke.mjs` runs
 `tskm gen` on every example that has a `src/` directory, and the generator emits a

@@ -14,5 +14,16 @@
     "noEmit": true,
     "types": ["bun"]
   },
-  "include": ["shared", "hono", "trpc", "tanstack", "rhf", "elysia", "orpc", "h3", "conform"]
+  "include": [
+    "shared",
+    "ai-sdk",
+    "hono",
+    "trpc",
+    "tanstack",
+    "rhf",
+    "elysia",
+    "orpc",
+    "h3",
+    "conform"
+  ]
 }
