@@ -125,10 +125,11 @@ const expressions: Record<
   },
 }
 
-function sourceFor(name: LibraryName): string {
+/** `copies` schema copies after the imports. `0` writes the imports alone. */
+function sourceFor(name: LibraryName, copies: number): string {
   const spec = expressions[name]
   const lines = [spec.imports, ""]
-  for (let i = 0; i < typeCopies; i++) {
+  for (let i = 0; i < copies; i++) {
     lines.push(`export const s${i} = ${spec.body}`)
     lines.push(`export type T${i} = ${spec.typeOf.replaceAll("INDEX", String(i))}`)
   }
@@ -136,10 +137,11 @@ function sourceFor(name: LibraryName): string {
   return lines.join("\n")
 }
 
-function writeFixture(name: LibraryName): URL {
-  const dir = new URL(`../fixtures/${name}/`, import.meta.url)
+/** Each fixture folder sits directly under `fixtures/`, so the relative tskm import resolves. */
+function writeFixture(folder: string, name: LibraryName, copies: number): URL {
+  const dir = new URL(`../fixtures/${folder}/`, import.meta.url)
   mkdirSync(dir, { recursive: true })
-  writeFileSync(new URL("schemas.ts", dir), sourceFor(name))
+  writeFileSync(new URL("schemas.ts", dir), sourceFor(name, copies))
   writeFileSync(
     new URL("tsconfig.json", dir),
     JSON.stringify(
@@ -198,8 +200,7 @@ function runChecker(command: string, args: string[], cwd: string): string {
  * property of the program, so they must be identical in every run (checked). Check time is
  * wall-clock and noisy, so the row reports its median.
  */
-export function measureTypes(name: LibraryName): readonly TypeRow[] {
-  const dir = writeFixture(name)
+function checkFixture(name: LibraryName, dir: URL): readonly TypeRow[] {
   const cwd = dir.pathname
   const flags = ["-p", "tsconfig.json", "--extendedDiagnostics", "--pretty", "false"]
   const run = (checker: "tsc" | "tsgo"): TypeRow => {
@@ -225,4 +226,18 @@ export function measureTypes(name: LibraryName): readonly TypeRow[] {
     }
   }
   return [run("tsc"), run("tsgo")]
+}
+
+/** The 100-copy fixture behind the Type instantiations table in RESULTS.md. */
+export function measureTypes(name: LibraryName): readonly TypeRow[] {
+  return checkFixture(name, writeFixture(name, name, typeCopies))
+}
+
+/**
+ * The imports alone, with no schema copies, under the same settings. Every 100-copy fixture
+ * contains these imports too, so a zero here means the 100-copy rows need no adjustment.
+ * `src/import-cost.ts` runs this for every library.
+ */
+export function measureImportOnly(name: LibraryName): readonly TypeRow[] {
+  return checkFixture(name, writeFixture(`import-only-${name}`, name, 0))
 }

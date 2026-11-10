@@ -152,10 +152,12 @@ read the instantiation columns as the stable ones. Both checkers are devDependen
 of this package at exact versions (`typescript` 6.0.3, `@typescript/native-preview`
 7.0.0-dev.20260707.2). The repository root does not install `tsgo`, so the root is not used.
 
-Importing each library with nothing else costs 0 to 2,687 instantiations (tskm 1,503,
-arktype 2,687; the others register 0). Those are 7.2% (tskm) and 12.9% (arktype) of the
-smallest 100-copy count (effect, 20,855 in both checkers). The rows are not adjusted for
-these costs.
+Under these settings (tskm is imported from its built `dist`, `skipLibCheck` is on),
+importing each library with nothing else costs 0 instantiations in tsc and in tsgo, for all
+six libraries. The 100-copy rows therefore need no import-cost adjustment. `bun run import-cost`
+(`src/import-cost.ts`) checks this: it writes each library's imports with no schema copies
+to `fixtures/import-only-<library>/`, runs both checkers on them, and exits non-zero unless
+every count is 0. Build the tskm dist first, as for `src/agreement.ts`.
 
 Arktype's count moves from 786,278 to 919,418 because of the constraints, measured one
 change at a time with the same 100-copy shape: the id bound adds 32,052, and the email

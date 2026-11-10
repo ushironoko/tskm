@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "bench": "bun src/run.ts",
+    "import-cost": "bun src/import-cost.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
