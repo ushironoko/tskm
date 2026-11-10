@@ -15,3 +15,12 @@ export const typeCopies = 100
 export const libraries = ["tskm", "zod", "valibot", "arktype", "typebox", "effect"] as const
 
 export type LibraryName = (typeof libraries)[number]
+
+/**
+ * Extra entry points, measured for bundle size only (and checked by the agreement gate).
+ * zod's classic entry is about four times the gzip size of `zod/mini`, zod's own small-bundle
+ * entry, so the bundle table shows both.
+ */
+export const referenceLibraries = ["zod-mini"] as const
+
+export type ReferenceName = (typeof referenceLibraries)[number]

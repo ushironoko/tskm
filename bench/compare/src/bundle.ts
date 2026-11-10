@@ -1,16 +1,16 @@
 import { mkdirSync, writeFileSync } from "node:fs"
 import { gzipSync } from "node:zlib"
 import * as esbuild from "esbuild"
-import type { LibraryName } from "./config.ts"
+import type { LibraryName, ReferenceName } from "./config.ts"
 import { validPayload } from "./payload.ts"
 
 export interface BundleRow {
-  readonly library: LibraryName
+  readonly library: LibraryName | ReferenceName
   readonly bytes: number
   readonly gzipBytes: number
 }
 
-function entrySource(name: LibraryName): string {
+function entrySource(name: LibraryName | ReferenceName): string {
   return [
     `import { parse } from "../src/libs/${name}.ts"`,
     `const payload = ${JSON.stringify(validPayload)}`,
@@ -19,7 +19,8 @@ function entrySource(name: LibraryName): string {
   ].join("\n")
 }
 
-export async function measureBundle(name: LibraryName): Promise<BundleRow> {
+/** Every entry is `parse` from `src/libs/<name>.ts`, bundled the same way. */
+export async function measureBundle(name: LibraryName | ReferenceName): Promise<BundleRow> {
   const directory = new URL("../bundle-out/", import.meta.url)
   mkdirSync(directory, { recursive: true })
   const entry = new URL(`entry-${name}.ts`, directory)

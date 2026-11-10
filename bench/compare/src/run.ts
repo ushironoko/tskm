@@ -11,6 +11,7 @@ import {
   measuredIterations,
   measuredRounds,
   memoryParses,
+  referenceLibraries,
   typeCopies,
   warmupIterations,
 } from "./config.ts"
@@ -96,7 +97,7 @@ function resultsMarkdown(input: {
     "## Run",
     "",
     `- When: ${new Date().toISOString()}`,
-    `- Agreement: ${cell(input.agreement.checked)} inputs (${input.agreement.generatedAccepted} generated emails valid), ${input.agreement.mismatches.length} mismatches across ${input.agreement.libraries.length} libraries (\`src/agreement.ts\`, checked before timing)`,
+    `- Agreement: ${cell(input.agreement.checked)} inputs (${input.agreement.generatedAccepted} generated emails valid), ${input.agreement.mismatches.length} mismatches across ${libraries.length} libraries and ${referenceLibraries.length} reference entry (\`src/agreement.ts\`, checked before timing)`,
     `- Machine: ${input.host.cpu}, ${input.host.cores} cores, ${cell(input.host.memBytes)} bytes RAM`,
     `- Kernel: ${input.host.version}`,
     `- Bun: ${input.host.bun}`,
@@ -138,12 +139,17 @@ function resultsMarkdown(input: {
     "",
     "## Bundle gzip",
     "",
+    "One entry per library: `parse` from `src/libs/<name>.ts`, esbuild minify and tree-shake, gzip level 9. `zod-mini` is zod's small-bundle entry, shown for reference; the speed, memory and type tables use the classic `zod`.",
+    "",
     "| library | raw bytes | gzip bytes |",
     "| --- | ---: | ---: |",
-    ...libraries.map((name) => {
+    ...[...libraries, ...referenceLibraries].map((name) => {
       const row = bundles.get(name)
       if (!row) throw new Error(`missing bundle ${name}`)
-      return `| ${name} | ${cell(row.bytes)} | ${cell(row.gzipBytes)} |`
+      const label = (referenceLibraries as readonly string[]).includes(name)
+        ? `${name} (reference)`
+        : name
+      return `| ${label} | ${cell(row.bytes)} | ${cell(row.gzipBytes)} |`
     }),
     "",
     "## Type instantiations",
@@ -193,6 +199,10 @@ for (const name of selected) {
   bundles.push(await measureBundle(name))
   console.log(`types ${name}`)
   types.push(...measureTypes(name))
+}
+for (const name of referenceLibraries) {
+  console.log(`bundle ${name} (reference)`)
+  bundles.push(await measureBundle(name))
 }
 
 if (selected.length === libraries.length) {

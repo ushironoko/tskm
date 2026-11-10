@@ -1,4 +1,4 @@
-import { type LibraryName, libraries } from "./config.ts"
+import { type LibraryName, libraries, type ReferenceName, referenceLibraries } from "./config.ts"
 import { emailPattern } from "./constraints.ts"
 import { invalidPayload, validPayload } from "./payload.ts"
 
@@ -188,25 +188,28 @@ export function generatedEmailCases(count: number, seed = 20261110): AgreementCa
   return out
 }
 
+/** Every adapter the gate checks: the six compared libraries and the bundle reference(s). */
+const adapters: readonly (LibraryName | ReferenceName)[] = [...libraries, ...referenceLibraries]
+
 export interface AgreementReport {
-  readonly libraries: readonly LibraryName[]
+  readonly libraries: readonly (LibraryName | ReferenceName)[]
   readonly checked: number
   readonly generatedAccepted: number
   readonly mismatches: readonly {
-    readonly library: LibraryName
+    readonly library: LibraryName | ReferenceName
     readonly label: string
     readonly expected: boolean
     readonly actual: Verdict
   }[]
   readonly known: readonly {
     readonly label: string
-    readonly verdicts: Readonly<Record<LibraryName, Verdict>>
+    readonly verdicts: Readonly<Record<LibraryName | ReferenceName, Verdict>>
   }[]
 }
 
-async function loadParsers(): Promise<Record<LibraryName, Parse>> {
-  const parsers = {} as Record<LibraryName, Parse>
-  for (const name of libraries) {
+async function loadParsers(): Promise<Record<LibraryName | ReferenceName, Parse>> {
+  const parsers = {} as Record<LibraryName | ReferenceName, Parse>
+  for (const name of adapters) {
     parsers[name] = ((await import(`./libs/${name}.ts`)) as { parse: Parse }).parse
   }
   return parsers
@@ -228,7 +231,7 @@ export async function runAgreement(): Promise<AgreementReport> {
   let generatedAccepted = 0
   for (const testCase of all) {
     if (testCase.label.startsWith("generated") && testCase.accept) generatedAccepted++
-    for (const name of libraries) {
+    for (const name of adapters) {
       const actual = verdict(parsers[name], testCase.input)
       if (actual !== testCase.accept) {
         mismatches.push({ library: name, label: testCase.label, expected: testCase.accept, actual })
@@ -236,12 +239,12 @@ export async function runAgreement(): Promise<AgreementReport> {
     }
   }
   const known = knownDifferences.map((entry) => {
-    const verdicts = {} as Record<LibraryName, Verdict>
-    for (const name of libraries) verdicts[name] = verdict(parsers[name], entry.input)
+    const verdicts = {} as Record<LibraryName | ReferenceName, Verdict>
+    for (const name of adapters) verdicts[name] = verdict(parsers[name], entry.input)
     return { label: entry.label, verdicts }
   })
   return {
-    libraries,
+    libraries: adapters,
     checked: all.length,
     generatedAccepted,
     mismatches,
