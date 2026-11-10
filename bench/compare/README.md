@@ -153,8 +153,9 @@ of this package at exact versions (`typescript` 6.0.3, `@typescript/native-previ
 7.0.0-dev.20260707.2). The repository root does not install `tsgo`, so the root is not used.
 
 Importing each library with nothing else costs 0 to 2,687 instantiations (tskm 1,503,
-arktype 2,687; the others register 0). That is under 7% of the smallest 100-copy count, so
-the rows are not adjusted for it.
+arktype 2,687; the others register 0). Those are 7.2% (tskm) and 12.9% (arktype) of the
+smallest 100-copy count (effect, 20,855 in both checkers). The rows are not adjusted for
+these costs.
 
 Arktype's count moves from 786,278 to 919,418 because of the constraints, measured one
 change at a time with the same 100-copy shape: the id bound adds 32,052, and the email
