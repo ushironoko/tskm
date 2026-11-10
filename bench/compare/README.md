@@ -13,6 +13,10 @@ bun src/run.ts
 `bun src/run.ts` prints the tables and writes `RESULTS.md`. That file is the
 measured run. Re-run replaces it.
 
+To check the six adapters on their own, run `bun src/agreement.ts`. It imports the built
+tskm, so build it first with `bun run --cwd ../../packages/tskm build` (`run.ts` does this
+itself).
+
 ## Payload
 
 One object:
