@@ -276,6 +276,7 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       root: config.root,
       execPath: config.worker.execPath ?? process.execPath,
       timeoutMs: config.worker.timeoutMs,
+      checkerSpelling: config.codegen.namedParts,
     })
 
     // Tier-1: transform-bearing recursive roots try the sentinel-unroll splice; a
@@ -334,10 +335,19 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     // body-string merge (targetByTypeName): emit derives its import lines from it.
     const pruned = pruneDanglingAliases(candidates, declared)
     // Named parts run AFTER pruning, so a reference only ever names an alias that is emitted.
-    const parts = referenceNamedParts(
-      pruned.kept.map((c) => ({ typeName: c.typeName, body: c.body })),
-      reservedSidecarNames(targets),
-    )
+    // With `codegen.namedParts` off the bodies pass through unchanged (the previous output).
+    const bodies = pruned.kept.map((c) => ({ typeName: c.typeName, body: c.body }))
+    const parts = config.codegen.namedParts
+      ? referenceNamedParts(
+          bodies,
+          reservedSidecarNames(
+            targets.map((t) => ({
+              vendorHint: t.capability.vendorHint,
+              recursiveAnnotation: t.recursiveAnnotation,
+            })),
+          ),
+        )
+      : bodies
     const resolved: ResolvedSchema[] = parts.map((part) => {
       const target = targetByTypeName.get(part.typeName)
       return {

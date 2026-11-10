@@ -26,6 +26,11 @@ const pairs: ReadonlyArray<readonly [string, string]> = pairsRaw
   ? (JSON.parse(pairsRaw) as ReadonlyArray<readonly [string, string]>)
   : []
 const overrides = new Map(pairs)
+// argv[5]: walker options (see ResolveRecursiveOptions.checkerSpelling in structural-resolve.ts).
+const optionsRaw = process.argv[5]
+const checkerSpelling = optionsRaw
+  ? ((JSON.parse(optionsRaw) as { checkerSpelling?: boolean }).checkerSpelling ?? true)
+  : true
 const nameFor = (exportName: string): string =>
   overrides.get(exportName) ?? deriveTypeName(exportName)
 
@@ -63,6 +68,6 @@ await runSchemaWorker<StructuralWorkerEntry>((name, value, mod) => {
       warnings: [],
     }
   }
-  const result = schemaToTypeString(value, { rootName: typeName, typeNames })
+  const result = schemaToTypeString(value, { rootName: typeName, typeNames, checkerSpelling })
   return { name, typeName, recursive, ...result }
 })

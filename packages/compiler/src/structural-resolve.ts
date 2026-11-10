@@ -39,6 +39,11 @@ export interface ResolveRecursiveOptions {
   readonly root: string
   readonly execPath: string
   readonly timeoutMs: number
+  /**
+   * Spell objects the way the checker prints them (a `;` after every member). Named parts match on
+   * that text, so it is on with `codegen.namedParts`; off, the walker keeps the earlier spelling.
+   */
+  readonly checkerSpelling?: boolean
 }
 
 /**
@@ -124,7 +129,10 @@ export function resolveRecursiveSchemas(
     execPath: options.execPath,
     timeoutMs: options.timeoutMs,
     tag: "structural",
-    extraArgs: [JSON.stringify(pairs)],
+    extraArgs: [
+      JSON.stringify(pairs),
+      JSON.stringify({ checkerSpelling: options.checkerSpelling ?? true }),
+    ],
   })
   if (run.diagnostic !== undefined) {
     return { resolutions: [], diagnostics: [run.diagnostic] }

@@ -6,10 +6,16 @@
  * emitted alias in the same output unit when the two texts are identical and the matched text
  * is an object literal `{ ... }` or a union of object literals `{ ... } | { ... }`. Bodies come
  * from the checker, or from the structural walker, which spells objects the same way. Equal text
- * in one sidecar therefore names one type, so the replacement is type-identical by construction:
- * the bodies keep their meaning, and only their spelling changes. (The walker's `nameSharedSchemas`
- * mode names by identity instead, through a worker. This pass needs no worker and covers external
- * schemas too.)
+ * in one sidecar therefore names one type.
+ *
+ * Identity. Equal text is one type only when the parts that TypeScript merges stay distinct. It
+ * merges repeated operands of a union or intersection (`A | A` and `A & A` are `A`), the element
+ * types of a tuple (`[A, A]`), and the arguments of an array or type reference (`A[] | A[]`). The
+ * inline original holds distinct object types there. So a literal that repeats within one scope
+ * stays inline, and so does a union that contains one (see {@link repeatedOperandStarts}). With
+ * that rule the rewritten body is strictly identical to the original under `Equal`, not just
+ * assignable in both directions. The semantic fuzz and the `Equal` probes in
+ * named-parts.integration.test.ts check it.
  *
  * Scope and fallbacks, all deliberate:
  * - Candidates are object literals and unions of object literals. A primitive, literal union,
@@ -36,6 +42,12 @@ interface PartMatch {
   readonly start: number
   readonly end: number
   readonly name: string
+}
+
+/** A union of object literals: its alias name and the offset of each member inside its text. */
+interface UnionCandidate {
+  readonly name: string
+  readonly memberOffsets: ReadonlyArray<number>
 }
 
 /** Index of the closing quote of the string or template literal opened at `open`, or -1. */
@@ -112,15 +124,20 @@ function isObjectLiteral(text: string): boolean {
 }
 
 /**
- * The member texts of a union of two or more object literals, or undefined for any other text.
- * Members split at a `|` outside every brace, bracket and parenthesis, so a `|` inside a nested
- * object does not split the union. Angle brackets are not counted: `=>` would unbalance them,
- * and a split that goes wrong only makes the text fail the object-literal check below.
+ * The `[start, end)` spans of the members of a union of two or more object literals, or undefined
+ * for any other text. Members split at a `|` outside every brace, bracket and parenthesis, so a `|`
+ * inside a nested object does not split the union. Angle brackets are not counted: `=>` would
+ * unbalance them, and a split that goes wrong only makes the text fail the object-literal check.
  */
-function objectUnionMembers(text: string): ReadonlyArray<string> | undefined {
-  const members: string[] = []
+function objectUnionMembers(text: string): ReadonlyArray<readonly [number, number]> | undefined {
+  const members: Array<readonly [number, number]> = []
   let depth = 0
   let start = 0
+  const pushMember = (from: number, to: number): void => {
+    const raw = text.slice(from, to)
+    const lead = raw.length - raw.trimStart().length
+    members.push([from + lead, from + lead + raw.trim().length])
+  }
   for (let i = 0; i < text.length; i++) {
     const c = text[i]
     if (c === '"' || c === "'" || c === "`") {
@@ -136,12 +153,12 @@ function objectUnionMembers(text: string): ReadonlyArray<string> | undefined {
     } else if (c === "}" || c === "]" || c === ")") {
       depth--
     } else if (c === "|" && depth === 0) {
-      members.push(text.slice(start, i).trim())
+      pushMember(start, i)
       start = i + 1
     }
   }
-  members.push(text.slice(start).trim())
-  if (members.length < 2 || !members.every(isObjectLiteral)) {
+  pushMember(start, text.length)
+  if (members.length < 2 || !members.every(([s, e]) => isObjectLiteral(text.slice(s, e)))) {
     return undefined
   }
   return members
@@ -163,15 +180,84 @@ function isUnionOperandAt(text: string, start: number, end: number): boolean {
 }
 
 /**
+ * The starts of the object literals that print exactly like another object literal in the same
+ * scope. A scope is the text of one object member's type (from its `:` to its `;` or `,`), or the
+ * whole body. Everything inside a scope is kept whole, including unions, intersections, tuples,
+ * arrays, and type arguments: `(A | B) & A`, `[A, A]`, `A[] | A[]`, and `Box<A> | Box<A>` each stay
+ * in one scope. TypeScript merges two such operands once both name one alias (`A & A` is `A`, and
+ * `[A, A]` has one element type), while the inline original keeps two distinct types. So every
+ * repeated literal in a scope stays written out. A property, a parameter, or a member starts a
+ * scope of its own, so `{ p: A; q: A }` still names `A` in both properties.
+ */
+function repeatedOperandStarts(
+  body: string,
+  pairs: ReadonlyMap<number, number>,
+): ReadonlySet<number> {
+  // Open brackets, innermost last. Only an object body (`{`) starts new scopes inside it.
+  const frames: Array<{ readonly opener: string; readonly outerScope: number }> = []
+  const literalsByScope = new Map<string, number[]>()
+  let scope = 0
+  let nextScope = 1
+  const insideObject = (): boolean => frames[frames.length - 1]?.opener === "{"
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i] as string
+    if (c === '"' || c === "'" || c === "`") {
+      const close = closingQuote(body, i)
+      if (close === -1) {
+        break
+      }
+      i = close
+    } else if (c === "{") {
+      const end = pairs.get(i)
+      if (end === undefined) {
+        break
+      }
+      const key = `${scope}\u0000${body.slice(i, end)}`
+      const starts = literalsByScope.get(key)
+      if (starts) {
+        starts.push(i)
+      } else {
+        literalsByScope.set(key, [i])
+      }
+      frames.push({ opener: "{", outerScope: scope })
+      scope = nextScope++
+    } else if (c === "}" && frames[frames.length - 1]?.opener === "{") {
+      scope = (frames.pop() as { outerScope: number }).outerScope
+    } else if (c === "(" || c === "[" || c === "<") {
+      frames.push({ opener: c, outerScope: scope })
+    } else if (c === ")" || c === "]" || (c === ">" && body[i - 1] !== "=")) {
+      // A closer ends the innermost bracket only when it matches. `=>` is an arrow, not a closer.
+      const opener = c === ")" ? "(" : c === "]" ? "[" : "<"
+      if (frames[frames.length - 1]?.opener === opener) {
+        frames.pop()
+      }
+    } else if ((c === ";" || c === "," || c === ":") && insideObject()) {
+      scope = nextScope++
+    }
+  }
+  const repeated = new Set<number>()
+  for (const starts of literalsByScope.values()) {
+    if (starts.length > 1) {
+      for (const start of starts) {
+        repeated.add(start)
+      }
+    }
+  }
+  return repeated
+}
+
+/**
  * The object-literal and union-of-object-literal spans of one body that name another alias.
- * `pairs` is the body's brace map (see {@link scanBraces}).
+ * `pairs` is the body's brace map (see {@link scanBraces}); `repeated` is its operand check (see
+ * {@link repeatedOperandStarts}).
  */
 function partMatches(
   entry: NamedPartsEntry,
   pairs: ReadonlyMap<number, number>,
   objects: ReadonlyMap<string, string>,
-  unions: ReadonlyMap<string, string>,
+  unions: ReadonlyMap<string, UnionCandidate>,
   reserved: ReadonlySet<string>,
+  repeated: ReadonlySet<number>,
 ): PartMatch[] {
   const { body, typeName } = entry
   const matches: PartMatch[] = []
@@ -187,19 +273,24 @@ function partMatches(
   }
   if (objects.size > 0) {
     for (const [start, end] of pairs) {
-      admit(start, end, objects.get(body.slice(start, end)))
+      if (!repeated.has(start)) {
+        admit(start, end, objects.get(body.slice(start, end)))
+      }
     }
   }
   if (unions.size > 0) {
     const literals = literalSpans(body)
     const insideLiteral = (position: number): boolean =>
       literals.some(([start, end]) => position >= start && position < end)
-    for (const [text, name] of unions) {
+    for (const [text, union] of unions) {
       let at = body.indexOf(text)
       while (at !== -1) {
         const end = at + text.length
-        if (!insideLiteral(at) && isUnionOperandAt(body, at, end)) {
-          admit(at, end, name)
+        // A union with a repeated member stays written out, with that member, so each copy keeps
+        // its own identity (see repeatedOperandStarts).
+        const repeatedMember = union.memberOffsets.some((offset) => repeated.has(at + offset))
+        if (!insideLiteral(at) && isUnionOperandAt(body, at, end) && !repeatedMember) {
+          admit(at, end, union.name)
         }
         at = body.indexOf(text, at + 1)
       }
@@ -219,14 +310,20 @@ export function referenceNamedParts(
 ): NamedPartsEntry[] {
   // Candidates by exact text. The first declaration in discovery order wins a shared body.
   const objects = new Map<string, string>()
-  const unions = new Map<string, string>()
+  const unions = new Map<string, UnionCandidate>()
   for (const entry of entries) {
     if (isObjectLiteral(entry.body)) {
       if (!objects.has(entry.body)) {
         objects.set(entry.body, entry.typeName)
       }
-    } else if (objectUnionMembers(entry.body) !== undefined && !unions.has(entry.body)) {
-      unions.set(entry.body, entry.typeName)
+    } else if (!unions.has(entry.body)) {
+      const members = objectUnionMembers(entry.body)
+      if (members !== undefined) {
+        unions.set(entry.body, {
+          name: entry.typeName,
+          memberOffsets: members.map(([start]) => start),
+        })
+      }
     }
   }
   if (objects.size === 0 && unions.size === 0) {
@@ -242,14 +339,15 @@ export function referenceNamedParts(
 function rewriteBody(
   entry: NamedPartsEntry,
   objects: ReadonlyMap<string, string>,
-  unions: ReadonlyMap<string, string>,
+  unions: ReadonlyMap<string, UnionCandidate>,
   reserved: ReadonlySet<string>,
 ): string {
   const pairs = scanBraces(entry.body)
   if (pairs === undefined) {
     return entry.body
   }
-  const matches = partMatches(entry, pairs, objects, unions, reserved)
+  const repeated = repeatedOperandStarts(entry.body, pairs)
+  const matches = partMatches(entry, pairs, objects, unions, reserved, repeated)
   if (matches.length === 0) {
     return entry.body
   }

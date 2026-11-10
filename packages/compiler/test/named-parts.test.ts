@@ -362,10 +362,159 @@ describe("referenceNamedParts: reserved names", () => {
   })
 })
 
+describe("referenceNamedParts: repeated operands", () => {
+  // A and B are emitted object aliases; U is their union. Each case is what the checker or the
+  // walker can print: a repeated operand collapses in TypeScript once both operands name one alias.
+  const A = "{ a: string; }"
+  const B = "{ b: number; }"
+  const U = `${A} | ${B}`
+  const withParts = (host: string): ReadonlyArray<readonly [string, string]> => [
+    ["A", A],
+    ["B", B],
+    ["U", U],
+    ["Host", host],
+  ]
+
+  it("keeps both members of `X | X` inline: naming them would collapse the union", () => {
+    expect(
+      rewrite([
+        ["A", A],
+        ["Host", `{ p: ${A} | ${A} }`],
+      ])[1],
+    ).toBe(`{ p: ${A} | ${A} }`)
+  })
+
+  it("keeps both operands of `X & X` inline: naming them would collapse the intersection", () => {
+    expect(
+      rewrite([
+        ["A", A],
+        ["Host", `{ p: ${A} & ${A} }`],
+      ])[1],
+    ).toBe(`{ p: ${A} & ${A} }`)
+  })
+
+  it("keeps the repeated operand of `(U) & X` inline, and still names the other member of U", () => {
+    // Distributed, `(A | B) & A` is `(A & A) | (B & A)`, which collapses. The union itself is
+    // not named (its member repeats), but its `{ b }` member is not repeated, so it is named.
+    expect(rewrite(withParts(`{ p: (${U}) & ${A} }`))[3]).toBe(`{ p: (${A} | B) & ${A} }`)
+  })
+
+  it("keeps `X | U` inline when X is a member of U, and names the member that is not repeated", () => {
+    // Printed flat, `X | U` reads `{ a } | { a } | { b }`, with the union `{ a } | { b }` at its tail.
+    expect(rewrite(withParts(`{ f: ${A} | ${U} }`))[3]).toBe(`{ f: ${A} | ${A} | B }`)
+  })
+
+  it("keeps two unions that share a member inline, so the shared member is not one identity twice", () => {
+    const V = `${A} | { c: boolean; }`
+    expect(
+      rewrite([
+        ["A", A],
+        ["B", B],
+        ["U", U],
+        ["V", V],
+        ["Host", `{ c: (${U}) & (${V}) }`],
+      ])[4],
+    ).toBe(`{ c: (${A} | B) & (${A} | { c: boolean; }) }`)
+  })
+
+  it("keeps a repeated member of a union of intersections inline", () => {
+    const pair = `(${A} & ${B}) | (${B} & ${A})`
+    expect(
+      rewrite([
+        ["A", A],
+        ["B", B],
+        ["Host", `{ p: ${pair} }`],
+      ])[2],
+    ).toBe(`{ p: ${pair} }`)
+  })
+
+  it("keeps a flat repeat inside one union inline, because the union would keep one member", () => {
+    expect(
+      rewrite([
+        ["A", A],
+        ["B", B],
+        ["Host", `{ p: ${A} | ${B} | ${A} }`],
+      ])[2],
+    ).toBe(`{ p: ${A} | B | ${A} }`)
+  })
+
+  it("does not treat a repeat in separate properties as a repeated operand", () => {
+    expect(
+      rewrite([
+        ["A", A],
+        ["Host", `{ x: ${A} | undefined; y: ${A} | undefined }`],
+      ])[1],
+    ).toBe("{ x: A | undefined; y: A | undefined }")
+  })
+
+  it("keeps a repeated tuple element inline, because TypeScript merges the element types", () => {
+    // `[A, A]` has one element type, `A`; the inline `[{ a }, { a }]` keeps two distinct types.
+    expect(
+      rewrite([
+        ["A", A],
+        ["B", B],
+        ["Host", `{ t: [${A}, ${A}] }`],
+      ])[2],
+    ).toBe(`{ t: [${A}, ${A}] }`)
+  })
+
+  it("keeps a repeated array or type argument inline, and names each distinct part", () => {
+    // Each repeat is the same type once named: `A[] | A[]` and `Box<A> | Box<A>` collapse.
+    expect(
+      rewrite([
+        ["A", A],
+        ["Host", `{ p: ${A}[] | ${A}[]; q: Box<${A}> | Box<${A}> }`],
+      ])[1],
+    ).toBe(`{ p: ${A}[] | ${A}[]; q: Box<${A}> | Box<${A}> }`)
+  })
+
+  it("names distinct tuple elements and a parameter in another member, since they do not repeat", () => {
+    // Each member is its own scope: the parameter `A` in `f` is not a repeat of the tuple's `A`.
+    expect(
+      rewrite([
+        ["A", A],
+        ["B", B],
+        ["Host", `{ t: [${A}, ${B}]; f: (x: ${A}) => ${B} }`],
+      ])[2],
+    ).toBe("{ t: [A, B]; f: (x: A) => B }")
+  })
+})
+
 describe("reservedSidecarNames", () => {
   it("reserves the vendor brand markers and every exported self-annotation name", () => {
-    const reserved = reservedSidecarNames([{ recursiveAnnotation: { name: "CategoryT" } }, {}])
+    const reserved = reservedSidecarNames([
+      { vendorHint: "zod" },
+      { vendorHint: "valibot" },
+      { recursiveAnnotation: { name: "CategoryT" } },
+    ])
     expect([...reserved].sort()).toEqual(["$brand", "Brand", "CategoryT"])
+  })
+
+  it("reserves a vendor's brand marker only when the file has a target from that vendor", () => {
+    expect([...reservedSidecarNames([{}, { vendorHint: undefined }])]).toEqual([])
+    expect([...reservedSidecarNames([{ vendorHint: "zod" }])]).toEqual(["$brand"])
+    expect([...reservedSidecarNames([{ vendorHint: "valibot" }])]).toEqual(["Brand"])
+  })
+
+  it("lets a tskm-only file share an alias named `Brand`, because nothing imports that name", () => {
+    // `brandSchema` is exported as `Brand`, and `inner` is the same object elsewhere in the file.
+    const entries = [
+      { typeName: "Brand", body: "{ a: string; }" },
+      { typeName: "Holder", body: "{ inner: { a: string; }; n: number; }" },
+    ]
+    expect(referenceNamedParts(entries, reservedSidecarNames([{}]))[1]?.body).toBe(
+      "{ inner: Brand; n: number; }",
+    )
+  })
+
+  it("keeps `Brand` inline in a file with a valibot target, which may import the marker", () => {
+    const entries = [
+      { typeName: "Brand", body: "{ a: string; }" },
+      { typeName: "Holder", body: "{ inner: { a: string; }; n: number; }" },
+    ]
+    expect(
+      referenceNamedParts(entries, reservedSidecarNames([{ vendorHint: "valibot" }]))[1]?.body,
+    ).toBe("{ inner: { a: string; }; n: number; }")
   })
 })
 

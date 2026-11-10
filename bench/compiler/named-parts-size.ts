@@ -4,10 +4,16 @@
  * Builds a deterministic 400-schema sample (one source file, `src/schemas.schema.ts`, the shape
  * the issue describes), generates its sidecar with the compiler under test, and reports:
  *
- *   - the sidecar's byte size (`*.gen.ts`), the number of aliases, and generate() wall time;
+ *   - the sidecar's byte size (`*.gen.ts`) and the number of aliases;
  *   - tsc's `Instantiations` and `Types` for a project made of the source plus its sidecar,
  *     the AOT build in which the generated types are consumed. tsc is the native checker that
- *     ships with the `typescript` peer, run with `--extendedDiagnostics`.
+ *     ships with the `typescript` peer, run with `--extendedDiagnostics`;
+ *   - generate() wall time, the median of three warm runs inside ONE invocation. It is a single
+ *     measurement, not a benchmark: compare trees across several invocations and report the spread.
+ *
+ * `--verify` adds a strict type-identity check: one `Equal` probe per alias, comparing the alias
+ * with `Infer<typeof schema>` for the schema it came from. A negative control (one deliberately
+ * wrong probe) must fail, so a probe that cannot fail is reported as an error.
  *
  * The sample is generated, not committed, so the numbers are reproducible from this file alone.
  * It is NOT the issue author's 918,730 B sample, which is not available. Compare two trees by
@@ -15,15 +21,16 @@
  *
  *   bun bench/compiler/named-parts-size.ts                      # the working tree
  *   bun bench/compiler/named-parts-size.ts --compiler <dir>/packages/compiler/src/index.ts
+ *   bun bench/compiler/named-parts-size.ts --verify             # plus the per-alias Equal probe
  *
  * `--keep <dir>` keeps the sample and its sidecar for inspection. `--json` prints machine output.
  */
 
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
 const repo = fileURLToPath(new URL("../..", import.meta.url))
@@ -168,6 +175,17 @@ function writeProject(root: string, source: string): void {
   )
 }
 
+interface Verification {
+  /** Aliases in the sidecar, and how many had a probe (every alias must have one). */
+  readonly aliases: number
+  readonly probed: number
+  /** Errors from the probe file: 0 when every alias is strictly identical to its schema. */
+  readonly errors: number
+  /** Errors from the negative control: exactly one `Equal` failure is expected. */
+  readonly negativeErrors: number
+  readonly negativeCode: string | undefined
+}
+
 interface Measurement {
   readonly compiler: string
   readonly schemas: number
@@ -177,9 +195,105 @@ interface Measurement {
   readonly instantiations: number
   readonly types: number
   readonly tscMs: number
+  readonly verification?: Verification
 }
 
-async function measure(compilerIndex: string, keep: string | undefined): Promise<Measurement> {
+const EQUAL =
+  "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false"
+
+/** Runs tsc on one project file and returns its `error TS` lines. */
+function tscErrors(tscBin: string, project: string): string[] {
+  const run = spawnSync(tscBin, ["-p", project, "--noEmit"], { encoding: "utf8" })
+  return `${run.stdout ?? ""}${run.stderr ?? ""}`
+    .split("\n")
+    .filter((line) => /error TS\d+/.test(line))
+}
+
+/**
+ * The `--verify` check. Each alias is compared with the inferred type of the schema that declares
+ * it (the export whose name `deriveTypeName` maps to that alias), under the strict `Equal` relation.
+ */
+async function verifyAliases(
+  root: string,
+  compilerIndex: string,
+  tscBin: string,
+  aliases: readonly string[],
+): Promise<Verification> {
+  const naming = (await import(pathToFileURL(join(dirname(compilerIndex), "naming.ts")).href)) as {
+    deriveTypeName: (constName: string) => string
+  }
+  const exports = [
+    ...readFileSync(join(root, "src/schemas.schema.ts"), "utf8").matchAll(
+      /^export const (\w+) = /gm,
+    ),
+  ].map((match) => match[1] as string)
+  const schemaOf = new Map(exports.map((name) => [naming.deriveTypeName(name), name] as const))
+  const pairs = aliases.flatMap((alias) => {
+    const schema = schemaOf.get(alias)
+    return schema === undefined ? [] : [{ alias, schema }]
+  })
+  const header = [
+    `import type { Infer } from "@tskm/core"`,
+    `import type { ${pairs.map((p) => p.alias).join(", ")} } from "./schemas.schema.gen.ts"`,
+    `import type { ${pairs.map((p) => p.schema).join(", ")} } from "./schemas.schema.ts"`,
+    EQUAL,
+  ]
+  const probes = pairs.map(
+    ({ alias, schema }, i) =>
+      `export const eq${i}: Equal<${alias}, Infer<typeof ${schema}>> = true`,
+  )
+  writeFileSync(join(root, "src/verify.check.ts"), `${[...header, ...probes].join("\n")}\n`)
+  // The negative control compares the first alias with a shape it does not have.
+  const first = pairs[0]?.alias ?? "never"
+  writeFileSync(
+    join(root, "src/negative.check.ts"),
+    `${[...header, `export const wrong: Equal<${first}, { nope: string }> = true`].join("\n")}\n`,
+  )
+  const base = JSON.parse(readFileSync(join(root, "tsconfig.measure.json"), "utf8")) as Record<
+    string,
+    unknown
+  >
+  const positive = join(root, "tsconfig.verify.json")
+  const negative = join(root, "tsconfig.negative.json")
+  writeFileSync(
+    positive,
+    JSON.stringify(
+      {
+        ...base,
+        include: ["src/schemas.schema.ts", "src/schemas.schema.gen.ts", "src/verify.check.ts"],
+      },
+      null,
+      2,
+    ),
+  )
+  writeFileSync(
+    negative,
+    JSON.stringify(
+      {
+        ...base,
+        include: ["src/schemas.schema.ts", "src/schemas.schema.gen.ts", "src/negative.check.ts"],
+      },
+      null,
+      2,
+    ),
+  )
+  const errors = tscErrors(tscBin, positive)
+  const negativeErrors = tscErrors(tscBin, negative)
+  const code = /error (TS\d+)/.exec(negativeErrors[0] ?? "")?.[1]
+  return {
+    aliases: aliases.length,
+    probed: pairs.length,
+    errors: errors.length,
+    negativeErrors: negativeErrors.length,
+    negativeCode: code,
+  }
+}
+
+async function measure(
+  compilerIndex: string,
+  keep: string | undefined,
+  verify: boolean,
+): Promise<Measurement> {
   const root = keep ?? mkdtempSync(join(tmpdir(), "tskm-named-parts-"))
   const source = sampleSource(SCHEMA_COUNT)
   writeProject(root, source)
@@ -234,6 +348,9 @@ async function measure(compilerIndex: string, keep: string | undefined): Promise
     }
     return Number(match[1])
   }
+  const verification = verify
+    ? await verifyAliases(root, compilerIndex, tscBin, file.typeNames)
+    : undefined
   const measurement: Measurement = {
     compiler: compilerIndex,
     schemas: SCHEMA_COUNT,
@@ -243,6 +360,17 @@ async function measure(compilerIndex: string, keep: string | undefined): Promise
     instantiations: counter("Instantiations"),
     types: counter("Types"),
     tscMs,
+    ...(verification ? { verification } : {}),
+  }
+  if (verification && (verification.errors > 0 || verification.probed !== verification.aliases)) {
+    throw new Error(
+      `named-parts-size: --verify failed (${verification.errors} probe errors, ${verification.probed}/${verification.aliases} aliases probed)`,
+    )
+  }
+  if (verification && verification.negativeErrors !== 1) {
+    throw new Error(
+      `named-parts-size: --verify negative control must fail exactly once, got ${verification.negativeErrors}`,
+    )
   }
   if (!keep) {
     rmSync(root, { recursive: true, force: true })
@@ -254,7 +382,7 @@ async function main(): Promise<void> {
   const compiler = arg("--compiler") ?? defaultCompiler
   const keep = arg("--keep")
   const jsonOut = process.argv.includes("--json")
-  const result = await measure(compiler, keep)
+  const result = await measure(compiler, keep, process.argv.includes("--verify"))
   if (jsonOut) {
     console.log(JSON.stringify(result, null, 2))
     return
@@ -264,9 +392,17 @@ async function main(): Promise<void> {
   console.log(`compiler:        ${result.compiler}`)
   console.log(`sidecar bytes:   ${result.sidecarBytes.toLocaleString("en-US")} B`)
   console.log(`aliases:         ${result.aliases}`)
-  console.log(`generate (ms):   ${result.generateMs.toFixed(0)} (median of 3, warm)`)
+  console.log(
+    `generate (ms):   ${result.generateMs.toFixed(0)} (median of 3 warm runs, one invocation)`,
+  )
   console.log(`tsc Instantiations: ${result.instantiations.toLocaleString("en-US")}`)
   console.log(`tsc Types:          ${result.types.toLocaleString("en-US")}`)
+  if (result.verification) {
+    const v = result.verification
+    console.log(
+      `verify (strict Equal): ${v.probed - v.errors}/${v.aliases} aliases identical; negative control: ${v.negativeErrors} error (${v.negativeCode ?? "none"})`,
+    )
+  }
   if (keep) {
     console.log(`kept in:         ${keep}`)
   }

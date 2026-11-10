@@ -28,11 +28,23 @@ const VENDOR_LEAK_TABLE: ReadonlyArray<LeakedTypeImport> = [
  * self-annotation types of recursive external schemas. A generated alias that shares one
  * of these names must never be referenced by name (named parts, see named-parts.ts): the
  * reference would make the import necessary, and the import would clash with the alias.
+ * A vendor's brand marker is reserved only when the file has a target from that vendor, the
+ * only case in which {@link collectImportLines} can import it, so a tskm-only file keeps every
+ * name (`Brand` included) available for sharing.
  */
 export function reservedSidecarNames(
-  targets: ReadonlyArray<{ readonly recursiveAnnotation?: { readonly name: string } }>,
+  targets: ReadonlyArray<{
+    readonly vendorHint?: string | undefined
+    readonly recursiveAnnotation?: { readonly name: string } | undefined
+  }>,
 ): ReadonlySet<string> {
-  const names = new Set<string>(VENDOR_LEAK_TABLE.map((entry) => entry.token))
+  const vendors = new Set(targets.map((target) => target.vendorHint))
+  const names = new Set<string>()
+  for (const entry of VENDOR_LEAK_TABLE) {
+    if (vendors.has(entry.module)) {
+      names.add(entry.token)
+    }
+  }
   for (const target of targets) {
     if (target.recursiveAnnotation) {
       names.add(target.recursiveAnnotation.name)
