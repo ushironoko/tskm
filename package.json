@@ -24,7 +24,7 @@
     "publint": "bun run --filter './packages/*' publint",
     "attw": "bun run --filter './packages/*' attw",
     "changeset": "changeset",
-    "version": "changeset version && bun install --lockfile-only",
+    "version": "changeset version && bun install --lockfile-only && bun run scripts/sync-bun-lock-versions.ts",
     "release": "bun run scripts/publish.ts",
     "preview": "pkg-pr-new publish './packages/*' --bun --packageManager=bun --commentWithSha"
   },

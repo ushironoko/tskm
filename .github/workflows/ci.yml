@@ -39,6 +39,17 @@ jobs:
       - name: Verify lockfile is unchanged
         run: git diff --exit-code bun.lock
 
+      # A frozen install does not check workspace versions, and a plain install rewrites them only
+      # when it saves for a dependency change. So a Version PR that bumps package.json without
+      # refreshing bun.lock passes the frozen install. Sync the versions from package.json, then
+      # fail if that or a plain install changes bun.lock. To fix a failure, run
+      # `bun run scripts/sync-bun-lock-versions.ts` and `bun install`, then commit bun.lock.
+      - name: Verify bun.lock matches package.json and a plain install
+        run: |
+          bun run scripts/sync-bun-lock-versions.ts
+          bun install --lockfile-only --ignore-scripts
+          git diff --exit-code bun.lock
+
       - name: Lint (biome)
         run: bun run lint
 
