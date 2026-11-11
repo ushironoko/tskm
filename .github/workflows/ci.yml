@@ -117,7 +117,9 @@ jobs:
   # scripts/node-smoke.mjs regenerates the committed examples with dist/cli.mjs and fails
   # on any byte difference or stray file. test:integration:node runs the shared compiler
   # integration scenarios against dist/index.mjs; verify runs the same scenarios against src
-  # under Bun. Suites that run the structural or JSON Schema worker stay in verify only.
+  # under Bun. test:node runs the compiler test files against src under Node, the same files
+  # bun test runs except three that depend on Bun: two need bun:ffi or Bun's fd shim, and one
+  # reaches its hub modules through tsconfig paths only (scripts/node-tests.mjs lists them).
   node-smoke:
     name: node ${{ matrix.node }} · dist smoke · compiler integration
     runs-on: ubuntu-latest
@@ -161,6 +163,12 @@ jobs:
       # Runs on the Node in PATH (the matrix version), against the dist built above.
       - name: Run the compiler integration suite under Node
         run: bun run test:integration:node
+
+      # Runs on the Node in PATH, against the source. The worker suites spawn this Node to run
+      # the schema .ts files, which needs type stripping: on by default from Node 22.18 and 24.
+      # The fixtures resolve @tskm/core to the dist built above, through node_modules.
+      - name: Run the compiler test suites under Node
+        run: bun run test:node
 
   # Bun's checker channel finds its pipe fds through /dev/fd on macOS, which has no procfs.
   # The other lanes run on Linux and never take that path. This lane runs the compiler tests

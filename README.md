@@ -245,7 +245,7 @@ Two things differ by runtime:
 - **Worker `.ts` imports.** Recursive roots and the JSON Schema emitter import your schema modules in a child process, so that process must load `.ts`. Node 22.18+ and Node 24 do this natively. On an older Node, set `worker.execPath` in `tskm.config.ts` to `bun`. Node also finds `@tskm/core` only through `node_modules`, not through tsconfig `paths`. A project that reaches it only through `paths` fails in the worker under Node, and Bun resolves it.
 - **Bun's checker channel.** Under Bun, the compiler reads the checker's pipe fds from the process fd table: `/proc/self/fd` on Linux and `/dev/fd` on macOS. On a platform with neither, `gen` fails with a clear error. Node does not need either table.
 
-CI covers both runtimes on Linux. The `verify` job runs the full suite under Bun. The `node-smoke` job builds `dist/` and runs under Node 22 and 24: `scripts/node-smoke.mjs` regenerates the committed examples and fails on any byte difference, and `bun run test:integration:node` runs the compiler's checker integration scenarios against `dist/`. Suites that run the structural or JSON Schema worker stay in `verify`: the fixtures reach `@tskm/core` only through tsconfig `paths`, which Node's loader does not read. macOS is not in CI.
+CI covers both runtimes on Linux. The `verify` job runs the full suite under Bun. The `node-smoke` job builds `dist/` and runs under Node 22 and 24: `scripts/node-smoke.mjs` regenerates the committed examples and fails on any byte difference, `bun run test:integration:node` runs the compiler's checker integration scenarios against `dist/`, and `bun run test:node` runs the compiler's test files against the source. Those files are the ones `bun test` runs, except two that need Bun's own runtime (`bun:ffi` and Bun's checker-channel fd shim) and one whose fixture reaches its hub modules only through tsconfig `paths`. The worker-based fixtures resolve `@tskm/core` through `node_modules` under Node. macOS is not in CI.
 
 ## How It Works
 
@@ -570,6 +570,7 @@ See [`examples/standard-schema`](examples/standard-schema) for the end-to-end lo
 bun install
 bun run build          # rolldown → dist (ESM + .d.ts)
 bun run test           # bun test: unit + type + integration lanes
+bun run test:node      # the compiler's test files under Node, from source (after build)
 bun run lint           # biome
 bun run test:mutation  # Stryker mutation testing (builds first, then per package)
 ```

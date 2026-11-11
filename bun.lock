@@ -109,6 +109,7 @@
         "oxc-parser": "0.134.0",
       },
       "devDependencies": {
+        "@tskm/core": "workspace:*",
         "@valibot/to-json-schema": "1.7.0",
         "arktype": "2.2.0",
         "typescript": "7.1.0-beta",

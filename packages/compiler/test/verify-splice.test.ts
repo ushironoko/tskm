@@ -1,4 +1,3 @@
-import { afterAll, beforeEach, describe, expect, it } from "bun:test"
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -11,6 +10,7 @@ import {
   type TsgoClient,
 } from "../src/tsgo-client.ts"
 import { applyTier1, crossCheckDataKeys, rootLevelKeys } from "../src/verify-splice.ts"
+import { afterAll, beforeEach, describe, expect, it } from "./test-api.ts"
 
 // `applyTier1`, `resolveSentinelUnroll`, and `verifyFixpoint` WRITE real query/probe
 // files next to `sourceFileAbs` and clean them up in `finally`. Every case must run

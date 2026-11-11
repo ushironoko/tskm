@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test"
 import { renderSidecar } from "../src/emit.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 describe("renderSidecar — vendor leak imports (two-stage guard)", () => {
   it("emits the zod $brand import when a zod-derived type leaks the token", () => {

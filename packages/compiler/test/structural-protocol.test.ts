@@ -1,7 +1,7 @@
-import { describe, expect, it } from "bun:test"
 import { tskmCapability } from "../src/discovery.ts"
 import { splitCanonicalTargets } from "../src/structural-resolve.ts"
 import { buildTargetIdentityMap } from "../src/worker-harness.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 // The worker-side identity map and the parent-side duplicate split are the two
 // halves of the target-driven protocol: only declared targets can ever be named

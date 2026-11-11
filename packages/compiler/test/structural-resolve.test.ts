@@ -1,34 +1,27 @@
-import { afterAll, describe, expect, it } from "bun:test"
-import { spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { type DiscoveredSchema, tskmCapability } from "../src/discovery.ts"
 import { bareAliasCycleNames, resolveRecursiveSchemas } from "../src/structural-resolve.ts"
+import { afterAll, describe, expect, it } from "./test-api.ts"
 
 // Parent-side driver tests over the REAL worker subprocess (resolveWorker picks
 // structural-ts-worker.ts) against tiny REAL fixture modules — the degrade-safe
 // branches (R6: any failure is a diagnostic + skip, never an overwrite) are only
 // trustworthy when exercised against the actual worker envelope, not a stub.
 //
-// The fixture modules import the runtime by its bare `@tskm/core` specifier, so
-// each tmp dir carries a tsconfig.json mapping that specifier to the workspace
-// source (bun honors tsconfig `paths` from the entry module's cwd). The tmp dir
-// lives UNDER the worktree so that mapping resolves; afterAll removes it.
-
-function findBun(): string | undefined {
-  const which = spawnSync("/bin/sh", ["-c", "command -v bun"], { encoding: "utf8" })
-  const path = which.stdout?.trim()
-  return path ? path : undefined
-}
-const bun = findBun()
+// The fixture modules import the runtime by its bare `@tskm/core` specifier. Each tmp dir
+// carries a tsconfig.json mapping that specifier to the workspace source, which Bun honors (from
+// the entry module's cwd). Node ignores tsconfig `paths`, so it resolves `@tskm/core` through
+// node_modules instead (the workspace link, which the built dist serves). The tmp dir lives UNDER
+// the worktree so that mapping resolves; afterAll removes it.
 
 // Absolute path to the workspace runtime source the fixtures' `@tskm/core` maps to.
 const here = dirname(fileURLToPath(import.meta.url))
 const coreAbs = join(here, "..", "..", "tskm", "src", "index.ts")
 
 // mkdtemp under the worktree (sibling of the other test dirs) so the fixtures'
-// tsconfig `paths` mapping to the workspace runtime resolves under bun.
+// tsconfig `paths` mapping to the workspace runtime resolves under Bun.
 const tmpRoot = mkdtempSync(join(here, "structural-resolve-tmp-"))
 
 afterAll(() => {
@@ -45,8 +38,8 @@ const TSCONFIG = JSON.stringify({
 
 /**
  * Writes one fixture module + its tsconfig into a fresh subdir of the tmp root and
- * returns the absolute module path. The tsconfig is what lets bun resolve the
- * fixture's bare `@tskm/core` import to the workspace runtime.
+ * returns the absolute module path. The tsconfig is what lets Bun resolve the
+ * fixture's bare `@tskm/core` import to the workspace runtime (Node uses node_modules).
  */
 let fixtureSeq = 0
 function fixture(source: string): string {
@@ -67,11 +60,11 @@ const target = (
   ...over,
 })
 
-describe.skipIf(!bun)("resolveRecursiveSchemas — degrade-safe branches (real worker)", () => {
-  // The worker runs with cwd = the fixture dir (options.root) so bun discovers that
-  // dir's tsconfig and resolves `@tskm/core`. timeoutMs is generous: a cold bun
+describe("resolveRecursiveSchemas — degrade-safe branches (real worker)", () => {
+  // The worker runs with cwd = the fixture dir (options.root), so Bun discovers that dir's
+  // tsconfig and resolves `@tskm/core` through its paths. timeoutMs is generous: a cold
   // subprocess importing the runtime can take a beat on CI.
-  const options = (root: string) => ({ root, execPath: bun as string, timeoutMs: 30000 })
+  const options = (root: string) => ({ root, execPath: process.execPath, timeoutMs: 30000 })
 
   it("WORKER FAILURE: an unspawnable execPath yields no resolutions and a 'worker failed' diagnostic", () => {
     // L97: runWorker collapses a spawn error to a single diagnostic; the driver

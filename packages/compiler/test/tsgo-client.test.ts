@@ -1,4 +1,3 @@
-import { describe, expect, it } from "bun:test"
 import { existsSync } from "node:fs"
 import {
   FAILURE_TYPE_FLAGS,
@@ -6,6 +5,7 @@ import {
   TYPE_TO_STRING_FLAGS,
   toFileDiagnostics,
 } from "../src/tsgo-client.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 // Whether the real checker binary resolves in this environment. The no-override
 // branch reaches into the typescript platform package, which may be absent on

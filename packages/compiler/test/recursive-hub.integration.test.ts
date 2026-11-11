@@ -1,11 +1,15 @@
 import { afterAll, describe, expect, it } from "bun:test"
-import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
 import { withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
+// Bun-only. The hub's bare specifiers (`@validator`, `@foreign`) resolve through the fixture's
+// tsconfig `paths` at run time, which only Bun does. Node ignores `paths`, and its package
+// resolution cannot load a bare scope such as `@validator` from node_modules, so the worker cannot
+// import the hub under Node. scripts/node-tests.mjs lists this file.
+//
 // Anti-corruption layer (re-export hub) contracts, end-to-end over the real pipeline.
 // A project authors schemas against `@validator` (which re-exports @tskm/core) and
 // never imports @tskm/core directly. The compiler must still:
@@ -34,20 +38,13 @@ const cleanups = [
   "probe.check.ts",
 ].map(src)
 
-function findBun(): string | undefined {
-  const which = spawnSync("/bin/sh", ["-c", "command -v bun"], { encoding: "utf8" })
-  const path = which.stdout?.trim()
-  return path ? path : undefined
-}
-const bun = findBun()
-
 afterAll(() => {
   for (const f of cleanups) {
     if (existsSync(f)) rmSync(f)
   }
 })
 
-describe.skipIf(!bun)("anti-corruption-layer hub recursive (real tsgo + real worker)", () => {
+describe("anti-corruption-layer hub recursive (real tsgo + real worker)", () => {
   it("routes hub-imported recursive() roots to the walker; keeps cross-file fail-closed", async () => {
     const result = await generate({
       root: fixtureRoot,
@@ -56,7 +53,7 @@ describe.skipIf(!bun)("anti-corruption-layer hub recursive (real tsgo + real wor
         include: ["src/*.schema.ts"],
         tsconfig: "tsconfig.json",
         schemaSources: ["@validator", "@foreign"],
-        worker: { execPath: bun },
+        worker: { execPath: process.execPath },
       }),
     })
 

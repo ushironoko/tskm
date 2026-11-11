@@ -1,7 +1,7 @@
-import { afterAll, describe, it } from "bun:test"
 import type { Suite } from "../scenarios/support.ts"
+import { afterAll, describe, it } from "../test-api.ts"
 
-/** Registers a shared scenario suite with `bun:test`, under the suite's own title. */
+/** Registers a shared scenario suite under the test API, with the suite's own title. */
 export function registerSuite(suite: Suite): void {
   describe(suite.title, () => {
     if (suite.teardown) {

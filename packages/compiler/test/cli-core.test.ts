@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import { main, parseArgs, runInit } from "../src/cli-core.ts"
+import { afterEach, describe, expect, it } from "./test-api.ts"
 
 describe("parseArgs", () => {
   it("returns defaults when given no args", () => {

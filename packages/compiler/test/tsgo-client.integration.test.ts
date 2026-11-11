@@ -6,7 +6,7 @@ import { newPipeFds, pipeIdentities, selectFdTable } from "../src/bun-sync-fds.t
 import * as compiler from "../src/index.ts"
 import { createTsgoClient, FAILURE_TYPE_FLAGS } from "../src/tsgo-client.ts"
 import { isNonBlocking } from "./fd-status.ts"
-import { registerSuite } from "./runners/bun.ts"
+import { registerSuite } from "./runners/suite.ts"
 import { makeProject } from "./scenarios/support.ts"
 import { tsgoClientSuite } from "./scenarios/tsgo-client.ts"
 

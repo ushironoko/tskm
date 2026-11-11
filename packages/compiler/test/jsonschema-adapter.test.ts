@@ -1,4 +1,3 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -6,6 +5,7 @@ import { type } from "arktype"
 import * as v from "valibot"
 import { z } from "zod"
 import { schemaToJsonSchemaViaAdapter } from "../src/jsonschema-adapter.ts"
+import { afterAll, beforeAll, describe, expect, it } from "./test-api.ts"
 
 const ALL = new Set(["tskm", "zod", "valibot", "arktype"])
 const ctx = (over: Partial<Parameters<typeof schemaToJsonSchemaViaAdapter>[1]> = {}) => ({

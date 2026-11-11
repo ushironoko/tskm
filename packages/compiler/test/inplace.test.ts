@@ -1,4 +1,3 @@
-import { afterEach, describe, expect, it } from "bun:test"
 import { createHash } from "node:crypto"
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -6,6 +5,7 @@ import { join } from "node:path"
 import { type DiscoveredSchema, tskmCapability } from "../src/discovery.ts"
 import { collectInplaceTargets, emitInplace } from "../src/inplace.ts"
 import type { ResolvedSchema } from "../src/resolve.ts"
+import { afterEach, describe, expect, it } from "./test-api.ts"
 
 const VERSION = "test-version@0"
 

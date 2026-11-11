@@ -1,8 +1,7 @@
-import { afterEach, describe, expect, it } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { pathToFileURL } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import type { TskmConfig } from "../src/config.ts"
 import {
   defineConfig,
@@ -13,10 +12,13 @@ import {
   vendorAllowList,
   vendorName,
 } from "../src/config.ts"
+import { afterEach, describe, expect, it } from "./test-api.ts"
 
 // Absolute file URL of the real source, used so a temp config can import
 // `defineConfig` without depending on node_modules resolution from a tmp dir.
-const CONFIG_SOURCE_URL = pathToFileURL(resolve(import.meta.dir, "../src/config.ts")).href
+const CONFIG_SOURCE_URL = pathToFileURL(
+  resolve(fileURLToPath(new URL(".", import.meta.url)), "../src/config.ts"),
+).href
 
 const tempDirs: string[] = []
 

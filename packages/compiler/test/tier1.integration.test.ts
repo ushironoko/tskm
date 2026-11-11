@@ -1,10 +1,9 @@
-import { afterAll, describe, expect, it } from "bun:test"
-import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
 import { createTsgoClient } from "../src/tsgo-client.ts"
 import { verifyFixpoint } from "../src/verify-splice.ts"
+import { afterAll, describe, expect, it } from "./test-api.ts"
 import { testTsgoExecutable, withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
@@ -26,20 +25,13 @@ const cleanups = [
   "probe.check.ts",
 ].map(src)
 
-function findBun(): string | undefined {
-  const which = spawnSync("/bin/sh", ["-c", "command -v bun"], { encoding: "utf8" })
-  const path = which.stdout?.trim()
-  return path ? path : undefined
-}
-const bun = findBun()
-
 afterAll(() => {
   for (const f of cleanups) {
     if (existsSync(f)) rmSync(f)
   }
 })
 
-describe.skipIf(!bun)("Tier-1 sentinel splice (real tsgo + real worker)", () => {
+describe("Tier-1 sentinel splice (real tsgo + real worker)", () => {
   it("splices checker-resolved transform outputs into recursive aliases (S2-S5)", async () => {
     const result = await generate({
       root: fixtureRoot,
@@ -47,7 +39,7 @@ describe.skipIf(!bun)("Tier-1 sentinel splice (real tsgo + real worker)", () => 
         mode: "sidecar",
         include: ["src/*.schema.ts"],
         tsconfig: "tsconfig.json",
-        worker: { execPath: bun },
+        worker: { execPath: process.execPath },
       }),
     })
     expect(result.files.length).toBe(7)

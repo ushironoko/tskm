@@ -1,6 +1,6 @@
-import { describe, expect, it } from "bun:test"
 import { reservedSidecarNames } from "../src/emit.ts"
 import { referenceNamedParts } from "../src/named-parts.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 // Pure rewrite of emitted alias bodies (no checker). Each case names the shape it guards:
 // the text is what the checker prints, so the inputs are single-line TypeScript type text.

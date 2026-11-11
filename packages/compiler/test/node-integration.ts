@@ -1,13 +1,14 @@
 // The compiler integration scenarios under Node, against the built package. The same
-// scenarios run under bun:test against the source (the *.integration.test.ts files), so a
-// behavior that differs by runtime fails in one of the two runs.
+// scenarios run from the source under bun:test (the *.integration.test.ts files) and under
+// Node (`bun run test:node`), so a behavior that differs by runtime or by artifact fails in
+// one of the runs.
 //
 // Run `bun run build` first: this imports dist/index.mjs, the artifact that users install.
 // Run with `bun run test:integration:node`. The scenarios share fixture paths, so they run
 // in order in this one process, never in parallel.
 import { existsSync } from "node:fs"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { registerSuite } from "./runners/node.ts"
+import { registerSuite } from "./runners/suite.ts"
 import { basicSuite, inplaceSuite, nullishSuite, preprocessSuite } from "./scenarios/generate.ts"
 import { jsonSchemaCliSuite, jsonSchemaSuite } from "./scenarios/json-schema.ts"
 import { standardSuites } from "./scenarios/standard.ts"

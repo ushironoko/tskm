@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test"
 import { type CycleWalkHooks, createCycleGuard, walkWithCycleGuard } from "../src/cycle-guard.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 // The shared cycle guard hoists a revisited node into a named definition and emits a
 // reference to it. Both real walkers (JSON Schema, structural TS) drive it through these

@@ -1,9 +1,9 @@
-import { describe, expect, it } from "bun:test"
 import { existsSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { markerPosition, sourceImportSpecifier, withQueryFile } from "../src/query-core.ts"
 import type { ResolvedType, TsgoClient } from "../src/tsgo-client.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 /**
  * A TsgoClient stub that records the overlay lifecycle. Only the members `withQueryFile`

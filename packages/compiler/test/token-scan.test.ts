@@ -1,9 +1,9 @@
-import { describe, expect, it } from "bun:test"
 import {
   containsTokenOutsideQuotes,
   referencesTypeOutsideQuotes,
   replaceTokenOutsideQuotes,
 } from "../src/token-scan.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 // These are the quote-aware, whole-word scanners that the Tier-1 sentinel substitution
 // and the dangling-alias prune both rely on. Every span inside a string literal MUST be

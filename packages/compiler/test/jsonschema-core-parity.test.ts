@@ -1,4 +1,3 @@
-import { describe, expect, it } from "bun:test"
 import {
   any,
   array,
@@ -44,6 +43,7 @@ import {
 } from "../../tskm/src/index.ts"
 import { withJsonSchema } from "../../tskm/src/json-schema.ts"
 import { schemaToJsonSchema } from "../src/jsonschema.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 /**
  * The core Standard JSON Schema walker (`withJsonSchema`) and the compiler emitter

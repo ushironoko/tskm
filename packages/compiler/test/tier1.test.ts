@@ -1,6 +1,6 @@
-import { describe, expect, it } from "bun:test"
 import { buildSentinelQuery, resolveSentinelUnroll, substituteSentinel } from "../src/tier1.ts"
 import type { TsgoClient } from "../src/tsgo-client.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 describe("buildSentinelQuery — the verified unroll query form", () => {
   it("emits one unique-symbol sentinel + one marker per target", () => {

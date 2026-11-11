@@ -1,8 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test"
-import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generateJsonSchema } from "../src/index.ts"
+import { afterAll, beforeAll, describe, expect, it } from "./test-api.ts"
 
 // Vendor-dispatch JSON Schema generation through the REAL isolated worker:
 // tskm walker / zod native (spec 1.1) / @valibot/to-json-schema / arktype
@@ -19,25 +18,18 @@ const badOutput = fileURLToPath(
   new URL("./fixtures/json-vendor-bad/src/vendor-bad.schema.json", import.meta.url),
 )
 
-function findBun(): string | undefined {
-  const which = spawnSync("/bin/sh", ["-c", "command -v bun"], { encoding: "utf8" })
-  const path = which.stdout?.trim()
-  return path ? path : undefined
-}
-const bun = findBun()
-
 afterAll(() => {
   for (const file of [output, badOutput]) {
     if (existsSync(file)) rmSync(file)
   }
 })
 
-describe.skipIf(!bun)("generateJsonSchema — Standard Schema vendor dispatch (real worker)", () => {
+describe("generateJsonSchema — Standard Schema vendor dispatch (real worker)", () => {
   it("routes each vendor to its converter and merges one document", async () => {
     const result = await generateJsonSchema({
       root: fixtureRoot,
       config: { include: ["src/json-mixed.schema.ts"] },
-      execPath: bun,
+      execPath: process.execPath,
       timeoutMs: 30_000,
     })
 
@@ -69,7 +61,7 @@ describe.skipIf(!bun)("generateJsonSchema — Standard Schema vendor dispatch (r
     const result = await generateJsonSchema({
       root: fixtureRoot,
       config: { include: ["src/json-mixed.schema.ts"], schemaSources: [] },
-      execPath: bun,
+      execPath: process.execPath,
       timeoutMs: 30_000,
     })
     // only the tskm export survives
@@ -90,57 +82,54 @@ describe.skipIf(!bun)("generateJsonSchema — Standard Schema vendor dispatch (r
   }, 60_000)
 })
 
-describe.skipIf(!bun)(
-  "generateJsonSchema — a vendor conversion failure fails the file (real worker)",
-  () => {
-    beforeAll(() => {
-      if (existsSync(badOutput)) rmSync(badOutput)
+describe("generateJsonSchema — a vendor conversion failure fails the file (real worker)", () => {
+  beforeAll(() => {
+    if (existsSync(badOutput)) rmSync(badOutput)
+  })
+
+  it("names each failing export, writes nothing, and reports every error", async () => {
+    const result = await generateJsonSchema({
+      root: badRoot,
+      config: { include: ["src/vendor-bad.schema.ts"] },
+      execPath: process.execPath,
+      timeoutMs: 30_000,
     })
 
-    it("names each failing export, writes nothing, and reports every error", async () => {
-      const result = await generateJsonSchema({
-        root: badRoot,
-        config: { include: ["src/vendor-bad.schema.ts"] },
-        execPath: bun,
-        timeoutMs: 30_000,
-      })
+    expect(result.files).toEqual([])
+    expect(result.removed).toEqual([])
+    expect(existsSync(badOutput)).toBe(false)
+    // One error per failing export, prefixed with the export name, and none for the valid one.
+    const names = result.errors.map(
+      (line) => line.replace(`tskm: ${badSource}: `, "").split(":")[0],
+    )
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "zodBigintSchema",
+        "zodInfinitySchema",
+        "valibotTransformSchema",
+        "arktypeBigintSchema",
+      ]),
+    )
+    expect(names).not.toContain("okSchema")
+    expect(result.errors.every((line) => line.startsWith(`tskm: ${badSource}: `))).toBe(true)
+    expect(result.errors.join("\n")).toContain("Infinity has no JSON representation")
+    expect(result.errors.join("\n")).toContain("Vendor schemas have no approximation")
+    // Errors are also diagnostic lines, so the CLI prints the same text.
+    expect(result.diagnostics).toEqual(expect.arrayContaining(result.errors))
+  }, 60_000)
 
-      expect(result.files).toEqual([])
-      expect(result.removed).toEqual([])
-      expect(existsSync(badOutput)).toBe(false)
-      // One error per failing export, prefixed with the export name, and none for the valid one.
-      const names = result.errors.map(
-        (line) => line.replace(`tskm: ${badSource}: `, "").split(":")[0],
-      )
-      expect(names).toEqual(
-        expect.arrayContaining([
-          "zodBigintSchema",
-          "zodInfinitySchema",
-          "valibotTransformSchema",
-          "arktypeBigintSchema",
-        ]),
-      )
-      expect(names).not.toContain("okSchema")
-      expect(result.errors.every((line) => line.startsWith(`tskm: ${badSource}: `))).toBe(true)
-      expect(result.errors.join("\n")).toContain("Infinity has no JSON representation")
-      expect(result.errors.join("\n")).toContain("Vendor schemas have no approximation")
-      // Errors are also diagnostic lines, so the CLI prints the same text.
-      expect(result.diagnostics).toEqual(expect.arrayContaining(result.errors))
-    }, 60_000)
+  it("deletes the previous output of the failing source", async () => {
+    // A stale document from an earlier, passing run.
+    writeFileSync(badOutput, '{"okSchema":{"type":"object"}}\n')
+    const result = await generateJsonSchema({
+      root: badRoot,
+      config: { include: ["src/vendor-bad.schema.ts"] },
+      execPath: process.execPath,
+      timeoutMs: 30_000,
+    })
 
-    it("deletes the previous output of the failing source", async () => {
-      // A stale document from an earlier, passing run.
-      writeFileSync(badOutput, '{"okSchema":{"type":"object"}}\n')
-      const result = await generateJsonSchema({
-        root: badRoot,
-        config: { include: ["src/vendor-bad.schema.ts"] },
-        execPath: bun,
-        timeoutMs: 30_000,
-      })
-
-      expect(result.errors.length).toBeGreaterThan(0)
-      expect(result.removed).toEqual([badOutput])
-      expect(existsSync(badOutput)).toBe(false)
-    }, 60_000)
-  },
-)
+    expect(result.errors.length).toBeGreaterThan(0)
+    expect(result.removed).toEqual([badOutput])
+    expect(existsSync(badOutput)).toBe(false)
+  }, 60_000)
+})
