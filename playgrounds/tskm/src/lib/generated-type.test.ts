@@ -123,6 +123,27 @@ test("renders literal values of every representable primitive kind", () => {
   expect(fallbackType(`literal(null)`)).toBe("unknown")
 })
 
+test("degrades malformed container schemas to safe placeholder types", () => {
+  // The renderer guards every container against a missing/!Array shape. A schema object
+  // can be hand-built (compileSchema evaluates the source as an expression), so these
+  // defensive branches are reachable with deliberately malformed shapes.
+  // tuple without an array `items`
+  expect(fallbackType(`({ type: "tuple", items: "nope" })`)).toBe("unknown[]")
+  // union without an array `options`
+  expect(fallbackType(`({ type: "union", options: 123 })`)).toBe("unknown")
+  // picklist without an array `options`
+  expect(fallbackType(`({ type: "picklist", options: undefined })`)).toBe("never")
+  // an unrecognised schema type hits the switch default
+  expect(fallbackType(`({ type: "totally-unknown-kind" })`)).toBe("unknown")
+  // a non-record schema value is not describable
+  expect(fallbackType(`42`)).toBe("unknown")
+})
+
+test("renders a template literal without parts as a plain string type", () => {
+  // `parts` is not an array, so the template literal collapses to `string`.
+  expect(fallbackType(`({ type: "templateLiteral" })`)).toBe("string")
+})
+
 test("reports an error state when the schema source cannot be compiled", () => {
   const state = renderFallbackContent(`notASchema()`)
   expect(state.status).toBe("error")
