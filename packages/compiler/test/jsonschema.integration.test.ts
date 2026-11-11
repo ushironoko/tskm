@@ -1,13 +1,12 @@
-import { afterAll, describe, expect, it } from "bun:test"
-import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { generateJsonSchema } from "../src/index.ts"
+import { afterAll, describe, expect, it } from "./test-api.ts"
 
 // Runs the REAL isolated worker subprocess against the existing fixture schema module.
 // The worker must import a `.ts` module that bare-imports `tskm`, so it needs a TS-capable
-// runtime that can resolve the workspace `tskm`; we resolve a `bun` on PATH and pass it
+// runtime that can resolve the workspace `tskm`; this runtime (process.execPath) is passed
 // explicitly as the worker exec path.
 const fixtureRoot = fileURLToPath(new URL("./fixtures/basic", import.meta.url))
 const output = fileURLToPath(new URL("./fixtures/basic/src/account.schema.json", import.meta.url))
@@ -23,26 +22,19 @@ const lossyOutput = fileURLToPath(
   new URL("./fixtures/json-lossy/src/lossy.schema.json", import.meta.url),
 )
 
-function findBun(): string | undefined {
-  const which = spawnSync("/bin/sh", ["-c", "command -v bun"], { encoding: "utf8" })
-  const path = which.stdout?.trim()
-  return path ? path : undefined
-}
-const bun = findBun()
-
 afterAll(() => {
   for (const f of [output, noisySource, noisyOutput, lossyOutput]) {
     if (existsSync(f)) rmSync(f)
   }
 })
 
-describe.skipIf(!bun)("generateJsonSchema — isolated subprocess (real import)", () => {
+describe("generateJsonSchema — isolated subprocess (real import)", () => {
   it("walks the runtime schema objects into a JSON Schema file", async () => {
     const result = await generateJsonSchema({
       root: fixtureRoot,
       // `transform` output is not representable, so the file opts into the approximation.
       config: { include: ["src/account.schema.ts"], jsonSchema: { approximate: ["transform"] } },
-      execPath: bun,
+      execPath: process.execPath,
     })
 
     expect(result.files).toHaveLength(1)
@@ -90,7 +82,7 @@ describe.skipIf(!bun)("generateJsonSchema — isolated subprocess (real import)"
     const result = await generateJsonSchema({
       root: fixtureRoot,
       config: { include: ["src/noisy.schema.ts"] },
-      execPath: bun,
+      execPath: process.execPath,
     })
 
     expect(result.diagnostics).toHaveLength(0)
@@ -103,80 +95,77 @@ describe.skipIf(!bun)("generateJsonSchema — isolated subprocess (real import)"
   }, 60_000)
 })
 
-describe.skipIf(!bun)(
-  "generateJsonSchema — unrepresentable types fail closed (real import)",
-  () => {
-    // The lossy fixture holds bigint (a field and a tuple slot) and date. Its export is
-    // `orderSchema`, so the diagnostic paths start with the document key.
-    const lossyPrefix = `tskm: ${lossySource}: `
+describe("generateJsonSchema — unrepresentable types fail closed (real import)", () => {
+  // The lossy fixture holds bigint (a field and a tuple slot) and date. Its export is
+  // `orderSchema`, so the diagnostic paths start with the document key.
+  const lossyPrefix = `tskm: ${lossySource}: `
 
-    it("fails the file by default: each path is named, the option is offered, nothing is written", async () => {
-      rmSync(lossyOutput, { force: true })
-      const result = await generateJsonSchema({
-        root: lossyRoot,
-        config: { include: ["src/lossy.schema.ts"] },
-        execPath: bun,
-      })
+  it("fails the file by default: each path is named, the option is offered, nothing is written", async () => {
+    rmSync(lossyOutput, { force: true })
+    const result = await generateJsonSchema({
+      root: lossyRoot,
+      config: { include: ["src/lossy.schema.ts"] },
+      execPath: process.execPath,
+    })
 
-      expect(result.files).toEqual([])
-      expect(result.errors).toEqual([
-        `${lossyPrefix}orderSchema.amount: cannot convert schema type "bigint" to JSON Schema: bigint has no JSON representation. Add "bigint" to jsonSchema.approximate (CLI: --approximate bigint) to emit it as a string instead.`,
-        `${lossyPrefix}orderSchema.createdAt: cannot convert schema type "date" to JSON Schema: Date has no JSON representation. Add "date" to jsonSchema.approximate (CLI: --approximate date) to emit it as a date-time string instead.`,
-        `${lossyPrefix}orderSchema.lines[0]: cannot convert schema type "bigint" to JSON Schema: bigint has no JSON representation. Add "bigint" to jsonSchema.approximate (CLI: --approximate bigint) to emit it as a string instead.`,
-      ])
-      // Every error is also a diagnostic line, so the CLI prints the same text.
-      expect(result.diagnostics).toEqual(result.errors)
-      expect(existsSync(lossyOutput)).toBe(false)
-    }, 60_000)
+    expect(result.files).toEqual([])
+    expect(result.errors).toEqual([
+      `${lossyPrefix}orderSchema.amount: cannot convert schema type "bigint" to JSON Schema: bigint has no JSON representation. Add "bigint" to jsonSchema.approximate (CLI: --approximate bigint) to emit it as a string instead.`,
+      `${lossyPrefix}orderSchema.createdAt: cannot convert schema type "date" to JSON Schema: Date has no JSON representation. Add "date" to jsonSchema.approximate (CLI: --approximate date) to emit it as a date-time string instead.`,
+      `${lossyPrefix}orderSchema.lines[0]: cannot convert schema type "bigint" to JSON Schema: bigint has no JSON representation. Add "bigint" to jsonSchema.approximate (CLI: --approximate bigint) to emit it as a string instead.`,
+    ])
+    // Every error is also a diagnostic line, so the CLI prints the same text.
+    expect(result.diagnostics).toEqual(result.errors)
+    expect(existsSync(lossyOutput)).toBe(false)
+  }, 60_000)
 
-    it("with the types listed in jsonSchema.approximate, writes the previous approximate output", async () => {
-      rmSync(lossyOutput, { force: true })
-      const result = await generateJsonSchema({
-        root: lossyRoot,
-        config: {
-          include: ["src/lossy.schema.ts"],
-          jsonSchema: { approximate: ["bigint", "date"] },
-        },
-        execPath: bun,
-      })
-
-      expect(result.errors).toEqual([])
-      expect(result.files).toHaveLength(1)
-      expect(result.diagnostics).toEqual([
-        `${lossyPrefix}orderSchema.amount: approximated bigint as a string.`,
-        `${lossyPrefix}orderSchema.createdAt: approximated date as a date-time string.`,
-        `${lossyPrefix}orderSchema.lines[0]: approximated bigint as a string.`,
-      ])
-      const doc = JSON.parse(readFileSync(lossyOutput, "utf8")) as {
-        orderSchema: {
-          properties: Record<string, unknown>
-          required: string[]
-        }
-      }
-      expect(doc.orderSchema.properties.amount).toEqual({ type: "string" })
-      expect(doc.orderSchema.properties.createdAt).toEqual({
-        type: "string",
-        format: "date-time",
-      })
-      expect(doc.orderSchema.properties.lines).toEqual({
-        type: "array",
-        prefixItems: [{ type: "string" }],
-        items: false,
-      })
-      expect(doc.orderSchema.required).toEqual(["id", "amount", "createdAt", "lines", "tags"])
-    }, 60_000)
-
-    it("applies the CLI-style jsonSchema override to the config loaded from the root", async () => {
-      rmSync(lossyOutput, { force: true })
-      // No config object, so the root's config is loaded (there is no tskm.config.* here, so the
-      // defaults apply). The override is the only source of the approximation list.
-      const result = await generateJsonSchema({
-        root: lossyRoot,
+  it("with the types listed in jsonSchema.approximate, writes the previous approximate output", async () => {
+    rmSync(lossyOutput, { force: true })
+    const result = await generateJsonSchema({
+      root: lossyRoot,
+      config: {
+        include: ["src/lossy.schema.ts"],
         jsonSchema: { approximate: ["bigint", "date"] },
-        execPath: bun,
-      })
-      expect(result.errors).toEqual([])
-      expect(result.files).toHaveLength(1)
-    }, 60_000)
-  },
-)
+      },
+      execPath: process.execPath,
+    })
+
+    expect(result.errors).toEqual([])
+    expect(result.files).toHaveLength(1)
+    expect(result.diagnostics).toEqual([
+      `${lossyPrefix}orderSchema.amount: approximated bigint as a string.`,
+      `${lossyPrefix}orderSchema.createdAt: approximated date as a date-time string.`,
+      `${lossyPrefix}orderSchema.lines[0]: approximated bigint as a string.`,
+    ])
+    const doc = JSON.parse(readFileSync(lossyOutput, "utf8")) as {
+      orderSchema: {
+        properties: Record<string, unknown>
+        required: string[]
+      }
+    }
+    expect(doc.orderSchema.properties.amount).toEqual({ type: "string" })
+    expect(doc.orderSchema.properties.createdAt).toEqual({
+      type: "string",
+      format: "date-time",
+    })
+    expect(doc.orderSchema.properties.lines).toEqual({
+      type: "array",
+      prefixItems: [{ type: "string" }],
+      items: false,
+    })
+    expect(doc.orderSchema.required).toEqual(["id", "amount", "createdAt", "lines", "tags"])
+  }, 60_000)
+
+  it("applies the CLI-style jsonSchema override to the config loaded from the root", async () => {
+    rmSync(lossyOutput, { force: true })
+    // No config object, so the root's config is loaded (there is no tskm.config.* here, so the
+    // defaults apply). The override is the only source of the approximation list.
+    const result = await generateJsonSchema({
+      root: lossyRoot,
+      jsonSchema: { approximate: ["bigint", "date"] },
+      execPath: process.execPath,
+    })
+    expect(result.errors).toEqual([])
+    expect(result.files).toHaveLength(1)
+  }, 60_000)
+})

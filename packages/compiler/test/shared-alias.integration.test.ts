@@ -1,8 +1,7 @@
-import { afterAll, describe, expect, it } from "bun:test"
-import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
+import { afterAll, describe, expect, it } from "./test-api.ts"
 import { withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
@@ -15,13 +14,6 @@ const fixtureRoot = fileURLToPath(new URL("./fixtures/shared-alias", import.meta
 const src = (file: string): string =>
   fileURLToPath(new URL(`./fixtures/shared-alias/src/${file}`, import.meta.url))
 const genFile = src("union.schema.gen.ts")
-
-function findBun(): string | undefined {
-  const which = spawnSync("/bin/sh", ["-c", "command -v bun"], { encoding: "utf8" })
-  const path = which.stdout?.trim()
-  return path ? path : undefined
-}
-const bun = findBun()
 
 const degradeGen = src("degrade.schema.gen.ts")
 
@@ -38,12 +30,12 @@ const run = (nameSharedSchemas: boolean, include = "src/union.schema.ts") =>
       mode: "sidecar",
       include: [include],
       tsconfig: "tsconfig.json",
-      worker: { execPath: bun },
+      worker: { execPath: process.execPath },
       codegen: { nameSharedSchemas },
     }),
   })
 
-describe.skipIf(!bun)("named sibling aliases (#22, real worker + tsgo)", () => {
+describe("named sibling aliases (#22, real worker + tsgo)", () => {
   it("off (default): the shared sub-schema is still named, by the named-parts pass", async () => {
     // The default needs no flag: a shared object part is referenced by name (named-parts.ts).
     // The walker flag below is a separate, opt-in route to the same names.

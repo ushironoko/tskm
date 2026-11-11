@@ -1,5 +1,5 @@
 import * as compiler from "../src/index.ts"
-import { registerSuite } from "./runners/bun.ts"
+import { registerSuite } from "./runners/suite.ts"
 import { nullishSuite } from "./scenarios/generate.ts"
 
 // Real-tsgo gate for TOP-LEVEL nullability. The existing `account` gate only exercises

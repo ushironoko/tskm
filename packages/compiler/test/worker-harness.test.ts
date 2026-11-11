@@ -1,5 +1,3 @@
-import { afterAll, describe, expect, it } from "bun:test"
-import { spawnSync } from "node:child_process"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -11,16 +9,10 @@ import {
   runSchemaWorker,
   runWorker,
 } from "../src/worker-harness.ts"
+import { afterAll, describe, expect, it } from "./test-api.ts"
 
-// Resolve a real `bun` on PATH the same way the integration tests do: the runWorker
-// failure cases spawn throwaway worker scripts, so they need a TS-capable runtime as
-// the worker exec path. When bun is absent we skip those cases rather than hard-fail.
-function findBun(): string | undefined {
-  const which = spawnSync("/bin/sh", ["-c", "command -v bun"], { encoding: "utf8" })
-  const path = which.stdout?.trim()
-  return path ? path : undefined
-}
-const bun = findBun()
+// The runWorker cases spawn throwaway worker scripts with this runtime (process.execPath), so it
+// must run `.ts` directly: Bun, or Node 22.18+ / 24, which strip types by default.
 
 const tmpDirs: string[] = []
 function freshDir(): string {
@@ -37,7 +29,7 @@ afterAll(() => {
 
 const RUN_OPTS = (root: string) => ({ root, timeoutMs: 5000, tag: "test" }) as const
 
-describe.skipIf(!bun)("runWorker — the four failure branches collapse to a diagnostic", () => {
+describe("runWorker — the four failure branches collapse to a diagnostic", () => {
   // Each branch is a fail-closed guard: a misbehaving (or missing) worker must never
   // surface an envelope, only a single `diagnostic` string the caller can skip on.
 
@@ -63,7 +55,7 @@ describe.skipIf(!bun)("runWorker — the four failure branches collapse to a dia
     writeFileSync(workerAbs, "process.exit(2)\n")
     const result = runWorker(workerAbs, join(dir, "src.ts"), {
       ...RUN_OPTS(dir),
-      execPath: bun as string,
+      execPath: process.execPath,
     })
     expect(result.diagnostic).toMatch(/worker exited with code 2/)
     expect(result.envelope).toBeUndefined()
@@ -77,7 +69,7 @@ describe.skipIf(!bun)("runWorker — the four failure branches collapse to a dia
     writeFileSync(workerAbs, "// exits 0, writes nothing\n")
     const result = runWorker(workerAbs, join(dir, "src.ts"), {
       ...RUN_OPTS(dir),
-      execPath: bun as string,
+      execPath: process.execPath,
     })
     expect(result.diagnostic).toMatch(/could not read worker output/)
     expect(result.envelope).toBeUndefined()
@@ -96,7 +88,7 @@ describe.skipIf(!bun)("runWorker — the four failure branches collapse to a dia
     )
     const result = runWorker(workerAbs, join(dir, "src.ts"), {
       ...RUN_OPTS(dir),
-      execPath: bun as string,
+      execPath: process.execPath,
     })
     expect(result.diagnostic).toMatch(/boom; skipped/)
     expect(result.envelope).toBeUndefined()

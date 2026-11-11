@@ -1,6 +1,6 @@
-import { describe, expect, it } from "bun:test"
 import { chooseRendering } from "../src/resolve.ts"
 import type { ResolvedType } from "../src/tsgo-client.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 const OBJECT_FLAGS = 1048576
 const STRING_FLAGS = 32

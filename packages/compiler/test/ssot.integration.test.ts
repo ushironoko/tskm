@@ -1,9 +1,9 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: assertions compare against emitted type text that contains literal "${...}"
-import { afterAll, describe, expect, it } from "bun:test"
-import { spawnSync } from "node:child_process"
+
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
+import { afterAll, describe, expect, it } from "./test-api.ts"
 import { withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
@@ -19,20 +19,13 @@ const src = (file: string): string =>
 const genFile = src("node.schema.gen.ts")
 const probeFile = src("probe.check.ts")
 
-function findBun(): string | undefined {
-  const which = spawnSync("/bin/sh", ["-c", "command -v bun"], { encoding: "utf8" })
-  const path = which.stdout?.trim()
-  return path ? path : undefined
-}
-const bun = findBun()
-
 afterAll(() => {
   for (const f of [genFile, probeFile]) {
     if (existsSync(f)) rmSync(f)
   }
 })
 
-describe.skipIf(!bun)("SSoT composition emits a faithful type (#24, real worker + tsgo)", () => {
+describe("SSoT composition emits a faithful type (#24, real worker + tsgo)", () => {
   it("emits the faithful optional, templated id, keyed record, and recursive self-reference", async () => {
     await generate({
       root: fixtureRoot,
@@ -40,7 +33,7 @@ describe.skipIf(!bun)("SSoT composition emits a faithful type (#24, real worker 
         mode: "sidecar",
         include: ["src/node.schema.ts"],
         tsconfig: "tsconfig.json",
-        worker: { execPath: bun },
+        worker: { execPath: process.execPath },
       }),
     })
     const gen = readFileSync(genFile, "utf8")

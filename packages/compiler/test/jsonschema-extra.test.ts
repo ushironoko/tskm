@@ -1,6 +1,6 @@
-import { describe, expect, it } from "bun:test"
 import { resolveConfig } from "../src/config.ts"
 import { jsonSchemaOutputPath, schemaToJsonSchema } from "../src/jsonschema.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 // Duck-typed schema builders (NOT imported from tskm) — the walker reads `.type`/
 // `.entries`/`.item`/… across the package boundary, so plain shaped objects suffice.

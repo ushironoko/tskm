@@ -1,4 +1,3 @@
-import { afterAll, describe, expect, it } from "bun:test"
 import {
   existsSync,
   mkdirSync,
@@ -13,6 +12,7 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
 import { referenceNamedParts } from "../src/named-parts.ts"
+import { afterAll, describe, expect, it } from "./test-api.ts"
 import { withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test"
 import { type PruneCandidate, pruneDanglingAliases } from "../src/prune.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 const c = (typeName: string, body: string, structural = true): PruneCandidate => ({
   typeName,

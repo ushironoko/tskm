@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test"
+import { afterEach, describe, expect, it } from "./test-api.ts"
 import {
   TSKM_TEST_TSGO_EXECUTABLE,
   testTsgoExecutable,

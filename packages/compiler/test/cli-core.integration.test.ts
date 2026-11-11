@@ -1,9 +1,8 @@
-import { afterEach, describe, expect, it } from "bun:test"
-import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { main } from "../src/cli-core.ts"
+import { afterEach, describe, expect, it } from "./test-api.ts"
 import { testTsgoExecutable } from "./tsgo-test-executable.ts"
 
 // Drives the real `gen` / `json-schema` command paths in cli-core's `main()` end to end
@@ -30,13 +29,6 @@ function writeTsgoOverride(): void {
   writeFileSync(tsgoConfig, `export default { executable: ${JSON.stringify(executable)} }\n`)
   wroteTsgoOverride = true
 }
-
-function findBun(): string | undefined {
-  const which = spawnSync("/bin/sh", ["-c", "command -v bun"], { encoding: "utf8" })
-  const path = which.stdout?.trim()
-  return path ? path : undefined
-}
-const bun = findBun()
 
 type Writer = (chunk: Uint8Array | string) => boolean
 
@@ -94,46 +86,38 @@ describe("cli-core main() — real command execution", () => {
     expect(process.exitCode).toBe(0)
   }, 60_000)
 
-  it.skipIf(!bun)(
-    "`json-schema` emits a schema file and reports the written file with its schema names",
-    async () => {
-      // The fixture's transform is not representable: the file opts into its approximation.
-      install([
-        "json-schema",
-        "--root",
-        fixtureRoot,
-        "--exec",
-        bun as string,
-        "--approximate",
-        "transform",
-      ])
-      await main()
+  it("`json-schema` emits a schema file and reports the written file with its schema names", async () => {
+    // The fixture's transform is not representable: the file opts into its approximation.
+    install([
+      "json-schema",
+      "--root",
+      fixtureRoot,
+      "--exec",
+      process.execPath,
+      "--approximate",
+      "transform",
+    ])
+    await main()
 
-      expect(existsSync(jsonOutput)).toBe(true)
-      expect(stdout).toContain("tskm: wrote")
-      expect(stdout).toContain("account.schema.json")
-      expect(stdout).toContain("accountSchema")
-      expect(process.exitCode).toBe(0)
-    },
-    60_000,
-  )
+    expect(existsSync(jsonOutput)).toBe(true)
+    expect(stdout).toContain("tskm: wrote")
+    expect(stdout).toContain("account.schema.json")
+    expect(stdout).toContain("accountSchema")
+    expect(process.exitCode).toBe(0)
+  }, 60_000)
 
-  it.skipIf(!bun)(
-    "`json-schema` fails closed by default: exit 1, the path and option are printed, no file is written",
-    async () => {
-      install(["json-schema", "--root", fixtureRoot, "--exec", bun as string])
-      await main()
+  it("`json-schema` fails closed by default: exit 1, the path and option are printed, no file is written", async () => {
+    install(["json-schema", "--root", fixtureRoot, "--exec", process.execPath])
+    await main()
 
-      expect(existsSync(jsonOutput)).toBe(false)
-      expect(process.exitCode).toBe(1)
-      expect(stderr).toContain("accountSchema.nameLength")
-      expect(stderr).toContain('cannot convert pipe item "transform" to JSON Schema output')
-      expect(stderr).toContain("--approximate transform")
-      expect(stderr).toContain("json-schema failed with 1 error(s)")
-      expect(stdout).toContain("tskm: no JSON Schema generated.")
-    },
-    60_000,
-  )
+    expect(existsSync(jsonOutput)).toBe(false)
+    expect(process.exitCode).toBe(1)
+    expect(stderr).toContain("accountSchema.nameLength")
+    expect(stderr).toContain('cannot convert pipe item "transform" to JSON Schema output')
+    expect(stderr).toContain("--approximate transform")
+    expect(stderr).toContain("json-schema failed with 1 error(s)")
+    expect(stdout).toContain("tskm: no JSON Schema generated.")
+  }, 60_000)
 
   it("`json-schema` rejects an unknown --approximate name before running anything", async () => {
     install(["json-schema", "--root", fixtureRoot, "--approximate", "bigint,Date"])
@@ -141,81 +125,73 @@ describe("cli-core main() — real command execution", () => {
     expect(existsSync(jsonOutput)).toBe(false)
   })
 
-  it.skipIf(!bun)(
-    "`json-schema` refuses non-finite numbers by default (exit 1), and --approximate nonfinite writes them",
-    async () => {
-      const limitsRoot = fileURLToPath(new URL("./fixtures/json-nonfinite", import.meta.url))
-      const limitsOutput = fileURLToPath(
-        new URL("./fixtures/json-nonfinite/src/limits.schema.json", import.meta.url),
+  it("`json-schema` refuses non-finite numbers by default (exit 1), and --approximate nonfinite writes them", async () => {
+    const limitsRoot = fileURLToPath(new URL("./fixtures/json-nonfinite", import.meta.url))
+    const limitsOutput = fileURLToPath(
+      new URL("./fixtures/json-nonfinite/src/limits.schema.json", import.meta.url),
+    )
+    try {
+      install(["json-schema", "--root", limitsRoot, "--exec", process.execPath])
+      await main()
+      expect(existsSync(limitsOutput)).toBe(false)
+      expect(process.exitCode).toBe(1)
+      expect(stderr).toContain('limitsSchema.cap: cannot convert schema type "literal"')
+      expect(stderr).toContain("Infinity has no JSON representation")
+      expect(stderr).toContain("--approximate nonfinite")
+      expect(stderr).toContain("json-schema failed with 3 error(s)")
+
+      install([
+        "json-schema",
+        "--root",
+        limitsRoot,
+        "--exec",
+        process.execPath,
+        "--approximate",
+        "nonfinite",
+      ])
+      await main()
+      expect(existsSync(limitsOutput)).toBe(true)
+      expect(process.exitCode).toBe(0)
+      expect(stdout).toContain("tskm: wrote")
+      expect(stdout).toContain("limits.schema.json")
+      expect(stderr).toContain("approximated nonfinite as a schema no JSON value matches.")
+    } finally {
+      rmSync(limitsOutput, { force: true })
+    }
+  }, 60_000)
+
+  it("`json-schema` deletes a stale output when its source now fails, and says so on stdout", async () => {
+    const staleRoot = fileURLToPath(new URL("./fixtures/json-stale", import.meta.url))
+    const srcDir = join(staleRoot, "src")
+    const source = join(srcDir, "order.schema.ts")
+    const output = join(srcDir, "order.schema.json")
+    try {
+      mkdirSync(srcDir, { recursive: true })
+      writeFileSync(
+        source,
+        `import { object, string } from "@tskm/core"\nexport const orderSchema = object({ id: string() })\n`,
       )
-      try {
-        install(["json-schema", "--root", limitsRoot, "--exec", bun as string])
-        await main()
-        expect(existsSync(limitsOutput)).toBe(false)
-        expect(process.exitCode).toBe(1)
-        expect(stderr).toContain('limitsSchema.cap: cannot convert schema type "literal"')
-        expect(stderr).toContain("Infinity has no JSON representation")
-        expect(stderr).toContain("--approximate nonfinite")
-        expect(stderr).toContain("json-schema failed with 3 error(s)")
+      install(["json-schema", "--root", staleRoot, "--exec", process.execPath])
+      await main()
+      expect(process.exitCode).toBe(0)
+      expect(existsSync(output)).toBe(true)
 
-        install([
-          "json-schema",
-          "--root",
-          limitsRoot,
-          "--exec",
-          bun as string,
-          "--approximate",
-          "nonfinite",
-        ])
-        await main()
-        expect(existsSync(limitsOutput)).toBe(true)
-        expect(process.exitCode).toBe(0)
-        expect(stdout).toContain("tskm: wrote")
-        expect(stdout).toContain("limits.schema.json")
-        expect(stderr).toContain("approximated nonfinite as a schema no JSON value matches.")
-      } finally {
-        rmSync(limitsOutput, { force: true })
-      }
-    },
-    60_000,
-  )
-
-  it.skipIf(!bun)(
-    "`json-schema` deletes a stale output when its source now fails, and says so on stdout",
-    async () => {
-      const staleRoot = fileURLToPath(new URL("./fixtures/json-stale", import.meta.url))
-      const srcDir = join(staleRoot, "src")
-      const source = join(srcDir, "order.schema.ts")
-      const output = join(srcDir, "order.schema.json")
-      try {
-        mkdirSync(srcDir, { recursive: true })
-        writeFileSync(
-          source,
-          `import { object, string } from "@tskm/core"\nexport const orderSchema = object({ id: string() })\n`,
-        )
-        install(["json-schema", "--root", staleRoot, "--exec", bun as string])
-        await main()
-        expect(process.exitCode).toBe(0)
-        expect(existsSync(output)).toBe(true)
-
-        writeFileSync(
-          source,
-          `import { bigint, object } from "@tskm/core"\nexport const orderSchema = object({ amount: bigint() })\n`,
-        )
-        install(["json-schema", "--root", staleRoot, "--exec", bun as string])
-        await main()
-        expect(process.exitCode).toBe(1)
-        expect(existsSync(output)).toBe(false)
-        expect(stdout).toContain(
-          "tskm: removed src/order.schema.json: its source produced no document, so the previous output was deleted.",
-        )
-        expect(stderr).toContain(
-          "json-schema failed with 1 error(s); the affected files were not written.",
-        )
-      } finally {
-        rmSync(srcDir, { recursive: true, force: true })
-      }
-    },
-    60_000,
-  )
+      writeFileSync(
+        source,
+        `import { bigint, object } from "@tskm/core"\nexport const orderSchema = object({ amount: bigint() })\n`,
+      )
+      install(["json-schema", "--root", staleRoot, "--exec", process.execPath])
+      await main()
+      expect(process.exitCode).toBe(1)
+      expect(existsSync(output)).toBe(false)
+      expect(stdout).toContain(
+        "tskm: removed src/order.schema.json: its source produced no document, so the previous output was deleted.",
+      )
+      expect(stderr).toContain(
+        "json-schema failed with 1 error(s); the affected files were not written.",
+      )
+    } finally {
+      rmSync(srcDir, { recursive: true, force: true })
+    }
+  }, 60_000)
 })

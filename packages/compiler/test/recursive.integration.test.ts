@@ -1,8 +1,7 @@
-import { afterAll, describe, expect, it } from "bun:test"
-import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { generate } from "../src/index.ts"
+import { afterAll, describe, expect, it } from "./test-api.ts"
 import { withTestTsgo } from "./tsgo-test-executable.ts"
 import { runTsgoNoEmit } from "./typecheck-harness.ts"
 
@@ -10,8 +9,8 @@ import { runTsgoNoEmit } from "./typecheck-harness.ts"
 // subprocess importing the fixture module) -> merge -> sidecar emit, then the
 // keystone: the generated `.gen.ts` files MUST type-check under the real tsgo
 // binary together with a probe that uses them in value positions. The worker
-// imports `.ts` modules with a bare `@tskm/core` import, so it needs a TS-capable
-// runtime on PATH (bun), mirroring jsonschema.integration.test.ts.
+// imports `.ts` modules with a bare `@tskm/core` import, so it runs under this runtime
+// (process.execPath), which must run `.ts` directly, mirroring jsonschema.integration.test.ts.
 const fixtureRoot = fileURLToPath(new URL("./fixtures/recursive", import.meta.url))
 const src = (file: string): string =>
   fileURLToPath(new URL(`./fixtures/recursive/src/${file}`, import.meta.url))
@@ -29,13 +28,6 @@ const cleanups = [
   src("node.schema.tskm-query.ts"),
   src("probe.check.ts"),
 ]
-
-function findBun(): string | undefined {
-  const which = spawnSync("/bin/sh", ["-c", "command -v bun"], { encoding: "utf8" })
-  const path = which.stdout?.trim()
-  return path ? path : undefined
-}
-const bun = findBun()
 
 afterAll(() => {
   for (const f of cleanups) {
@@ -62,7 +54,7 @@ const json: Json = { items: [1, "two", true, null], nested: { deep: [{}] } }
 export const probes = [root, a, linked, tree, stat, json] as const
 `
 
-describe.skipIf(!bun)("recursive structural codegen (real tsgo + real worker)", () => {
+describe("recursive structural codegen (real tsgo + real worker)", () => {
   it("materializes self-recursive, mutual and mixed schemas into sidecars", async () => {
     const result = await generate({
       root: fixtureRoot,
@@ -70,7 +62,7 @@ describe.skipIf(!bun)("recursive structural codegen (real tsgo + real worker)", 
         mode: "sidecar",
         include: ["src/*.schema.ts"],
         tsconfig: "tsconfig.json",
-        worker: { execPath: bun },
+        worker: { execPath: process.execPath },
       }),
     })
 
@@ -135,7 +127,7 @@ export type TreeNode = Infer<typeof nodeSchema>
       config: withTestTsgo({
         include: ["src/node.schema.ts"],
         tsconfig: "tsconfig.json",
-        worker: { execPath: bun },
+        worker: { execPath: process.execPath },
       }),
     })
     expect(first.files).toHaveLength(1)
@@ -157,7 +149,7 @@ export type TreeNode = Infer<typeof nodeSchema>
       config: withTestTsgo({
         include: ["src/node.schema.ts"],
         tsconfig: "tsconfig.json",
-        worker: { execPath: bun },
+        worker: { execPath: process.execPath },
       }),
     })
     expect(second.files[0]?.changed).toBe(false)

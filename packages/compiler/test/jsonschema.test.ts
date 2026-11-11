@@ -1,7 +1,8 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: assertions compare against template-literal type text that contains literal "${...}"
-import { describe, expect, it } from "bun:test"
+
 import { resolveConfig } from "../src/config.ts"
 import { jsonSchemaOutputPath, schemaToJsonSchema } from "../src/jsonschema.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 // Duck-typed schema objects built inline — NOT imported from `tskm` — so the walker
 // is exercised exactly as it sees a runtime schema across the package boundary.

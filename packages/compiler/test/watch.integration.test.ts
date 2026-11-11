@@ -1,5 +1,5 @@
 import * as compiler from "../src/index.ts"
-import { registerSuite } from "./runners/bun.ts"
+import { registerSuite } from "./runners/suite.ts"
 import { watchSuites } from "./scenarios/watch.ts"
 
 // The watch runtime (fs.watch, debounce, abort) against the real checker, on both runtimes.

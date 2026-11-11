@@ -1,10 +1,10 @@
-import { describe, expect, it } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { resolveConfig, type TskmConfig } from "../src/config.ts"
 import { createSession, type TskmSession } from "../src/session.ts"
+import { describe, expect, it } from "./test-api.ts"
 import { withTestTsgo } from "./tsgo-test-executable.ts"
 
 // session.isCurrent is the content check watch() uses in place of trusting file-system events.

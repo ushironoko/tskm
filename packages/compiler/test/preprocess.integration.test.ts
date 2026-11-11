@@ -1,14 +1,13 @@
-import { afterAll, describe, expect, it } from "bun:test"
-import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import * as compiler from "../src/index.ts"
-import { registerSuite } from "./runners/bun.ts"
+import { registerSuite } from "./runners/suite.ts"
 import { preprocessSuite } from "./scenarios/generate.ts"
+import { afterAll, describe, expect, it } from "./test-api.ts"
 import { withTestTsgo } from "./tsgo-test-executable.ts"
 
 // The top-level preprocess case is shared with the Node run (scenarios/generate.ts). The
-// recursive case below runs the structural worker under Bun, so it stays Bun-only.
+// recursive case below runs the structural worker with this runtime (process.execPath).
 registerSuite(preprocessSuite(compiler))
 
 const fixtureRoot = fileURLToPath(new URL("./fixtures/preprocess", import.meta.url))
@@ -22,31 +21,21 @@ const cleanups = [
   src("tree.schema.tskm-query.ts"),
 ]
 
-function findBun(): string | undefined {
-  const which = spawnSync("/bin/sh", ["-c", "command -v bun"], { encoding: "utf8" })
-  const path = which.stdout?.trim()
-  return path ? path : undefined
-}
-const bun = findBun()
-
 afterAll(() => {
   for (const file of cleanups) {
     if (existsSync(file)) rmSync(file)
   }
 })
 
-describe.skipIf(!bun)("preprocess inside recursive (real structural worker)", () => {
+describe("preprocess inside recursive (real structural worker)", () => {
   it("emits the inner output type instead of unknown", async () => {
-    if (bun === undefined) {
-      throw new Error("bun is required")
-    }
     const result = await compiler.generate({
       root: fixtureRoot,
       config: withTestTsgo({
         mode: "sidecar",
         include: ["src/tree.schema.ts"],
         tsconfig: "tsconfig.json",
-        worker: { execPath: bun },
+        worker: { execPath: process.execPath },
       }),
     })
 

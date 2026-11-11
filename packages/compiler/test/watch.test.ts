@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test"
 import { planWatchActions, type WatchEvent, type WatchPlanContext } from "../src/watch.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 const root = "/proj"
 const tsconfig = `${root}/tsconfig.json`

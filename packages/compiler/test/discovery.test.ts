@@ -1,10 +1,10 @@
-import { describe, expect, it } from "bun:test"
 import {
   type DiscoveredSchema,
   deriveTypeName,
   discoverSchemas,
   tskmCapability,
 } from "../src/discovery.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 const find = (
   schemas: ReadonlyArray<DiscoveredSchema>,

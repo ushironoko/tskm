@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test"
 import { schemaToJsonSchema } from "../src/jsonschema.ts"
+import { describe, expect, it } from "./test-api.ts"
 
 // Duck-typed builders (the walker reads `.type`/`.literal`/`.options`/`.requirement`, never
 // instanceof). A non-finite number has no JSON value: `JSON.stringify` writes it as `null`,
