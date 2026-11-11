@@ -404,6 +404,34 @@ describe("referenceNamedParts: repeated operands", () => {
     expect(rewrite(withParts(`{ f: ${A} | ${U} }`))[3]).toBe(`{ f: ${A} | ${A} | B }`)
   })
 
+  it("keeps a union inline when only a later member repeats, and names the member that does not", () => {
+    // Printed flat, `U | B` reads `A | B | B`. The repeated B is the union's second member and A
+    // is not repeated, so the check must look past the first member. U stays written out, so each
+    // copy of B keeps its own identity, while A is still named.
+    expect(
+      rewrite([
+        ["A", A],
+        ["B", B],
+        ["U", U],
+        ["Host", `{ p: ${U} | ${B} }`],
+      ])[3],
+    ).toBe(`{ p: A | ${B} | ${B} }`)
+  })
+
+  it("keeps a union inline when only its last of three members repeats", () => {
+    const C = "{ c: boolean; }"
+    const triple = `${A} | ${B} | ${C}`
+    expect(
+      rewrite([
+        ["A", A],
+        ["B", B],
+        ["C", C],
+        ["T", triple],
+        ["Host", `{ p: ${triple} | ${C} }`],
+      ])[4],
+    ).toBe(`{ p: A | B | ${C} | ${C} }`)
+  })
+
   it("keeps two unions that share a member inline, so the shared member is not one identity twice", () => {
     const V = `${A} | { c: boolean; }`
     expect(
