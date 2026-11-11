@@ -1,0 +1,21 @@
+import { type Infer, number, object, string } from "@tskm/core"
+
+export const addressSchema = object({ street: string(), city: string() })
+// @tskm-gen Address from addressSchema #a5911cc3
+export type Address = {
+  street: string;
+  city: string;
+}
+// @tskm-end Address
+
+export const profileSchema = object({ name: string(), address: addressSchema, zip: number() })
+// @tskm-gen Profile from profileSchema #7ac016b7
+export type Profile = {
+  name: string;
+  address: {
+    street: string;
+    city: string;
+  };
+  zip: number;
+}
+// @tskm-end Profile

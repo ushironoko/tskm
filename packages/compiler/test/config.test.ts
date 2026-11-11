@@ -169,7 +169,7 @@ describe("resolveConfig — defaults", () => {
     expect(resolved.executable).toBeUndefined()
     expect(resolved.jsonSchema).toEqual({ outDir: undefined, io: "output", approximate: [] })
     expect(resolved.watch).toEqual({ debounceMs: 50 })
-    expect(resolved.codegen).toEqual({ nameSharedSchemas: false })
+    expect(resolved.codegen).toEqual({ nameSharedSchemas: false, namedParts: true })
     expect(resolved.root).toBe("/proj")
   })
 
@@ -178,6 +178,13 @@ describe("resolveConfig — defaults", () => {
     expect(
       resolveConfig({ codegen: { nameSharedSchemas: true } }, "/proj").codegen.nameSharedSchemas,
     ).toBe(true)
+  })
+
+  it("resolves codegen.namedParts (default on, opt-out false)", () => {
+    expect(resolveConfig({}, "/proj").codegen.namedParts).toBe(true)
+    expect(resolveConfig({ codegen: { namedParts: false } }, "/proj").codegen.namedParts).toBe(
+      false,
+    )
   })
 
   it("resolves a relative root to an absolute path", () => {

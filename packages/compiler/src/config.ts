@@ -82,11 +82,22 @@ export interface TskmCodegenOptions {
   /**
    * When `true`, a non-recursive named `export const` schema is emitted as its own
    * `export type` alias and referenced by name from other generated types, instead of
-   * being inlined at every reference site. Default `false` (output is byte-identical to
-   * the inline form). Enabling it routes non-recursive tskm schemas through the structural
+   * being inlined at every reference site. Default `false`. Object parts are already named
+   * by default (see named-parts.ts), so this option is only needed for what that pass leaves
+   * inline: it names every shared non-recursive tskm schema by identity, including primitives,
+   * literals, and brands. Enabling it routes non-recursive tskm schemas through the structural
    * worker, so a file that previously took the zero-cost checker path now spawns it.
    */
   readonly nameSharedSchemas?: boolean
+  /**
+   * When `true` (the default), a part of a generated type that prints exactly like another exported
+   * object schema's type in the same module is written by that schema's name (see named-parts.ts),
+   * and recursive and `nameSharedSchemas` sidecars spell objects with a `;` after every member.
+   * When `false`, the output is byte-identical to the previous release: no part is named, and the
+   * walker keeps its earlier spelling. In `inplace` mode the default rewrites each changed region of
+   * your source once, on upgrade; a later run changes nothing.
+   */
+  readonly namedParts?: boolean
 }
 
 export interface TskmConfig {
@@ -133,6 +144,7 @@ export interface ResolvedWorkerOptions {
 
 export interface ResolvedCodegenOptions {
   readonly nameSharedSchemas: boolean
+  readonly namedParts: boolean
 }
 
 export interface ResolvedTskmConfig {
@@ -252,7 +264,10 @@ export function resolveConfig(config: TskmConfig, root: string): ResolvedTskmCon
       execPath: config.worker?.execPath,
       timeoutMs: config.worker?.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS,
     },
-    codegen: { nameSharedSchemas: config.codegen?.nameSharedSchemas ?? false },
+    codegen: {
+      nameSharedSchemas: config.codegen?.nameSharedSchemas ?? false,
+      namedParts: config.codegen?.namedParts ?? true,
+    },
     schemaSources: [
       RUNTIME_SCHEMA_SOURCE,
       ...new Set(

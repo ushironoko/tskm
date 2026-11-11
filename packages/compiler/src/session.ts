@@ -4,8 +4,9 @@ import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path
 import type { ResolvedTskmConfig, TskmMode } from "./config.ts"
 import type { DiscoveredSchema } from "./discovery.ts"
 import { discoverSchemas } from "./discovery.ts"
-import { emitSidecar, renderSidecar } from "./emit.ts"
+import { emitSidecar, renderSidecar, reservedSidecarNames } from "./emit.ts"
 import { collectInplaceTargets, emitInplace } from "./inplace.ts"
+import { referenceNamedParts } from "./named-parts.ts"
 import { type PruneCandidate, pruneDanglingAliases } from "./prune.ts"
 import { sourceImportSpecifier, withQueryFile } from "./query-core.ts"
 import type { QueryArtifact, ResolvedSchema } from "./resolve.ts"
@@ -275,6 +276,7 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       root: config.root,
       execPath: config.worker.execPath ?? process.execPath,
       timeoutMs: config.worker.timeoutMs,
+      checkerSpelling: config.codegen.namedParts,
     })
 
     // Tier-1: transform-bearing recursive roots try the sentinel-unroll splice; a
@@ -332,11 +334,25 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     // Re-attach per-target metadata (vendor, annotation) lost through the
     // body-string merge (targetByTypeName): emit derives its import lines from it.
     const pruned = pruneDanglingAliases(candidates, declared)
-    const resolved: ResolvedSchema[] = pruned.kept.map((c) => {
-      const target = targetByTypeName.get(c.typeName)
+    // Named parts run AFTER pruning, so a reference only ever names an alias that is emitted.
+    // With `codegen.namedParts` off the bodies pass through unchanged (the previous output).
+    const bodies = pruned.kept.map((c) => ({ typeName: c.typeName, body: c.body }))
+    const parts = config.codegen.namedParts
+      ? referenceNamedParts(
+          bodies,
+          reservedSidecarNames(
+            targets.map((t) => ({
+              vendorHint: t.capability.vendorHint,
+              recursiveAnnotation: t.recursiveAnnotation,
+            })),
+          ),
+        )
+      : bodies
+    const resolved: ResolvedSchema[] = parts.map((part) => {
+      const target = targetByTypeName.get(part.typeName)
       return {
-        typeName: c.typeName,
-        typeString: c.body,
+        typeName: part.typeName,
+        typeString: part.body,
         sourceName: target?.name,
         vendorHint: target?.capability.vendorHint,
         ...(target?.recursiveAnnotation ? { recursiveAnnotation: target.recursiveAnnotation } : {}),

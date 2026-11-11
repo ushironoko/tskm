@@ -33,6 +33,11 @@ export interface SchemaToTypeOptions {
   readonly typeNames: ReadonlyMap<object, string>
   /** Depth fallback for cycles the identity guard cannot see (default 64). */
   readonly maxDepth?: number
+  /**
+   * Spell each object the way the checker prints it: every member ends in `;` (default true).
+   * False keeps the spelling of earlier releases, which named parts cannot match.
+   */
+  readonly checkerSpelling?: boolean
 }
 
 export interface StructuralTypeResult {
@@ -75,6 +80,7 @@ export interface StructuralWorkerEntry extends StructuralTypeResult {
 type SchemaLike = { readonly type?: unknown; readonly pipe?: unknown; [key: string]: unknown }
 
 interface WalkContext {
+  readonly checkerSpelling: boolean
   readonly rootName: string
   readonly root: object
   readonly typeNames: ReadonlyMap<object, string>
@@ -103,6 +109,7 @@ export function schemaToTypeString(
   options: SchemaToTypeOptions,
 ): StructuralTypeResult {
   const ctx: WalkContext = {
+    checkerSpelling: options.checkerSpelling ?? true,
     rootName: options.rootName,
     root: isObject(schema) ? schema : {},
     typeNames: options.typeNames,
@@ -363,7 +370,13 @@ function walkObject(schema: SchemaLike, ctx: WalkContext): string {
       fields.push(`${renderKey(key)}: ${rendered}`)
     }
   }
-  return fields.length === 0 ? "{}" : `{ ${fields.join("; ")} }`
+  if (!ctx.checkerSpelling) {
+    return fields.length === 0 ? "{}" : `{ ${fields.join("; ")} }`
+  }
+  // Spelled like the checker prints an object (every member ends in `;`), so a body the walker
+  // renders and a body the checker renders are the same text for the same type. Named parts
+  // (named-parts.ts) match on that text.
+  return fields.length === 0 ? "{}" : `{ ${fields.map((field) => `${field}; `).join("")}}`
 }
 
 /**
