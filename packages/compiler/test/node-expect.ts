@@ -239,11 +239,14 @@ function describeExpected(expected: ThrowExpectation | undefined): string {
   return expected === undefined ? "an error" : show(expected)
 }
 
-/** `toContain`: a substring of a string, or an element of an iterable under `===`. */
+/**
+ * `toContain`: a substring of a string, or an element of an iterable. Elements match as
+ * `Array.prototype.includes` does (SameValueZero), which is what bun 1.3.13, the pinned version, does.
+ */
 function contains(received: unknown, item: unknown): boolean {
   if (typeof received === "string") return typeof item === "string" && received.includes(item)
   if (typeof received === "object" && received !== null && Symbol.iterator in received) {
-    return Array.from(received as Iterable<unknown>).some((value) => value === item)
+    return Array.from(received as Iterable<unknown>).includes(item)
   }
   return false
 }
