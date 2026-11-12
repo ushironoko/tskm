@@ -1,6 +1,6 @@
 {
   "name": "@tskm/compiler",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "AOT schema-to-type compiler for tskm, powered by the TypeScript typescript/sync checker API",
   "type": "module",
   "license": "MIT",

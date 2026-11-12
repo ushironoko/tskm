@@ -1,5 +1,14 @@
 # @tskm/vite
 
+## 0.0.9
+
+### Patch Changes
+
+- c96c3b9: Report static JSON Schema failures from the Vite plugin. An incremental watch rebuild keeps those errors on the generate result, and the plugin prints them as errors so a removed literal is not a silent success.
+- Updated dependencies [30fc0bd]
+- Updated dependencies [c96c3b9]
+  - @tskm/compiler@0.7.0
+
 ## 0.0.8
 
 ### Patch Changes
