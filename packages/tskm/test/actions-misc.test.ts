@@ -103,6 +103,42 @@ describe("transformAsync", () => {
     expect(r.success).toBe(false)
     expect(called).toBe(false)
   })
+
+  it("marks the dataset untyped when ctx.issue records an error diagnostic", async () => {
+    // An error-severity diagnostic from inside the transform must flip the dataset to
+    // untyped so the overall parse fails, even though the transform itself resolved.
+    const schema = pipeAsync(
+      string(),
+      transformAsync(async (s: string, ctx) => {
+        ctx.issue("payload rejected by transform")
+        return s.length
+      }),
+    )
+    const r = await safeParseAsync(schema, "abc")
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.issues.some((issue) => issue.message === "payload rejected by transform")).toBe(true)
+      expect(r.issues.some((issue) => issue.kind === "transformation")).toBe(true)
+    }
+  })
+
+  it("keeps the dataset typed when ctx.issue records only a warning", async () => {
+    // A warning-only diagnostic is carried as a warning without failing the parse: the
+    // transform output still flows through as the typed value.
+    const schema = pipeAsync(
+      string(),
+      transformAsync(async (s: string, ctx) => {
+        ctx.issue("deprecated input shape", "warning")
+        return s.length
+      }),
+    )
+    const r = await safeParseAsync(schema, "abcd")
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.output).toBe(4)
+      expect(r.warnings.some((issue) => issue.message === "deprecated input shape")).toBe(true)
+    }
+  })
 })
 
 describe("check", () => {

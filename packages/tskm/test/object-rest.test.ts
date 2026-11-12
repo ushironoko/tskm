@@ -41,6 +41,31 @@ describe("object unknown-key policy (#16)", () => {
     }
   })
 
+  it("exact mode in reject config aborts at the first undeclared key", () => {
+    // reject mode (the fast acceptance gate) must bail as soon as an undeclared key is
+    // seen instead of collecting every one: with two extra keys the report-mode path
+    // yields two issues, but reject-mode stops after the first.
+    const schema = exactObject({ a: string() })
+    const r = safeParse(schema, { a: "x", e1: 1, e2: 2 }, { mode: "reject" })
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.issues.length).toBe(1)
+      expect(r.issues[0]?.path).toEqual([{ key: "e1" }])
+    }
+  })
+
+  it("the legacy abortEarly alias also rejects at the first undeclared key", () => {
+    const r = safeParse(
+      exactObject({ a: string() }),
+      { a: "x", e1: 1, e2: 2 },
+      { abortEarly: true },
+    )
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.issues.length).toBe(1)
+    }
+  })
+
   it("passthrough copies undeclared keys onto the output", () => {
     // The output TYPE is the closed shape (passthrough's extra keys are a deliberate safe
     // under-description), so the runtime extra keys are read through a widened view.
