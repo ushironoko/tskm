@@ -169,8 +169,16 @@ export async function watch(options: WatchOptions = {}): Promise<WatchController
       return
     }
     const results = plan.files.map((sourceAbs) => {
-      const { file, diagnostics } = session.generateFile(sourceAbs, pretty)
-      return { files: file ? [file] : [], diagnostics }
+      const generated = session.generateFile(sourceAbs, pretty)
+      // A full rebuild returns `errors` from generateAll. An incremental pass has to
+      // forward them too, or a fail-closed schema looks like a warning.
+      return {
+        files: generated.file ? [generated.file] : [],
+        diagnostics: generated.diagnostics,
+        ...(generated.errors !== undefined && generated.errors.length > 0
+          ? { errors: generated.errors }
+          : {}),
+      }
     })
     options.onGenerate?.(mergeResults(results))
   }
