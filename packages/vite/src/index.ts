@@ -41,6 +41,22 @@ function logResult(result: GenerateResult): void {
   }
 }
 
+/**
+ * Fail-closed static JSON Schema. The sidecar is still written (types stay, the
+ * const for the failed export does not). Callers surface this string as an error
+ * so a removed literal is not a silent success.
+ */
+function staticSchemaFailure(result: GenerateResult): string | undefined {
+  const errors = result.errors
+  if (errors === undefined || errors.length === 0) {
+    return undefined
+  }
+  return [
+    `tskm: gen failed with ${errors.length} static JSON Schema error(s); those schemas were not emitted.`,
+    ...errors,
+  ].join("\n")
+}
+
 /** @internal — DI seam for tests. */
 export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDeps): Plugin {
   // Captured from `configResolved` so `options.root` can default to Vite's root.
@@ -95,7 +111,13 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
         mode: options.mode,
         pretty: options.pretty,
       })
-      .then(logResult)
+      .then((result) => {
+        logResult(result)
+        const failure = staticSchemaFailure(result)
+        if (failure !== undefined) {
+          throw new Error(failure)
+        }
+      })
     wave = { pass, consumed, closed: false }
     seen.add(env)
     return pass
@@ -142,7 +164,18 @@ export function createTskmPlugin(options: TskmPluginOptions, deps: TskmPluginDep
         mode: options.mode,
         pretty: options.pretty,
         debounceMs: options.debounceMs,
-        onGenerate: logResult,
+        onGenerate: (result) => {
+          logResult(result)
+          const failure = staticSchemaFailure(result)
+          if (failure === undefined) {
+            return
+          }
+          server.config.logger.error(failure)
+          server.ws.send({
+            type: "error",
+            err: { message: failure, stack: "", plugin: "tskm" },
+          })
+        },
       })
       // Vite calls a function returned from `configureServer` while the dev server
       // is still starting (after internal middleware is installed), not when it

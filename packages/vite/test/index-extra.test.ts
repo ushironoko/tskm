@@ -225,6 +225,63 @@ describe("tskm vite plugin — logResult", () => {
   })
 })
 
+describe("tskm vite plugin — static JSON Schema errors", () => {
+  it("buildStart fails the build when static JSON Schema errors are present", async () => {
+    const result: GenerateResult = {
+      files: [makeFile()],
+      diagnostics: ["tskm: src/user.schema.ts: bigint"],
+      errors: ["tskm: src/user.schema.ts: bigint"],
+    }
+    const fake = makeDeps(result)
+    const plugin = createTskmPlugin({}, fake.deps)
+    callHook(plugin.configResolved, { root: "/abs", command: "build" } as ResolvedConfig)
+
+    await expect(callHook<Promise<void>>(plugin.buildStart)).rejects.toThrow(
+      /1 static JSON Schema error/,
+    )
+  })
+
+  it("configureServer reports static JSON Schema errors on the dev logger and socket", async () => {
+    const logged: string[] = []
+    const sent: unknown[] = []
+    const fake = makeDeps()
+    const plugin = createTskmPlugin({}, fake.deps)
+    const server = {
+      httpServer: { once() {} },
+      config: {
+        logger: {
+          error(msg: string) {
+            logged.push(msg)
+          },
+        },
+      },
+      ws: {
+        send(payload: unknown) {
+          sent.push(payload)
+        },
+      },
+    } as unknown as ViteDevServer
+
+    await callHook<Promise<unknown>>(plugin.configureServer, server)
+    const line = "tskm: src/user.schema.ts: userSchema: bigint has no JSON representation"
+    fake.onGenerate()?.({
+      files: [],
+      diagnostics: [line],
+      errors: [line],
+    })
+
+    expect(logged).toEqual([
+      `tskm: gen failed with 1 static JSON Schema error(s); those schemas were not emitted.\n${line}`,
+    ])
+    expect(sent).toEqual([
+      {
+        type: "error",
+        err: { message: logged[0], stack: "", plugin: "tskm" },
+      },
+    ])
+  })
+})
+
 describe("tskm vite plugin — factory", () => {
   it("tskm() with no options returns the named plugin", () => {
     const plugin = tskm()

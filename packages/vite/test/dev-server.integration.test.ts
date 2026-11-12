@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test"
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, relative } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { type GenerateResult, generate, watch } from "@tskm/compiler"
 import {
   build,
@@ -42,6 +42,19 @@ function findRepoFile(relativePath: string): string {
 }
 
 const coreEntry = findRepoFile("packages/tskm/src/index.ts")
+const compilerEntry = findRepoFile("packages/compiler/src/index.ts")
+const jsonSchemaEntry = findRepoFile("packages/tskm/src/json-schema.ts")
+
+/**
+ * Strings that exist only in the runtime walker. Same three as `CONVERT_MARKERS`
+ * in `bench/json-schema-static-size.ts`. Duplicated so this file does not import
+ * a path outside `packages/vite` (Stryker sandboxes the package).
+ */
+const JSON_SCHEMA_WALKER_MARKERS = [
+  "not reified at runtime",
+  "propertyNames is not part of OpenAPI",
+  "cannot represent a default value in JSON Schema",
+] as const
 
 interface Pass {
   readonly via: "generate" | "watch"
@@ -93,10 +106,27 @@ function prepareFixture(): string {
       2,
     )}\n`,
   )
+  // The fixture imports `@tskm/compiler` the way a project does. The copy lives
+  // under tmp, so point that specifier at the compiler source.
+  const configPath = join(root, "tskm.config.ts")
+  writeFileSync(
+    configPath,
+    readFileSync(configPath, "utf8").replaceAll(
+      '"@tskm/compiler"',
+      JSON.stringify(pathToFileURL(compilerEntry).href),
+    ),
+  )
   disposers.push(async () => {
     rmSync(parent, { recursive: true, force: true })
   })
   return root
+}
+
+function coreAliases(): { find: RegExp; replacement: string }[] {
+  return [
+    { find: /^@tskm\/core\/json-schema$/, replacement: jsonSchemaEntry },
+    { find: /^@tskm\/core$/, replacement: coreEntry },
+  ]
 }
 
 function observeCompiler(): {
@@ -149,6 +179,72 @@ function sidecarText(pass: Pass | undefined): string {
   return readFileSync(output, "utf8")
 }
 
+interface StaticJsonProperty {
+  readonly type?: string
+}
+
+interface StaticJsonSide {
+  readonly properties?: Readonly<Record<string, StaticJsonProperty>>
+}
+
+interface StaticJsonDocs {
+  readonly "draft-2020-12": { readonly input: StaticJsonSide; readonly output: StaticJsonSide }
+  readonly "draft-07": { readonly input: StaticJsonSide; readonly output: StaticJsonSide }
+  readonly "openapi-3.0": { readonly input: StaticJsonSide; readonly output: StaticJsonSide }
+}
+
+/** The `userSchemaJsonSchema` literal, or undefined when that const is absent. */
+function staticJsonDocs(text: string): StaticJsonDocs | undefined {
+  const marker = "export const userSchemaJsonSchema = "
+  const at = text.indexOf(marker)
+  if (at < 0) {
+    return undefined
+  }
+  const brace = text.indexOf("{", at)
+  const end = text.indexOf(" as const", brace)
+  if (brace < 0 || end < 0) {
+    return undefined
+  }
+  return JSON.parse(text.slice(brace, end)) as StaticJsonDocs
+}
+
+function bigintUserSchema(): string {
+  return `import { bigint, object, string } from "@tskm/core"
+
+export const userSchema = object({
+  id: string(),
+  token: bigint(),
+})
+`
+}
+
+function bundleCode(built: unknown): string {
+  const outputs = Array.isArray(built) ? built : [built]
+  const chunks: string[] = []
+  for (const output of outputs) {
+    if (typeof output !== "object" || output === null || !("output" in output)) {
+      continue
+    }
+    const files = output.output
+    if (!Array.isArray(files)) {
+      continue
+    }
+    for (const file of files) {
+      if (
+        typeof file === "object" &&
+        file !== null &&
+        "type" in file &&
+        file.type === "chunk" &&
+        "code" in file &&
+        typeof file.code === "string"
+      ) {
+        chunks.push(file.code)
+      }
+    }
+  }
+  return chunks.join("\n")
+}
+
 async function waitFor(predicate: () => boolean, budgetMs = 10_000): Promise<boolean> {
   const deadline = Date.now() + budgetMs
   while (Date.now() < deadline) {
@@ -170,7 +266,7 @@ function devConfig(
     ...extra,
     root,
     configFile: false,
-    logLevel: "silent",
+    logLevel: extra.logLevel ?? "silent",
     plugins: [createTskmPlugin({ debounceMs: 30, ...options }, deps)],
     optimizeDeps: { noDiscovery: true },
     server: {
@@ -584,4 +680,125 @@ describe("vite dev and build (real vite, real compiler)", () => {
     expect(observed.passes.length).toBe(before + 1)
     expect(observed.passes.every((pass) => pass.via === "generate")).toBe(true)
   }, 30_000)
+
+  it("dev startup writes userSchemaJsonSchema and updates the literal after a schema edit", async () => {
+    const root = prepareFixture()
+    const observed = observeCompiler()
+    await listen(devConfig(root, {}, observed.deps))
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    expect(observed.passes.map((pass) => pass.via)).toEqual(["watch"])
+    expect(observed.passes[0]?.result.diagnostics).toEqual([])
+    expect(observed.passes[0]?.result.errors).toBeUndefined()
+    const initial = staticJsonDocs(sidecarText(observed.passes[0]))
+    expect(initial?.["draft-2020-12"].input.properties?.age?.type).toBe("number")
+    expect(initial?.["draft-07"].input.properties?.id?.type).toBe("string")
+    expect(initial?.["openapi-3.0"].output.properties?.age?.type).toBe("number")
+
+    const schemaPath = join(root, "src/user.schema.ts")
+    const before = observed.passes.length
+    const fired = await waitFor(() => {
+      if (observed.passes.length > before) {
+        return true
+      }
+      writeFileSync(schemaPath, schemaSource("score"))
+      return false
+    })
+    expect(fired).toBe(true)
+
+    const matched = await waitFor(() => {
+      const docs = staticJsonDocs(sidecarText(observed.passes.at(-1)))
+      return docs?.["draft-2020-12"].input.properties?.score?.type === "number"
+    })
+    expect(matched).toBe(true)
+    const updated = staticJsonDocs(sidecarText(observed.passes.at(-1)))
+    expect(updated?.["draft-2020-12"].input.properties?.age).toBeUndefined()
+    expect(updated?.["draft-2020-12"].output.properties?.score?.type).toBe("number")
+    expect(sidecarText(observed.passes.at(-1))).toContain("score: number")
+  }, 60_000)
+
+  it("dev removes userSchemaJsonSchema and surfaces an error when the schema fail-closes", async () => {
+    const root = prepareFixture()
+    const observed = observeCompiler()
+    const errors: string[] = []
+    const originalError = console.error
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map((arg) => String(arg)).join(" "))
+    }
+    try {
+      await listen(devConfig(root, {}, observed.deps, { logLevel: "error" }))
+      await new Promise((resolve) => setTimeout(resolve, 200))
+
+      const genPath = join(root, "src/user.schema.gen.ts")
+      expect(readFileSync(genPath, "utf8")).toContain("export const userSchemaJsonSchema")
+      expect(observed.passes[0]?.result.errors).toBeUndefined()
+
+      const schemaPath = join(root, "src/user.schema.ts")
+      const before = observed.passes.length
+      const closed = await waitFor(() => {
+        const text = readFileSync(genPath, "utf8")
+        const removed = !text.includes("export const userSchemaJsonSchema")
+        const reported = observed.passes
+          .slice(before)
+          .some((pass) => (pass.result.errors ?? []).some((line) => line.includes("bigint")))
+        const surfaced = errors.some(
+          (line) => line.includes("bigint") && line.includes("static JSON Schema error"),
+        )
+        if (removed && reported && surfaced) {
+          return true
+        }
+        writeFileSync(schemaPath, bigintUserSchema())
+        return false
+      }, 20_000)
+
+      expect(closed).toBe(true)
+      const text = readFileSync(genPath, "utf8")
+      expect(text).not.toContain("export const userSchemaJsonSchema")
+      expect(text).toContain("export type User")
+      expect(
+        observed.passes.slice(before).some((pass) => {
+          return (
+            pass.via === "watch" &&
+            (pass.result.errors ?? []).some(
+              (line) => line.includes("userSchema") && line.includes("bigint"),
+            )
+          )
+        }),
+      ).toBe(true)
+    } finally {
+      console.error = originalError
+    }
+  }, 60_000)
+
+  it("vite build of the static entry does not include the runtime JSON Schema walker", async () => {
+    const root = prepareFixture()
+    const observed = observeCompiler()
+    const built = await build({
+      root,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [createTskmPlugin({}, observed.deps)],
+      resolve: { alias: coreAliases() },
+      build: {
+        write: false,
+        minify: false,
+        outDir: join(root, "dist"),
+        rolldownOptions: { input: join(root, "static-entry.ts") },
+      },
+    })
+    if (isWatcher(built)) {
+      throw new Error("expected vite build to return a bundle")
+    }
+
+    expect(observed.passes.map((pass) => pass.via)).toEqual(["generate"])
+    expect(observed.passes[0]?.result.errors).toBeUndefined()
+    expect(sidecarText(observed.passes[0])).toContain("export const userSchemaJsonSchema")
+    expect(sidecarText(observed.passes[0])).toContain("age: number")
+
+    const code = bundleCode(built)
+    expect(code).toContain("draft-2020-12")
+    for (const marker of JSON_SCHEMA_WALKER_MARKERS) {
+      expect(code).not.toContain(marker)
+    }
+  }, 60_000)
 })
