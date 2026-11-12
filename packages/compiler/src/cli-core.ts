@@ -148,6 +148,12 @@ async function runGen(args: ParsedArgs): Promise<void> {
   for (const diagnostic of result.diagnostics) {
     process.stderr.write(`${diagnostic}\n`)
   }
+  if (result.errors !== undefined && result.errors.length > 0) {
+    process.stderr.write(
+      `tskm: gen failed with ${result.errors.length} static JSON Schema error(s); those schemas were not emitted.\n`,
+    )
+    process.exitCode = 1
+  }
   if (result.files.length === 0) {
     process.stdout.write("tskm: no types generated.\n")
   }

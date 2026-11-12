@@ -734,6 +734,10 @@ export interface JsonWorkerEntry {
   readonly skipped?: boolean
   /** Set when the export's vendor is outside the allow-list (always skipped). */
   readonly excludedVendor?: string
+  /** Present when the worker was asked for static Standard JSON Schema documents. */
+  readonly staticDocs?: StaticJsonSchemaDocs
+  readonly staticErrors?: ReadonlyArray<string>
+  readonly staticWarnings?: ReadonlyArray<string>
 }
 
 /** The worker's argv[4] protocol: adapter routing context (see jsonschema-adapter.ts). */
@@ -742,6 +746,11 @@ export interface JsonWorkerContext {
   readonly allowedVendors: ReadonlyArray<string>
   /** Types the tskm walker may approximate instead of failing (`jsonSchema.approximate`). */
   readonly approximate: ReadonlyArray<JsonSchemaApproximation>
+  /**
+   * When true, each tskm export also carries precomputed documents for every target
+   * and both sides (`staticDocs`). The `.json` file path leaves this unset.
+   */
+  readonly staticEmit?: boolean
 }
 
 /** Applies the caller's `jsonSchema` overrides field by field (see `JsonSchemaOptions`). */
@@ -761,6 +770,7 @@ function withJsonSchemaOverrides(
         overrides.approximate === undefined
           ? base.jsonSchema.approximate
           : parseApproximations(overrides.approximate, "jsonSchema.approximate"),
+      emit: overrides.emit ?? base.jsonSchema.emit,
     },
   }
 }
@@ -894,4 +904,252 @@ function removeStaleOutput(
   } catch (error) {
     errors.push(`tskm: ${output}: could not delete the previous output: ${String(error)}.`)
   }
+}
+
+/** One side of a precomputed Standard JSON Schema document. */
+export interface StaticJsonSchemaSide {
+  readonly input?: JsonSchema
+  readonly output?: JsonSchema
+}
+
+/**
+ * Documents keyed by target, then by side. The same shape `withStaticJsonSchema` reads.
+ * A missing side is a call that throws.
+ */
+export interface StaticJsonSchemaDocs {
+  readonly "draft-2020-12"?: StaticJsonSchemaSide
+  readonly "draft-07"?: StaticJsonSchemaSide
+  readonly "openapi-3.0"?: StaticJsonSchemaSide
+}
+
+const STATIC_TARGETS = ["draft-2020-12", "draft-07", "openapi-3.0"] as const
+type StaticTarget = (typeof STATIC_TARGETS)[number]
+const STATIC_IOS = ["input", "output"] as const
+
+export interface StaticJsonSchemaConverters {
+  /** The runtime walker (`convertToJsonSchema`). Success here is copied verbatim. */
+  readonly convert: (
+    schema: unknown,
+    io: "input" | "output",
+    options: { readonly target: StaticTarget },
+  ) => Record<string, unknown>
+  /** Rewrites an approximated draft-2020-12 document. Not used when `convert` succeeds. */
+  readonly retarget: (
+    document: JsonSchema,
+    target: "draft-07" | "openapi-3.0",
+  ) => Record<string, unknown>
+}
+
+export interface StaticJsonSchemaBuildOptions {
+  readonly approximate?: ReadonlyArray<JsonSchemaApproximation>
+  /** Export name that starts diagnostic paths (`User` in `User.createdAt`). */
+  readonly rootName?: string
+  /** Passed to the compiler walker only when an approximation stands in for a throw. */
+  readonly exportNames?: ReadonlyMap<object, string>
+  readonly converters: StaticJsonSchemaConverters
+}
+
+export interface StaticJsonSchemaBuild {
+  readonly docs: StaticJsonSchemaDocs
+  /**
+   * The export produced no document. Callers must not emit a const. Each line is a
+   * path-prefixed diagnostic without the `tskm:` source prefix.
+   */
+  readonly errors: ReadonlyArray<string>
+  /**
+   * Approximations that were applied, and targets that were omitted while other
+   * cells were emitted. The emitted cells are still safe to write.
+   */
+  readonly warnings: ReadonlyArray<string>
+}
+
+interface CellFailure {
+  readonly target: StaticTarget
+  readonly message: string
+}
+
+function thrownMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.startsWith("tskm: ") ? message.slice("tskm: ".length) : message
+}
+
+function groupFailures(
+  root: string,
+  io: "input" | "output",
+  failures: ReadonlyArray<CellFailure>,
+): string[] {
+  const groups = new Map<string, StaticTarget[]>()
+  for (const failure of failures) {
+    const targets = groups.get(failure.message) ?? []
+    targets.push(failure.target)
+    groups.set(failure.message, targets)
+  }
+  const lines: string[] = []
+  for (const [message, targets] of groups) {
+    lines.push(`${root}: ${io} (${targets.join(", ")}): ${message}`)
+  }
+  return lines
+}
+
+type MutableDocs = {
+  -readonly [Key in keyof StaticJsonSchemaDocs]?: { input?: JsonSchema; output?: JsonSchema }
+}
+
+function writeCell(
+  docs: MutableDocs,
+  target: StaticTarget,
+  io: "input" | "output",
+  schema: JsonSchema,
+): void {
+  const side = docs[target] ?? {}
+  side[io] = schema
+  docs[target] = side
+}
+
+function hasCell(docs: StaticJsonSchemaDocs): boolean {
+  for (const target of STATIC_TARGETS) {
+    const side = docs[target]
+    if (side?.input !== undefined || side?.output !== undefined) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Builds the static documents for one runtime schema.
+ *
+ * Where `convert` succeeds, the cell is that return value, so it matches
+ * `withJsonSchema` for that target and side (including `default`, and including
+ * draft-07 / OpenAPI rewrites). Where `convert` throws and `approximate` makes the
+ * compiler walker succeed, the cell is that walker's draft-2020-12 document
+ * retargeted the same way. A throw that approximation does not cover is omitted,
+ * never replaced with a quieter document. `convert` itself is never taught to
+ * approximate.
+ */
+export function buildStaticJsonSchemaDocs(
+  schema: unknown,
+  options: StaticJsonSchemaBuildOptions,
+): StaticJsonSchemaBuild {
+  const root = options.rootName ?? "schema"
+  const approximate = options.approximate ?? []
+  const docs: MutableDocs = {}
+  const errors: string[] = []
+  const warnings: string[] = []
+
+  for (const io of STATIC_IOS) {
+    const cells = new Map<StaticTarget, JsonSchema>()
+    const failures: CellFailure[] = []
+    for (const target of STATIC_TARGETS) {
+      try {
+        cells.set(target, options.converters.convert(schema, io, { target }))
+      } catch (error) {
+        failures.push({ target, message: thrownMessage(error) })
+      }
+    }
+
+    const draftFailed = failures.some((failure) => failure.target === "draft-2020-12")
+    if (draftFailed) {
+      const approx = schemaToJsonSchema(schema, {
+        io,
+        approximate,
+        rootName: root,
+        exportNames: options.exportNames,
+      })
+      // The compiler walker produced a document only by approximating. Use it, and
+      // retarget. A success with no warning means the compiler dropped something
+      // `withJsonSchema` refuses (a non-JSON default). That stays a failure.
+      if (approx.errors.length === 0 && approx.warnings.length > 0) {
+        warnings.push(...approx.warnings)
+        const replaced = new Map<StaticTarget, JsonSchema>()
+        const retargetFailures: CellFailure[] = []
+        replaced.set("draft-2020-12", approx.schema)
+        for (const target of ["draft-07", "openapi-3.0"] as const) {
+          try {
+            replaced.set(target, options.converters.retarget(approx.schema, target))
+          } catch (error) {
+            retargetFailures.push({ target, message: thrownMessage(error) })
+          }
+        }
+        warnings.push(...groupFailures(root, io, retargetFailures))
+        cells.clear()
+        for (const [target, document] of replaced) {
+          cells.set(target, document)
+        }
+      } else {
+        errors.push(...groupFailures(root, io, failures))
+        cells.clear()
+      }
+    } else if (failures.length > 0) {
+      // draft-2020-12 matched the runtime walker. Other targets that throw (OpenAPI
+      // `propertyNames`) are omitted. Their documents are not invented.
+      warnings.push(...groupFailures(root, io, failures))
+    }
+
+    if (!draftFailed || cells.has("draft-2020-12")) {
+      for (const [target, document] of cells) {
+        writeCell(docs, target, io, document)
+      }
+    }
+  }
+
+  if (!hasCell(docs)) {
+    return { docs: {}, errors, warnings }
+  }
+  // Some cells exist, so the omissions are warnings and the export can still be emitted.
+  return { docs, errors: [], warnings: [...warnings, ...errors] }
+}
+
+export interface StaticJsonSchemaExport {
+  readonly name: string
+  readonly docs: StaticJsonSchemaDocs
+  readonly warnings: ReadonlyArray<string>
+  readonly errors: ReadonlyArray<string>
+}
+
+export interface StaticJsonSchemaFileResult {
+  readonly exports: ReadonlyArray<StaticJsonSchemaExport>
+  /** Set when the worker could not load the module. No export was inspected. */
+  readonly diagnostic?: string
+}
+
+/**
+ * Runs the JSON Schema worker for one source and returns the static documents.
+ * Does not write a file. Used by sidecar generation when `jsonSchema.emit` is
+ * `"standard"`.
+ */
+export function collectStaticJsonSchemaForFile(
+  sourceAbs: string,
+  config: ResolvedTskmConfig,
+): StaticJsonSchemaFileResult {
+  const workerAbs = resolveWorker("jsonschema-worker")
+  const workerContext: JsonWorkerContext = {
+    io: config.jsonSchema.io,
+    allowedVendors: vendorAllowList(config.schemaSources),
+    approximate: config.jsonSchema.approximate,
+    staticEmit: true,
+  }
+  const result = runWorker<SchemaWorkerEnvelope<JsonWorkerEntry>>(workerAbs, sourceAbs, {
+    root: config.root,
+    execPath: config.worker.execPath ?? process.execPath,
+    timeoutMs: config.worker.timeoutMs,
+    tag: "jsonschema-static",
+    extraArgs: [JSON.stringify(workerContext)],
+  })
+  if (result.diagnostic !== undefined) {
+    return { exports: [], diagnostic: result.diagnostic }
+  }
+  const exports: StaticJsonSchemaExport[] = []
+  for (const entry of result.envelope.schemas ?? []) {
+    if (entry.staticDocs === undefined && entry.staticErrors === undefined) {
+      continue
+    }
+    exports.push({
+      name: entry.name,
+      docs: entry.staticDocs ?? {},
+      warnings: entry.staticWarnings ?? [],
+      errors: entry.staticErrors ?? [],
+    })
+  }
+  return { exports }
 }

@@ -3,6 +3,14 @@ import type { InferInput, InferOutput } from "./types/infer.ts"
 import type { BaseSchema, BaseSchemaAsync } from "./types/schema.ts"
 import type { StandardJSONSchemaV1 } from "./types/standard.ts"
 
+export { convertToJsonSchema, retargetJsonSchema } from "./json-schema/convert.ts"
+export {
+  type StaticJsonSchemaDocs,
+  type StaticJsonSchemaDocument,
+  type StaticJsonSchemaSide,
+  withStaticJsonSchema,
+} from "./json-schema/static.ts"
+
 type JsonSchemaOptions = StandardJSONSchemaV1.Options
 
 type AnySchema = BaseSchema<unknown, unknown> | BaseSchemaAsync<unknown, unknown>

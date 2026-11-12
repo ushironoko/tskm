@@ -41,8 +41,12 @@ import {
   unknown,
   url,
 } from "../../tskm/src/index.ts"
-import { withJsonSchema } from "../../tskm/src/json-schema.ts"
-import { schemaToJsonSchema } from "../src/jsonschema.ts"
+import {
+  convertToJsonSchema,
+  retargetJsonSchema,
+  withJsonSchema,
+} from "../../tskm/src/json-schema.ts"
+import { buildStaticJsonSchemaDocs, schemaToJsonSchema } from "../src/jsonschema.ts"
 import { describe, expect, it } from "./test-api.ts"
 
 /**
@@ -350,5 +354,171 @@ describe("known annotation differences: the compiler emits no default keyword", 
     const schema = optional(string(), "anon")
     expect(schemaToJsonSchema(schema, { io: "input" }).schema).toEqual({ type: "string" })
     expect(coreInput(schema)).toEqual({ type: "string", default: "anon" })
+  })
+})
+
+const targets = ["draft-2020-12", "draft-07", "openapi-3.0"] as const
+const sides = ["input", "output"] as const
+
+const converters = { convert: convertToJsonSchema, retarget: retargetJsonSchema }
+
+type StaticSchema = Parameters<typeof withJsonSchema>[0]
+
+/** Byte-compare every cell `withJsonSchema` can produce. A throw leaves that cell absent. */
+function expectStaticMatchesRuntime(
+  schema: StaticSchema,
+  approximate?: ReadonlyArray<
+    "bigint" | "date" | "undefined" | "check" | "transform" | "nonfinite"
+  >,
+) {
+  const built = buildStaticJsonSchemaDocs(schema, { converters, approximate })
+  const wrapped = withJsonSchema(schema)
+  for (const target of targets) {
+    for (const side of sides) {
+      let runtime: unknown
+      let threw = false
+      try {
+        runtime = wrapped["~standard"].jsonSchema[side]({ target })
+      } catch {
+        threw = true
+      }
+      const cell = built.docs[target]?.[side]
+      if (threw) {
+        expect(cell).toBeUndefined()
+      } else {
+        expect(JSON.stringify(cell)).toBe(JSON.stringify(runtime))
+      }
+    }
+  }
+  return built
+}
+
+describe("static emit matches withJsonSchema for every target and side", () => {
+  for (const [name, schema] of [...agree, ...inputAgree]) {
+    it(name, () => {
+      expectStaticMatchesRuntime(schema as StaticSchema)
+    })
+  }
+
+  it("a self-referential lazy matches on every target that the runtime accepts", () => {
+    const node: ReturnType<typeof lazy> = lazy(() =>
+      object({ value: string(), next: optional(node) }),
+    )
+    expectStaticMatchesRuntime(node)
+  })
+
+  it("keeps the default keyword the compiler walker omits", () => {
+    const schema = optional(string(), "anon")
+    const built = expectStaticMatchesRuntime(schema)
+    expect(built.docs["draft-2020-12"]?.input).toEqual({ type: "string", default: "anon" })
+    expect(built.errors).toEqual([])
+    expect(built.warnings).toEqual([])
+  })
+})
+
+describe("static emit fails closed where withJsonSchema throws", () => {
+  it("bigint, date, and undefined produce no document unless approximated", () => {
+    for (const schema of [bigint(), date(), undefined_()]) {
+      const built = buildStaticJsonSchemaDocs(schema, { converters, rootName: "Value" })
+      expect(built.docs).toEqual({})
+      expect(built.errors.length).toBeGreaterThan(0)
+      expect(() => coreOutput(schema)).toThrow()
+    }
+  })
+
+  it("check produces no document on either side", () => {
+    const schema = pipe(
+      string(),
+      check(() => true),
+    )
+    const built = expectStaticMatchesRuntime(schema)
+    expect(built.docs).toEqual({})
+    expect(built.errors.length).toBeGreaterThan(0)
+  })
+
+  it("transform output is omitted and the input matches withJsonSchema", () => {
+    const schema = pipe(
+      string(),
+      transform((value: string) => value.length),
+    )
+    const built = expectStaticMatchesRuntime(schema)
+    expect(built.docs["draft-2020-12"]?.output).toBeUndefined()
+    expect(built.docs["draft-2020-12"]?.input).toEqual({ type: "string" })
+  })
+
+  it("a non-JSON default is omitted, not rewritten as a schema without the keyword", () => {
+    const schema = optional(string(), () => "x")
+    expect(() => coreInput(schema)).toThrow(/default is a function/)
+    const built = expectStaticMatchesRuntime(schema)
+    expect(built.docs["draft-2020-12"]?.input).toBeUndefined()
+    expect(built.docs["draft-2020-12"]?.output).toEqual({ type: "string" })
+    expect(schemaToJsonSchema(schema, { io: "input" }).schema).toEqual({ type: "string" })
+    expect(schemaToJsonSchema(schema, { io: "input" }).errors).toEqual([])
+  })
+
+  it("approximate bigint matches the compiler walker on every target", () => {
+    const built = buildStaticJsonSchemaDocs(bigint(), {
+      converters,
+      approximate: ["bigint"],
+      rootName: "Amount",
+    })
+    expect(() => coreOutput(bigint())).toThrow()
+    const expected = schemaToJsonSchema(bigint(), { approximate: ["bigint"], rootName: "Amount" })
+    expect(expected.errors).toEqual([])
+    expect(JSON.stringify(built.docs["draft-2020-12"]?.output)).toBe(
+      JSON.stringify(expected.schema),
+    )
+    expect(JSON.stringify(built.docs["draft-07"]?.output)).toBe(
+      JSON.stringify(retargetJsonSchema(expected.schema, "draft-07")),
+    )
+    expect(JSON.stringify(built.docs["openapi-3.0"]?.output)).toBe(
+      JSON.stringify(retargetJsonSchema(expected.schema, "openapi-3.0")),
+    )
+    expect(built.errors).toEqual([])
+    expect(built.warnings.some((line) => line.includes("approximated bigint"))).toBe(true)
+  })
+
+  it("approximate nonfinite matches the compiler walker", () => {
+    const schema = literal(Number.NaN)
+    const built = buildStaticJsonSchemaDocs(schema, { converters, approximate: ["nonfinite"] })
+    const expected = schemaToJsonSchema(schema, { approximate: ["nonfinite"] }).schema
+    expect(JSON.stringify(built.docs["draft-2020-12"]?.output)).toBe(JSON.stringify(expected))
+    expect(() => coreOutput(schema)).toThrow(/NaN has no JSON representation/)
+  })
+})
+
+/**
+ * Transform output stays a runtime throw. The static path does not read the checker
+ * type, so it does not invent the post-transform document either. `approximate`
+ * still emits the pre-transform schema, matching `schemaToJsonSchema`.
+ */
+describe("transform output is not reified on either path", () => {
+  const schema = pipe(
+    string(),
+    transform((value: string) => value.length),
+  )
+
+  it("withJsonSchema output throws, and static emit leaves that cell out", () => {
+    expect(() => coreOutput(schema)).toThrow(/not reified at runtime/)
+    const built = buildStaticJsonSchemaDocs(schema, { converters, rootName: "Doc" })
+    expect(built.docs["draft-2020-12"]?.output).toBeUndefined()
+    expect(built.docs["draft-07"]?.output).toBeUndefined()
+    expect(built.docs["openapi-3.0"]?.output).toBeUndefined()
+    expect(JSON.stringify(built.docs["draft-2020-12"]?.input)).toBe(
+      JSON.stringify(coreInput(schema)),
+    )
+  })
+
+  it("approximate transform emits the pre-transform schema, which withJsonSchema still refuses", () => {
+    const built = buildStaticJsonSchemaDocs(schema, {
+      converters,
+      approximate: ["transform"],
+      rootName: "Doc",
+    })
+    const expected = schemaToJsonSchema(schema, { approximate: ["transform"], rootName: "Doc" })
+    expect(JSON.stringify(built.docs["draft-2020-12"]?.output)).toBe(
+      JSON.stringify(expected.schema),
+    )
+    expect(() => coreOutput(schema)).toThrow(/not reified at runtime/)
   })
 })

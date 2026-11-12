@@ -301,3 +301,43 @@ describe("emitSidecar", () => {
     expect(onDisk).not.toContain("export type T = string")
   })
 })
+
+describe("static JSON Schema literals", () => {
+  const user = {
+    "draft-2020-12": {
+      input: { type: "string" },
+      output: { type: "string" },
+    },
+    "draft-07": {
+      input: { type: "string" },
+      output: { type: "string" },
+    },
+    "openapi-3.0": {
+      input: { type: "string" },
+      output: { type: "string" },
+    },
+  }
+
+  it("appends one JSON literal const per target when the opt-in supplies documents", () => {
+    const content = renderSidecar([{ typeName: "User", typeString: "{ name: string }" }], {
+      staticJsonSchema: [{ exportName: "userSchema", docs: user }],
+    })
+    expect(content).toContain("export type User = {\n  name: string\n}")
+    expect(content).toContain("export const userSchemaJsonSchema = ")
+    expect(content).toContain('"draft-2020-12"')
+    expect(content).toContain('"draft-07"')
+    expect(content).toContain('"openapi-3.0"')
+    expect(content).toContain('"input"')
+    expect(content).toContain('"output"')
+    const literal = content.slice(content.indexOf("export const userSchemaJsonSchema = "))
+    expect(literal).toContain('"type": "string"')
+    expect(literal).not.toContain("withJsonSchema")
+    expect(literal).not.toContain("convertToJsonSchema")
+    expect(literal).not.toContain("new Function")
+  })
+
+  it("leaves a type-only sidecar unchanged when no documents are passed", () => {
+    const resolved = [{ typeName: "User", typeString: "string" }]
+    expect(renderSidecar(resolved)).toBe(renderSidecar(resolved, { staticJsonSchema: [] }))
+  })
+})

@@ -115,11 +115,15 @@ export function planWatchActions(
 function mergeResults(results: ReadonlyArray<GenerateResult>): GenerateResult {
   const files: GenerateResult["files"][number][] = []
   const diagnostics: string[] = []
+  const errors: string[] = []
   for (const result of results) {
     files.push(...result.files)
     diagnostics.push(...result.diagnostics)
+    if (result.errors) {
+      errors.push(...result.errors)
+    }
   }
-  return { files, diagnostics }
+  return errors.length > 0 ? { files, diagnostics, errors } : { files, diagnostics }
 }
 
 export async function watch(options: WatchOptions = {}): Promise<WatchController> {

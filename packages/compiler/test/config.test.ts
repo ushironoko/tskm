@@ -169,7 +169,12 @@ describe("resolveConfig — defaults", () => {
     expect(resolved.include).toEqual(["src/**/*.ts"])
     expect(resolved.tsconfig).toBe("/proj/tsconfig.json")
     expect(resolved.executable).toBeUndefined()
-    expect(resolved.jsonSchema).toEqual({ outDir: undefined, io: "output", approximate: [] })
+    expect(resolved.jsonSchema).toEqual({
+      outDir: undefined,
+      io: "output",
+      approximate: [],
+      emit: undefined,
+    })
     expect(resolved.watch).toEqual({ debounceMs: 50 })
     expect(resolved.codegen).toEqual({ nameSharedSchemas: false, namedParts: true })
     expect(resolved.root).toBe("/proj")
@@ -211,7 +216,12 @@ describe("resolveConfig — overrides", () => {
     expect(resolved.mode).toBe("inplace")
     expect(resolved.include).toEqual(["a/**/*.ts", "b/**/*.ts"])
     expect(resolved.executable).toBe("/usr/bin/tsgo")
-    expect(resolved.jsonSchema).toEqual({ outDir: "schemas", io: "output", approximate: [] })
+    expect(resolved.jsonSchema).toEqual({
+      outDir: "schemas",
+      io: "output",
+      approximate: [],
+      emit: undefined,
+    })
     expect(resolved.watch).toEqual({ debounceMs: 250 })
   })
 
@@ -246,6 +256,23 @@ describe("resolveConfig — overrides", () => {
     expect(() =>
       resolveConfig({ jsonSchema: { approximate: "bigint" as never } }, "/proj"),
     ).toThrow("must be an array of names")
+  })
+
+  it("leaves jsonSchema.emit unset unless it is the string standard", () => {
+    expect(resolveConfig({}, "/proj").jsonSchema.emit).toBeUndefined()
+    expect(resolveConfig({ jsonSchema: {} }, "/proj").jsonSchema.emit).toBeUndefined()
+    expect(resolveConfig({ jsonSchema: { emit: "standard" } }, "/proj").jsonSchema.emit).toBe(
+      "standard",
+    )
+  })
+
+  it("rejects any jsonSchema.emit value other than standard", () => {
+    expect(() => resolveConfig({ jsonSchema: { emit: true as never } }, "/proj")).toThrow(
+      'tskm: jsonSchema.emit must be "standard" when set (got true).',
+    )
+    expect(() => resolveConfig({ jsonSchema: { emit: "json" as never } }, "/proj")).toThrow(
+      'tskm: jsonSchema.emit must be "standard" when set (got "json").',
+    )
   })
 
   it("joins a relative tsconfig against the resolved root", () => {
@@ -304,7 +331,12 @@ describe("loadConfig — tskm.config.ts via default export", () => {
     expect(resolved.mode).toBe("inplace")
     expect(resolved.include).toEqual(["app/**/*.ts"])
     expect(resolved.tsconfig).toBe(join(resolve(dir), "tsconfig.app.json"))
-    expect(resolved.jsonSchema).toEqual({ outDir: "gen", io: "output", approximate: [] })
+    expect(resolved.jsonSchema).toEqual({
+      outDir: "gen",
+      io: "output",
+      approximate: [],
+      emit: undefined,
+    })
     expect(resolved.watch).toEqual({ debounceMs: 123 })
     expect(resolved.root).toBe(resolve(dir))
   })
