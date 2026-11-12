@@ -15,12 +15,14 @@ private example, which is not part of a published tskm package.
 | TanStack Form | `@tanstack/form-core` `FormApi` | `validators.onChange: userSchema` |
 | React Hook Form | `@hookform/resolvers` `standardSchemaResolver` | `standardSchemaResolver(userSchema)` |
 | Elysia | route `body` | `body: userSchema` |
-| oRPC | `os.input` | `input(userSchema)` (validation only; no OpenAPI) |
+| oRPC | `os.input` | `input(userSchema)` (validation only; `@orpc/server` 1.16.1) |
+| oRPC OpenAPI | `@orpc/openapi` `OpenAPIGenerator` | `input(withJsonSchema(userSchema))` (`@orpc/openapi` 2.0.0-beta.50) |
+| hono-openapi | `loadVendor` + `validator` | `loadVendor("tskm", { toJSONSchema })`, then `validator("json", withJsonSchema(userSchema))` |
 | h3 | `readValidatedBody` | `readValidatedBody(event, userSchema)` |
 | Conform | `configureForms()` + `useForm` (future) | `useForm(profileSchema)` with the defaults |
 | Vercel AI SDK (`ai` 7) | `tool({ inputSchema })` | `inputSchema: withJsonSchema(userSchema)` (mock model) |
 
-The AI SDK is the one framework here that reads a JSON Schema. It takes
+The AI SDK reads a JSON Schema. It takes
 `schema["~standard"].jsonSchema`, which `withJsonSchema` from `@tskm/core/json-schema`
 adds, so the sample wraps `userSchema` explicitly. A plain tskm schema has no
 `jsonSchema` member, and the SDK rejects it with `does not support JSON Schema
@@ -29,9 +31,25 @@ request. [`ai-sdk/tool.e2e.ts`](ai-sdk/tool.e2e.ts) checks the document the mode
 receives, a valid call, an invalid call (rejected by tskm), a plain schema, and a
 schema tskm cannot express.
 
-No OpenAPI document is generated here. `@orpc/openapi` 1.16.1 has no path for a
-Standard Schema's `jsonSchema`, and hono-openapi 1.5.0 rejects a `tskm` vendor
-(`Unsupported schema vendor`). Each would need its own converter for tskm.
+OpenAPI is generated in two samples. Both calls are explicit, and `@tskm/core` does
+not wrap a schema or register a vendor for either library.
+
+`@orpc/openapi` **2.0.0-beta.50** (beta, exact pin) reads Standard JSON Schema when
+`new OpenAPIGenerator()` is given no converters. It calls
+`jsonSchema.input({ target: "draft-2020-12" })` and writes that document on
+`requestBody`. `withJsonSchema(userSchema)` is what supplies `jsonSchema`. A plain tskm
+schema has no `jsonSchema` member: the operation is still emitted, and `requestBody` is
+absent. [`orpc-openapi/openapi.e2e.ts`](orpc-openapi/openapi.e2e.ts) locks the wrapped
+document and that omission. [`orpc/procedure.e2e.ts`](orpc/procedure.e2e.ts) stays on `@orpc/server`
+1.16.1 and only checks validation.
+
+hono-openapi 1.5.0 has no built-in `tskm` vendor. `GET /openapi` returns 500, and the
+error is `UnsupportedVendorError` (`standard-json: Unsupported schema vendor "tskm"`),
+until the caller registers one. [`hono-openapi/openapi.e2e.ts`](hono-openapi/openapi.e2e.ts)
+calls `loadVendor("tskm", { toJSONSchema })`, where `toJSONSchema` is
+`schema => schema["~standard"].jsonSchema.input({ target: "draft-2020-12" })`. With
+that registration the same route returns 200 and the request body and the 200 response
+use that document.
 
 Conform's future API already accepts any Standard Schema (`~standard.version === 1`)
 and validates with `schema["~standard"].validate`. The sample does not pass

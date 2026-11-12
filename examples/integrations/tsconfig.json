@@ -18,11 +18,13 @@
     "shared",
     "ai-sdk",
     "hono",
+    "hono-openapi",
     "trpc",
     "tanstack",
     "rhf",
     "elysia",
     "orpc",
+    "orpc-openapi",
     "h3",
     "conform"
   ]
