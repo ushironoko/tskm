@@ -230,6 +230,39 @@ describe("Standard JSON Schema — representable schemas", () => {
     expect(Object.keys(defs).sort()).toEqual(["recursive", "recursive_2"])
   })
 
+  it("hoists a reused recursive node once and references it from every use site", () => {
+    // The SAME recursive schema object appears under two properties. The cycle guard
+    // keys on object identity, so the node is emitted into $defs a single time and both
+    // properties resolve to that one $ref — not two independent copies of the subtree.
+    const node = recursive((self) => object({ value: string(), next: optional(self) }))
+    const document = output(object({ left: node, right: node }))
+    expect(document.properties).toEqual({
+      left: { $ref: "#/$defs/recursive" },
+      right: { $ref: "#/$defs/recursive" },
+    })
+    const defs = document.$defs as Record<string, unknown>
+    expect(Object.keys(defs)).toEqual(["recursive"])
+  })
+
+  it("gives a recursive node nested in another of the same base name a distinct $defs key", () => {
+    // `inner` is hoisted while `outer` is still being walked (outer has a name but is not
+    // yet stored in $defs), so the collision is caught by the in-flight name set, not by
+    // an already-stored def. Both default to the base name "recursive"; the inner one must
+    // still get a unique "recursive_2" key so the two cycles never share a definition.
+    const inner = recursive((self) => object({ tag: string(), self: optional(self) }))
+    const outer = recursive((self) => object({ loop: optional(self), child: inner }))
+    const document = output(outer)
+    expect(document.$ref).toBe("#/$defs/recursive")
+    const defs = document.$defs as Record<string, Record<string, unknown>>
+    expect(Object.keys(defs).sort()).toEqual(["recursive", "recursive_2"])
+    expect((defs.recursive?.properties as Record<string, unknown>).child).toEqual({
+      $ref: "#/$defs/recursive_2",
+    })
+    expect((defs.recursive_2?.properties as Record<string, unknown>).self).toEqual({
+      $ref: "#/$defs/recursive_2",
+    })
+  })
+
   it("returns a fresh document on every call", () => {
     const schema = object({ a: string() })
     const first = output(schema)
@@ -299,6 +332,15 @@ describe("Standard JSON Schema — input and output", () => {
     expect(() =>
       convertToJsonSchema(
         { type: "optional", wrapped: { type: "unknown" }, default: { a: undefined } },
+        "input",
+        draft,
+      ),
+    ).toThrow(/round-trip through JSON/)
+    // A non-finite number nested in an object default survives JSON.stringify as `null`
+    // (same key count), so the mismatch is only caught by comparing the values per key.
+    expect(() =>
+      convertToJsonSchema(
+        { type: "optional", wrapped: { type: "unknown" }, default: { a: Number.NaN } },
         "input",
         draft,
       ),
@@ -627,6 +669,18 @@ describe("Standard JSON Schema — malformed nodes", () => {
         draft,
       ),
     ).toThrow('tskm: cannot convert pipe item "regex" to JSON Schema: requirement is not a RegExp')
+    // A transform item whose `kind` is not "transformation" slips past the pipe's leading
+    // transform guard, so it reaches the per-item switch, which refuses it for the same
+    // reason (its output type is not reified at runtime).
+    expect(() =>
+      convertToJsonSchema(
+        { type: "string", pipe: [{ type: "string" }, { type: "transform", kind: "other" }] },
+        "output",
+        draft,
+      ),
+    ).toThrow(
+      'tskm: cannot convert pipe item "transform" to JSON Schema output: the transform\'s output type is not reified at runtime. input() still describes the schema before the transform',
+    )
     expect(() => convertToJsonSchema({ type: "discriminated_union" }, "output", draft)).toThrow(
       /options is not an array/,
     )
