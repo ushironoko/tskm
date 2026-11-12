@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["*.ts"],
+  "exclude": ["benchmarks.ts"],
+  "compilerOptions": {
+    "noEmit": true
+  }
+}
