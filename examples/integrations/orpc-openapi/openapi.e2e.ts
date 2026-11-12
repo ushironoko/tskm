@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { type AnySchema, oc } from "@orpc/contract"
 import { OpenAPIGenerator, openapi } from "@orpc/openapi"
 import { withJsonSchema } from "@tskm/core/json-schema"
+import { staticUserSchema } from "../shared/static-user.ts"
 import { userSchema } from "../shared/user-schema.ts"
 
 /**
@@ -52,17 +53,30 @@ function mediaSchema(content: unknown): unknown {
   return media.schema
 }
 
+function requestSchema(post: Awaited<ReturnType<typeof operation>>) {
+  const requestBody = post?.requestBody
+  return requestBody && "content" in requestBody ? mediaSchema(requestBody.content) : undefined
+}
+
+function responseSchema(post: Awaited<ReturnType<typeof operation>>) {
+  const response = post?.responses?.["200"]
+  return response && "content" in response ? mediaSchema(response.content) : undefined
+}
+
 test("withJsonSchema is written on the request body and the success response", async () => {
   const post = await operation(withJsonSchema(userSchema))
-  const requestBody = post?.requestBody
-  const response = post?.responses?.["200"]
 
-  expect(
-    requestBody && "content" in requestBody ? mediaSchema(requestBody.content) : undefined,
-  ).toEqual(expectedSchema)
-  expect(response && "content" in response ? mediaSchema(response.content) : undefined).toEqual(
-    expectedSchema,
-  )
+  expect(requestSchema(post)).toEqual(expectedSchema)
+  expect(responseSchema(post)).toEqual(expectedSchema)
+})
+
+test("withStaticJsonSchema matches withJsonSchema on the request body", async () => {
+  const runtime = await operation(withJsonSchema(userSchema))
+  const compiled = await operation(staticUserSchema)
+
+  expect(requestSchema(compiled)).toEqual(requestSchema(runtime))
+  expect(responseSchema(compiled)).toEqual(responseSchema(runtime))
+  expect(JSON.parse(JSON.stringify(compiled))).toEqual(JSON.parse(JSON.stringify(runtime)))
 })
 
 test("a plain tskm schema omits requestBody", async () => {

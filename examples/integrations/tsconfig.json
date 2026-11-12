@@ -15,12 +15,15 @@
     "types": ["bun"]
   },
   "include": [
+    "tskm.config.ts",
+    "src",
     "shared",
     "ai-sdk",
     "hono",
     "hono-openapi",
     "trpc",
     "tanstack",
+    "tanstack-ai",
     "rhf",
     "elysia",
     "orpc",

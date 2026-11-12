@@ -1,14 +1,4 @@
-import { email, minLength, number, object, pipe, string } from "@tskm/core"
-
-/**
- * A small object schema passed to each framework as-is.
- * Frameworks reach it through `schema["~standard"]`. No adapter wraps it.
- */
-export const userSchema = object({
-  name: pipe(string(), minLength(1)),
-  email: pipe(string(), email()),
-  age: number(),
-})
+export { userSchema } from "../src/user.schema.ts"
 
 export const validUser = {
   name: "Ada",

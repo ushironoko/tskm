@@ -53,6 +53,14 @@ jobs:
       - name: Build packages
         run: bun run build
 
+      # Rewrites examples/integrations/src/*.gen.ts from tskm.config.ts
+      # (`jsonSchema.emit: "standard"`). A dirty tree or a stray query file fails the job.
+      - name: Regenerate static JSON Schema sidecars
+        run: bun packages/compiler/dist/cli.mjs gen --root examples/integrations
+
+      - name: Fail when a sidecar differs
+        run: git diff --exit-code -- examples/integrations && test -z "$(git status --porcelain -- examples/integrations)"
+
       - name: Typecheck integrations
         run: bun run --cwd examples/integrations typecheck
 
