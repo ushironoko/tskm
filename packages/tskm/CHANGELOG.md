@@ -1,5 +1,11 @@
 # @tskm/core
 
+## 0.5.0
+
+### Minor Changes
+
+- 30fc0bd: Add opt-in static Standard JSON Schema. `jsonSchema.emit: "standard"` writes per-target JSON literals into the sidecar, and `withStaticJsonSchema` serves them from `~standard.jsonSchema` without the runtime walker.
+
 ## 0.4.0
 
 ### Minor Changes

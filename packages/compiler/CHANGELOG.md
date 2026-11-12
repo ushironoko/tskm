@@ -1,5 +1,15 @@
 # @tskm/compiler
 
+## 0.7.0
+
+### Minor Changes
+
+- 30fc0bd: Add opt-in static Standard JSON Schema. `jsonSchema.emit: "standard"` writes per-target JSON literals into the sidecar, and `withStaticJsonSchema` serves them from `~standard.jsonSchema` without the runtime walker.
+
+### Patch Changes
+
+- c96c3b9: Report static JSON Schema failures from the Vite plugin. An incremental watch rebuild keeps those errors on the generate result, and the plugin prints them as errors so a removed literal is not a silent success.
+
 ## 0.6.0
 
 ### Minor Changes

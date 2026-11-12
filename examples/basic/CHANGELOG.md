@@ -1,5 +1,12 @@
 # @tskm/example-basic
 
+## 0.0.6
+
+### Patch Changes
+
+- Updated dependencies [30fc0bd]
+  - @tskm/core@0.5.0
+
 ## 0.0.5
 
 ### Patch Changes

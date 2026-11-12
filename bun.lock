@@ -23,7 +23,7 @@
     },
     "examples/advanced": {
       "name": "@tskm/example-advanced",
-      "version": "0.0.5",
+      "version": "0.0.6",
       "dependencies": {
         "@tskm/core": "workspace:*",
       },
@@ -33,7 +33,7 @@
     },
     "examples/basic": {
       "name": "@tskm/example-basic",
-      "version": "0.0.5",
+      "version": "0.0.6",
       "dependencies": {
         "@tskm/core": "workspace:*",
       },
@@ -43,7 +43,7 @@
     },
     "examples/integrations": {
       "name": "@tskm/example-integrations",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@conform-to/react": "1.21.3",
         "@hono/standard-validator": "0.4.1",
@@ -85,7 +85,7 @@
     },
     "examples/ssot": {
       "name": "@tskm/example-ssot",
-      "version": "0.0.5",
+      "version": "0.0.6",
       "dependencies": {
         "@tskm/core": "workspace:*",
       },
@@ -107,7 +107,7 @@
     },
     "packages/compiler": {
       "name": "@tskm/compiler",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "bin": {
         "tskm": "./dist/cli.mjs",
       },
@@ -128,7 +128,7 @@
     },
     "packages/tskm": {
       "name": "@tskm/core",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "devDependencies": {
         "@standard-schema/spec": "1.1.0",
         "valibot": "1.4.1",
@@ -136,7 +136,7 @@
     },
     "packages/vite": {
       "name": "@tskm/vite",
-      "version": "0.0.8",
+      "version": "0.0.9",
       "dependencies": {
         "@tskm/compiler": "workspace:*",
       },
@@ -149,7 +149,7 @@
     },
     "playgrounds/tskm": {
       "name": "@tskm/playground",
-      "version": "0.0.3",
+      "version": "0.0.4",
       "dependencies": {
         "@tskm/core": "workspace:*",
         "monaco-editor": "0.55.1",
