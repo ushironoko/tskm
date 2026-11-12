@@ -74,6 +74,12 @@ export type Category = {
 }
 ```
 
+## Compared with
+
+The table in [Why tskm?](#why-tskm) is direction, `ts-patch`, and the editor. This is a separate comparison: Standard Schema, Standard JSON Schema, generation method, runtime dependencies, and JSON Schema target. It was checked on 2026-11-12 UTC. Each cell in [`docs/comparison.md`](docs/comparison.md) names the version and a primary source. There is no runtime-speed column, and no new benchmarks were run.
+
+tskm's static path is `jsonSchema.emit: "standard"` plus `withStaticJsonSchema`. The documents are JSON literals, so that program does not bundle the walker. `withJsonSchema` is the runtime path for a schema `tskm gen` never saw: it walks the schema when `input` or `output` is called. Minify and gzip sizes are the existing measurements in [`bench/json-schema-static.md`](bench/json-schema-static.md).
+
 ## Simple Usage
 
 **Validate at runtime.** Schemas are values, and `parse` / `safeParse` are standalone functions:
