@@ -2,7 +2,8 @@ import { expect, test } from "bun:test"
 import { type StandardJSONSchemaV1, withJsonSchema } from "@tskm/core/json-schema"
 import { Hono } from "hono"
 import { describeRoute, loadVendor, openAPIRouteHandler, resolver, validator } from "hono-openapi"
-import { userSchema } from "../shared/user-schema.ts"
+import { staticUserSchema } from "../shared/static-user.ts"
+import { invalidUser, userSchema, validUser } from "../shared/user-schema.ts"
 
 /**
  * hono-openapi 1.5.0 looks up a vendor function by `schema["~standard"].vendor`.
@@ -28,7 +29,7 @@ const expectedSchema = {
 
 const documented = withJsonSchema(userSchema)
 
-function createApp() {
+function createApp(schema: typeof documented | typeof staticUserSchema = documented) {
   const app = new Hono()
   app.post(
     "/users",
@@ -37,12 +38,12 @@ function createApp() {
         200: {
           description: "The created user",
           content: {
-            "application/json": { schema: resolver(documented) },
+            "application/json": { schema: resolver(schema) },
           },
         },
       },
     }),
-    validator("json", documented),
+    validator("json", schema),
     (c) => c.json(c.req.valid("json")),
   )
   app.get(
@@ -91,4 +92,28 @@ test("GET /openapi is 500 until loadVendor, then 200 with the tskm schema", asyn
 
   expect(post?.requestBody?.content?.["application/json"]?.schema).toEqual(expectedSchema)
   expect(post?.responses?.["200"]?.content?.["application/json"]?.schema).toEqual(expectedSchema)
+
+  const staticResponse = await createApp(staticUserSchema).request("/openapi")
+  expect(staticResponse.status).toBe(200)
+  expect(await staticResponse.json()).toEqual(document)
+})
+
+test("validator accepts the static schema and rejects an invalid body", async () => {
+  loadVendor("tskm", { toJSONSchema })
+  const app = createApp(staticUserSchema)
+
+  const created = await app.request("/users", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(validUser),
+  })
+  expect(created.status).toBe(200)
+  expect(await created.json()).toEqual(validUser)
+
+  const rejected = await app.request("/users", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(invalidUser),
+  })
+  expect(rejected.status).toBe(400)
 })

@@ -406,7 +406,55 @@ A `transform` is exact on the input side. Set `jsonSchema: { io: "input" }` to d
 
 ### Standard JSON Schema on the schema
 
-JSON Schema conversion is opt-in. `withJsonSchema` from `@tskm/core/json-schema` returns a new object that implements [Standard JSON Schema](https://github.com/standard-schema/standard-schema/blob/main/packages/spec/json-schema.md). The argument is not modified, and a program that never imports this entry does not bundle the walker.
+JSON Schema conversion is opt-in. Nothing wraps a schema on the way into a framework, and `@tskm/core` does not register a vendor.
+
+The recommended path is compile-time. Set `jsonSchema.emit: "standard"` and pass the sidecar const to `withStaticJsonSchema`. The documents are JSON literals, so that program does not bundle the walker. Measured minify and gzip sizes are in [`bench/json-schema-static.md`](bench/json-schema-static.md). Use `withJsonSchema` for a schema assembled at runtime, one `tskm gen` never saw. `withJsonSchema` walks the schema when `input` or `output` is called.
+
+### Static JSON Schema
+
+There is no implicit switch. Opt in in config:
+
+```ts
+// tskm.config.ts
+import { defineConfig } from "@tskm/compiler"
+
+export default defineConfig({
+  jsonSchema: { emit: "standard" },
+})
+```
+
+`tskm gen` and `tskm watch` then append JSON literals to the sidecar, one `export const <name>JsonSchema` per tskm export. Each value is keyed by target (`draft-2020-12`, `draft-07`, `openapi-3.0`) and then by `input` and `output`. The Vite plugin calls the same generate path, so the config applies there too. `tskm json-schema` still writes its `.json` files, and `jsonSchema.io` still selects which side those files describe. The literals include both sides whenever both can be represented. Inplace mode does not write them.
+
+Call `withStaticJsonSchema` from a module the compiler does not load as a schema source. The schema module must not import the sidecar. `tskm gen` loads each schema source to build the literals. An import of `*.gen.ts` from that source makes generation import the sidecar it is writing. Keep the schema module inside `include`, and keep the call outside it:
+
+```ts
+// src/user.schema.ts — matched by include. Schema only. No import of the sidecar.
+import { object, string } from "@tskm/core"
+
+export const userSchema = object({ name: string() })
+```
+
+```ts
+// app/user.ts — not matched by include, so tskm gen never loads this file.
+import { userSchema } from "../src/user.schema.ts"
+import { userSchemaJsonSchema } from "../src/user.schema.gen.ts"
+import { withStaticJsonSchema } from "@tskm/core/json-schema"
+
+export const user = withStaticJsonSchema(userSchema, userSchemaJsonSchema)
+user["~standard"].jsonSchema.input({ target: "draft-07" })
+```
+
+[`examples/integrations`](examples/integrations) is that layout: `src/user.schema.ts` is the schema source, and `shared/static-user.ts` calls `withStaticJsonSchema`.
+
+`withStaticJsonSchema` returns the precomputed object. It does not walk the schema, and it does not change `withJsonSchema`. A target or side the compiler did not emit throws when that method is called. `libraryOptions.name` throws too: the documents were computed without a root-name override, which is the call `withJsonSchema` makes when `name` is omitted.
+
+Where `withJsonSchema` succeeds, the literal for that target and side is byte-identical, including `default` keywords and the draft-07 and OpenAPI 3.0 rewrites. `bigint`, `date`, `undefined`, `check`, a non-finite number, and a non-JSON default still fail closed: that export gets no const, and `tskm gen` exits 1. `jsonSchema.approximate` uses the same stand-ins as `tskm json-schema` for those cases. It does not change a document `withJsonSchema` already returns.
+
+`transform` output is unchanged on the runtime path. `withJsonSchema(...).jsonSchema.output` throws, because the output type is not reified on the schema object. The static emit does not fill that cell from the checker type either, so the output cell is absent and calling it throws. The input cell is emitted. `approximate: ["transform"]` emits the schema before the transform, the same stand-in as `tskm json-schema`, and `withJsonSchema` still throws. The generated TypeScript type is still the transformed output.
+
+### Runtime JSON Schema
+
+`withJsonSchema` from `@tskm/core/json-schema` returns a new object that implements [Standard JSON Schema](https://github.com/standard-schema/standard-schema/blob/main/packages/spec/json-schema.md). The argument is not modified. A program that never imports this entry does not bundle the walker. A program that does import it ships the walker; the static path above is how to avoid that cost.
 
 ```ts
 import { object, string } from "@tskm/core"
@@ -416,37 +464,7 @@ const User = withJsonSchema(object({ name: string() }))
 User["~standard"].jsonSchema.input({ target: "draft-07" })
 ```
 
-Supported targets are `draft-2020-12`, `draft-07`, and `openapi-3.0`. For schemas the `tskm json-schema` emitter represents, `output({ target: "draft-2020-12" })` matches its document, except for the `default` keywords below. `input` and `output` differ for `preprocess` (input is `{}`), for a JSON `default` on `optional` / `nullable` / `nullish` (the keyword is on the input), and for `fallback` (the keyword is on the output). The emitter does not write `default` keywords yet, so only those documents differ, not the types. `transform` output, `check`, `bigint`, `date`, and `undefined` throw when `input` or `output` is called, not when the schema is wrapped, and so does a `NaN` or infinite literal, picklist option, or numeric bound, and a bound that is not a number. The emitter refuses the same values by default, unless they are listed in `jsonSchema.approximate` (see [types it cannot express](#json-schema-types-it-cannot-express)). `nonfinite` is the one name the emitter has beyond these, and `withJsonSchema` never approximates. Vercel AI SDK's `tool({ inputSchema })` calls `jsonSchema.input({ target: "draft-07" })`, so pass the wrapped schema. `@orpc/openapi` 2.0.0-beta.50 does the same kind of read: `new OpenAPIGenerator()` with no converters calls `jsonSchema.input({ target: "draft-2020-12" })` and writes it on `requestBody` when the procedure input is the wrapped schema. A plain schema has no `jsonSchema`, and that operation is emitted with `requestBody` omitted. hono-openapi 1.5.0 needs one explicit registration, `loadVendor("tskm", { toJSONSchema })`, and `toJSONSchema` is the function that calls `jsonSchema.input` or `output`. `@tskm/core` does not wrap schemas on the way into these libraries and does not register the vendor. The checks are in [`examples/integrations`](examples/integrations).
-
-### Static JSON Schema
-
-`withJsonSchema` walks the schema when `input` or `output` is called. To ship the documents without that walker, opt in explicitly. There is no implicit switch:
-
-```ts
-// tskm.config.ts
-export default defineConfig({
-  jsonSchema: { emit: "standard" },
-})
-```
-
-`tskm gen` and `tskm watch` then append JSON literals to the sidecar, one `export const <name>JsonSchema` per tskm export. Each value is keyed by target (`draft-2020-12`, `draft-07`, `openapi-3.0`) and then by `input` and `output`. The Vite plugin calls the same generate path, so the config applies there too. `tskm json-schema` still writes its `.json` files, and `jsonSchema.io` still selects which side those files describe. The literals include both sides whenever both can be represented. Inplace mode does not write them.
-
-Pass the const to `withStaticJsonSchema` from `@tskm/core/json-schema`. Do this in a module the compiler does not load as a schema source, so generating the sidecar does not import the sidecar:
-
-```ts
-import { userSchema } from "./user.schema.ts"
-import { userSchemaJsonSchema } from "./user.schema.gen.ts"
-import { withStaticJsonSchema } from "@tskm/core/json-schema"
-
-export const user = withStaticJsonSchema(userSchema, userSchemaJsonSchema)
-user["~standard"].jsonSchema.input({ target: "draft-07" })
-```
-
-`withStaticJsonSchema` returns the precomputed object. It does not walk the schema, and it does not change `withJsonSchema`. A target or side the compiler did not emit throws when that method is called. `libraryOptions.name` throws too: the documents were computed without a root-name override, which is the call `withJsonSchema` makes when `name` is omitted.
-
-Where `withJsonSchema` succeeds, the literal for that target and side is byte-identical, including `default` keywords and the draft-07 and OpenAPI 3.0 rewrites. `bigint`, `date`, `undefined`, `check`, a non-finite number, and a non-JSON default still fail closed: that export gets no const, and `tskm gen` exits 1. `jsonSchema.approximate` uses the same stand-ins as `tskm json-schema` for those cases. It does not change a document `withJsonSchema` already returns.
-
-`transform` output is unchanged on the runtime path. `withJsonSchema(...).jsonSchema.output` throws, because the output type is not reified on the schema object. The static emit does not fill that cell from the checker type either, so the output cell is absent and calling it throws. The input cell is emitted. `approximate: ["transform"]` emits the schema before the transform, the same stand-in as `tskm json-schema`, and `withJsonSchema` still throws. The generated TypeScript type is still the transformed output.
+Supported targets are `draft-2020-12`, `draft-07`, and `openapi-3.0`. For schemas the `tskm json-schema` emitter represents, `output({ target: "draft-2020-12" })` matches its document, except for the `default` keywords below. `input` and `output` differ for `preprocess` (input is `{}`), for a JSON `default` on `optional` / `nullable` / `nullish` (the keyword is on the input), and for `fallback` (the keyword is on the output). The emitter does not write `default` keywords yet, so only those documents differ, not the types. `transform` output, `check`, `bigint`, `date`, and `undefined` throw when `input` or `output` is called, not when the schema is wrapped, and so does a `NaN` or infinite literal, picklist option, or numeric bound, and a bound that is not a number. The emitter refuses the same values by default, unless they are listed in `jsonSchema.approximate` (see [types it cannot express](#json-schema-types-it-cannot-express)). `nonfinite` is the one name the emitter has beyond these, and `withJsonSchema` never approximates. Vercel AI SDK's `tool({ inputSchema })` calls `jsonSchema.input({ target: "draft-07" })`. `@orpc/openapi` 2.0.0-beta.50's `new OpenAPIGenerator()` with no converters calls `jsonSchema.input({ target: "draft-2020-12" })` and writes it on `requestBody`. hono-openapi 1.5.0 needs one explicit registration, `loadVendor("tskm", { toJSONSchema })`, and `toJSONSchema` is the function that calls `jsonSchema.input` or `output`. TanStack AI 1.4.0's tool `inputSchema` calls `jsonSchema.input({ target: "draft-07" })` through `convertSchemaToJsonSchema`, and throws `does not expose a JSON Schema converter` when the schema has no `jsonSchema` member. Pass `withStaticJsonSchema` for a schema the compiler emitted. Pass `withJsonSchema` for one built at runtime. A plain schema has no `jsonSchema`. `@orpc/openapi` then emits the operation with `requestBody` omitted. `@tskm/core` does not wrap schemas on the way into these libraries and does not register the vendor. The checks are in [`examples/integrations`](examples/integrations).
 
 ## Standard Schema interop
 

@@ -4,12 +4,14 @@ import { withJsonSchema } from "@tskm/core/json-schema"
 import { generateText, InvalidToolInputError, TypeValidationError, tool } from "ai"
 import { MockLanguageModelV4 } from "ai/test"
 import { type IssueLike, issueFields, rejectionOf } from "../shared/issues.ts"
+import { staticUserSchema } from "../shared/static-user.ts"
 import { invalidUser, userSchema, validUser } from "../shared/user-schema.ts"
 
 /**
  * The AI SDK reads a tool's JSON Schema from `~standard.jsonSchema` and validates the tool
- * call with `~standard.validate`. `withJsonSchema` adds the first; the second is tskm's own.
- * The model is a `MockLanguageModelV4` from `ai/test`, so no request leaves the process.
+ * call with `~standard.validate`. `withStaticJsonSchema` serves the sidecar literals;
+ * `withJsonSchema` walks the schema. The model is a `MockLanguageModelV4` from `ai/test`,
+ * so no request leaves the process.
  */
 
 /**
@@ -51,11 +53,13 @@ function modelCalling(input: unknown) {
   })
 }
 
-/** `createUser` over the tskm schema. Each input its `execute` receives is pushed to `received`. */
-function createUser(received: unknown[]) {
+type DocumentedUser = ReturnType<typeof withJsonSchema<typeof userSchema>> | typeof staticUserSchema
+
+/** `createUser` over a tskm schema that exposes `~standard.jsonSchema`. */
+function createUser(received: unknown[], schema: DocumentedUser = withJsonSchema(userSchema)) {
   return tool({
     description: "Create a user",
-    inputSchema: withJsonSchema(userSchema),
+    inputSchema: schema,
     execute: async (input) => {
       received.push(input)
       return input
@@ -63,12 +67,16 @@ function createUser(received: unknown[]) {
   })
 }
 
-test("the model receives the tskm JSON Schema document", async () => {
+/** The function-tool list the model receives for one `createUser` schema. */
+async function toolsSent(schema: DocumentedUser) {
   const model = modelCalling(validUser)
-  await generateText({ model, prompt: "Create Ada", tools: { createUser: createUser([]) } })
-
+  await generateText({ model, prompt: "Create Ada", tools: { createUser: createUser([], schema) } })
   const [call] = model.doGenerateCalls
-  expect(JSON.parse(JSON.stringify(call?.tools))).toEqual([
+  return JSON.parse(JSON.stringify(call?.tools))
+}
+
+test("the model receives the tskm JSON Schema document", async () => {
+  expect(await toolsSent(withJsonSchema(userSchema))).toEqual([
     {
       type: "function",
       name: "createUser",
@@ -76,6 +84,32 @@ test("the model receives the tskm JSON Schema document", async () => {
       inputSchema: expectedInputSchema,
     },
   ])
+})
+
+test("withStaticJsonSchema matches withJsonSchema on tool.inputSchema", async () => {
+  const runtime = withJsonSchema(userSchema)
+  const targets = ["draft-2020-12", "draft-07", "openapi-3.0"] as const
+  for (const target of targets) {
+    expect(staticUserSchema["~standard"].jsonSchema.input({ target })).toEqual(
+      runtime["~standard"].jsonSchema.input({ target }),
+    )
+    expect(staticUserSchema["~standard"].jsonSchema.output({ target })).toEqual(
+      runtime["~standard"].jsonSchema.output({ target }),
+    )
+  }
+  expect(await toolsSent(staticUserSchema)).toEqual(await toolsSent(runtime))
+})
+
+test("a valid tool call runs when the schema is the static document", async () => {
+  const received: unknown[] = []
+  const result = await generateText({
+    model: modelCalling(validUser),
+    prompt: "Create Ada",
+    tools: { createUser: createUser(received, staticUserSchema) },
+  })
+
+  expect(received).toEqual([validUser])
+  expect(result.toolResults.map((part) => part.output)).toEqual([validUser])
 })
 
 test("a valid tool call runs the tool with the validated input", async () => {
@@ -132,7 +166,7 @@ test("a plain tskm schema is refused, because the SDK reads only ~standard.jsonS
   expect(model.doGenerateCalls).toEqual([])
 })
 
-test("a schema tskm cannot express fails before the model is called", async () => {
+test("a schema assembled at runtime that tskm cannot express fails before the model is called", async () => {
   const model = modelCalling({ at: "2026-11-10", name: "Ada" })
   const schedule = tool({
     description: "Schedule a user",
