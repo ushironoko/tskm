@@ -1,4 +1,5 @@
 import type { StandardJSONSchemaV1 } from "../types/standard.ts"
+import { type JsonSchemaTarget, readJsonSchemaOptions } from "./options.ts"
 
 /**
  * Standard JSON Schema walker for a runtime tskm schema.
@@ -29,8 +30,7 @@ import type { StandardJSONSchemaV1 } from "../types/standard.ts"
 
 export type JsonSchema = { [key: string]: unknown }
 
-const SUPPORTED_TARGETS = ["draft-2020-12", "draft-07", "openapi-3.0"] as const
-type SupportedTarget = (typeof SUPPORTED_TARGETS)[number]
+type SupportedTarget = JsonSchemaTarget
 
 interface SchemaLike {
   readonly type?: unknown
@@ -159,43 +159,6 @@ function assignDefName(schema: object, state: CycleGuardState, hooks: CycleWalkH
   return candidate
 }
 
-function isSupportedTarget(target: string): target is SupportedTarget {
-  return (SUPPORTED_TARGETS as readonly string[]).includes(target)
-}
-
-function readOptions(options: StandardJSONSchemaV1.Options): {
-  readonly target: SupportedTarget
-  readonly name: string | undefined
-} {
-  if (options === null || typeof options !== "object") {
-    fail("jsonSchema options must be an object with a target")
-  }
-  const { target, libraryOptions } = options
-  if (!isSupportedTarget(target)) {
-    fail(
-      `unsupported JSON Schema target ${JSON.stringify(target)}. Supported targets: ${SUPPORTED_TARGETS.map((item) => JSON.stringify(item)).join(", ")}.`,
-    )
-  }
-  if (libraryOptions === undefined) {
-    return { target, name: undefined }
-  }
-  if (
-    libraryOptions === null ||
-    typeof libraryOptions !== "object" ||
-    Array.isArray(libraryOptions)
-  ) {
-    fail("jsonSchema libraryOptions must be a plain object when provided")
-  }
-  if (!("name" in libraryOptions) || libraryOptions.name === undefined) {
-    return { target, name: undefined }
-  }
-  const name = libraryOptions.name
-  if (typeof name !== "string" || name.length === 0 || name.includes("/") || name.includes("#")) {
-    fail('jsonSchema libraryOptions.name must be a non-empty string without "/" or "#"')
-  }
-  return { target, name }
-}
-
 function jsonEqual(left: unknown, right: unknown): boolean {
   if (left === right) return true
   if (typeof left !== "object" || typeof right !== "object") return false
@@ -266,7 +229,7 @@ export function convertToJsonSchema(
   io: "input" | "output",
   options: StandardJSONSchemaV1.Options,
 ): Record<string, unknown> {
-  const { target, name } = readOptions(options)
+  const { target, name } = readJsonSchemaOptions(options)
   const exportNames =
     name !== undefined && isObject(schema) ? new Map<object, string>([[schema, name]]) : undefined
   const ctx: WalkContext = {
@@ -281,7 +244,20 @@ export function convertToJsonSchema(
     out.$defs = ctx.defs
   }
   if (target === "draft-2020-12") return out
-  return rewriteValue(out, target) as Record<string, unknown>
+  return retargetJsonSchema(out, target)
+}
+
+/**
+ * Rewrites a draft 2020-12 document to `draft-07` or `openapi-3.0`.
+ *
+ * The compiler calls this for a document it approximated itself. It does not walk a
+ * tskm schema. `withStaticJsonSchema` does not use it.
+ */
+export function retargetJsonSchema(
+  document: JsonSchema,
+  target: "draft-07" | "openapi-3.0",
+): Record<string, unknown> {
+  return rewriteValue(document, target) as Record<string, unknown>
 }
 
 function walk(schema: unknown, ctx: WalkContext): JsonSchema {

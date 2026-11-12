@@ -53,6 +53,13 @@ export interface TskmJsonSchemaOptions {
    * are rejected when the config is resolved.
    */
   readonly approximate?: ReadonlyArray<JsonSchemaApproximation>
+  /**
+   * When `"standard"`, `tskm gen` writes precomputed JSON Schema documents into the
+   * sidecar as JSON literals (one const per tskm export, keyed by target and side).
+   * Absent means off. There is no implicit enable. Inplace mode does not write them.
+   * `tskm json-schema` still writes its `.json` files either way.
+   */
+  readonly emit?: "standard"
 }
 
 /** Options for `tskm watch`. */
@@ -131,6 +138,8 @@ export interface ResolvedJsonSchemaOptions {
   readonly outDir: string | undefined
   readonly io: "input" | "output"
   readonly approximate: ReadonlyArray<JsonSchemaApproximation>
+  /** `"standard"` when static sidecar literals are opted in. Absent means off. */
+  readonly emit: "standard" | undefined
 }
 
 export interface ResolvedWatchOptions {
@@ -231,6 +240,19 @@ export function parseApproximations(
   return out
 }
 
+/** `"standard"` opts into static sidecar literals. Anything else is a config error. */
+export function parseJsonSchemaEmit(value: unknown): "standard" | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+  if (value === "standard") {
+    return "standard"
+  }
+  throw new Error(
+    `tskm: jsonSchema.emit must be "standard" when set (got ${JSON.stringify(value)}).`,
+  )
+}
+
 /** Identity helper for authoring `tskm.config.ts` with full type inference. */
 export function defineConfig(config: TskmConfig): TskmConfig {
   return config
@@ -258,6 +280,7 @@ export function resolveConfig(config: TskmConfig, root: string): ResolvedTskmCon
         config.jsonSchema?.approximate ?? [],
         "jsonSchema.approximate",
       ),
+      emit: parseJsonSchemaEmit(config.jsonSchema?.emit),
     },
     watch: { debounceMs: config.watch?.debounceMs ?? DEFAULT_DEBOUNCE_MS },
     worker: {

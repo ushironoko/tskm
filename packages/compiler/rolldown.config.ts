@@ -27,6 +27,9 @@ export default defineConfig({
     /^valibot$/,
     /^@valibot\/to-json-schema$/,
     /^arktype$/,
+    // Static emit calls `@tskm/core/json-schema` from the worker at runtime.
+    // The walker must stay in the user's install, not inside this bundle.
+    /^@tskm\/core($|\/)/,
   ],
   plugins: [dts({ tsconfig: "tsconfig.json" })],
   output: {

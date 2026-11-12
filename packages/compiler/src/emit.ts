@@ -294,6 +294,65 @@ export interface RenderSidecarOptions {
    * annotation-import slot. Absent in pure render contexts (no imports emitted).
    */
   readonly sourceImportPath?: string
+  /**
+   * Precomputed Standard JSON Schema documents, one per export. Written as JSON
+   * literals after the type aliases. Absent (or empty) leaves the sidecar
+   * byte-identical to a type-only render.
+   */
+  readonly staticJsonSchema?: ReadonlyArray<SidecarJsonSchemaBinding>
+}
+
+/** Documents for one export, keyed by target then by side. */
+export interface SidecarJsonSchemaDocs {
+  readonly "draft-2020-12"?: SidecarJsonSchemaSide
+  readonly "draft-07"?: SidecarJsonSchemaSide
+  readonly "openapi-3.0"?: SidecarJsonSchemaSide
+}
+
+export interface SidecarJsonSchemaSide {
+  readonly input?: Readonly<Record<string, unknown>>
+  readonly output?: Readonly<Record<string, unknown>>
+}
+
+export interface SidecarJsonSchemaBinding {
+  /** The schema's export name (`userSchema`). The const is `${exportName}JsonSchema`. */
+  readonly exportName: string
+  readonly docs: SidecarJsonSchemaDocs
+}
+
+function isIdentifier(name: string): boolean {
+  return /^[A-Za-z_$][\w$]*$/.test(name)
+}
+
+/**
+ * Renders `export const <name>JsonSchema = { ... } as const` blocks. The value is
+ * `JSON.stringify` output, so the file holds JSON literals and not a walker call.
+ */
+export function renderStaticJsonSchemaConsts(
+  bindings: ReadonlyArray<SidecarJsonSchemaBinding>,
+  pretty: boolean,
+): string {
+  const blocks: string[] = []
+  for (const binding of bindings) {
+    if (!isIdentifier(binding.exportName) || !hasJsonSchemaCell(binding.docs)) {
+      continue
+    }
+    const literal = JSON.stringify(binding.docs, null, pretty ? 2 : undefined)
+    blocks.push(`export const ${binding.exportName}JsonSchema = ${literal} as const\n`)
+  }
+  if (blocks.length === 0) {
+    return ""
+  }
+  return `\n// Precomputed Standard JSON Schema documents. Pass each const to withStaticJsonSchema from "@tskm/core/json-schema".\n${blocks.join("\n")}`
+}
+
+function hasJsonSchemaCell(docs: SidecarJsonSchemaDocs): boolean {
+  for (const side of Object.values(docs)) {
+    if (side?.input !== undefined || side?.output !== undefined) {
+      return true
+    }
+  }
+  return false
 }
 
 /**
@@ -324,7 +383,8 @@ export function renderSidecar(
     const value = pretty ? reindentType(r.typeString) : r.typeString
     return `export type ${r.typeName} = ${value}\n`
   })
-  return `${HEADER}\n${importBlock}\n${blocks.join("\n")}`
+  const staticBlock = renderStaticJsonSchemaConsts(options.staticJsonSchema ?? [], pretty)
+  return `${HEADER}\n${importBlock}\n${blocks.join("\n")}${staticBlock}`
 }
 
 /**
@@ -334,7 +394,10 @@ export function renderSidecar(
 export function emitSidecar(
   sourceFileAbs: string,
   resolved: ReadonlyArray<ResolvedSchema>,
-  options: { readonly pretty?: boolean } = {},
+  options: {
+    readonly pretty?: boolean
+    readonly staticJsonSchema?: ReadonlyArray<SidecarJsonSchemaBinding>
+  } = {},
 ): EmitResult {
   const sidecar = sidecarPath(sourceFileAbs)
   const content = renderSidecar(resolved, {

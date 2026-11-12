@@ -4,8 +4,14 @@ import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path
 import type { ResolvedTskmConfig, TskmMode } from "./config.ts"
 import type { DiscoveredSchema } from "./discovery.ts"
 import { discoverSchemas } from "./discovery.ts"
-import { emitSidecar, renderSidecar, reservedSidecarNames } from "./emit.ts"
+import {
+  emitSidecar,
+  renderSidecar,
+  reservedSidecarNames,
+  type SidecarJsonSchemaBinding,
+} from "./emit.ts"
 import { collectInplaceTargets, emitInplace } from "./inplace.ts"
+import { collectStaticJsonSchemaForFile } from "./jsonschema.ts"
 import { referenceNamedParts } from "./named-parts.ts"
 import { type PruneCandidate, pruneDanglingAliases } from "./prune.ts"
 import { sourceImportSpecifier, withQueryFile } from "./query-core.ts"
@@ -38,11 +44,18 @@ export interface GeneratedFile {
 export interface PerFileResult {
   readonly file: GeneratedFile | null
   readonly diagnostics: ReadonlyArray<string>
+  /**
+   * Static JSON Schema exports that were requested and produced no document.
+   * Types are still written. Non-empty means `tskm gen` exits 1.
+   */
+  readonly errors?: ReadonlyArray<string>
 }
 
 export interface GenerateResult {
   readonly files: ReadonlyArray<GeneratedFile>
   readonly diagnostics: ReadonlyArray<string>
+  /** See {@link PerFileResult.errors}. Omitted when there are none. */
+  readonly errors?: ReadonlyArray<string>
 }
 
 export interface TskmSession {
@@ -128,6 +141,73 @@ function collectSources(config: ResolvedTskmConfig): ReadonlyArray<string> {
 
 function makeRootRelative(diagnostics: ReadonlyArray<string>, root: string): ReadonlyArray<string> {
   return diagnostics.map((d) => d.replaceAll(`${root}/`, ""))
+}
+
+function hasStaticCell(docs: SidecarJsonSchemaBinding["docs"]): boolean {
+  for (const side of Object.values(docs)) {
+    if (side?.input !== undefined || side?.output !== undefined) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Static documents for a sidecar, when `jsonSchema.emit` is `"standard"`.
+ * Off by default: no worker is spawned. Inplace mode reports that the literals
+ * are not written there.
+ */
+function staticJsonSchemaForSidecar(
+  sourceAbs: string,
+  config: ResolvedTskmConfig,
+  writeSidecar: boolean,
+): { bindings: SidecarJsonSchemaBinding[]; diagnostics: string[]; errors: string[] } {
+  if (config.jsonSchema.emit !== "standard") {
+    return { bindings: [], diagnostics: [], errors: [] }
+  }
+  if (!writeSidecar) {
+    return {
+      bindings: [],
+      diagnostics: [
+        `tskm: ${sourceAbs}: jsonSchema.emit "standard" writes JSON literals into the sidecar. inplace mode does not emit them.`,
+      ],
+      errors: [],
+    }
+  }
+  const collected = collectStaticJsonSchemaForFile(sourceAbs, config)
+  const diagnostics: string[] = []
+  const errors: string[] = []
+  const bindings: SidecarJsonSchemaBinding[] = []
+  if (collected.diagnostic !== undefined) {
+    diagnostics.push(collected.diagnostic)
+    errors.push(collected.diagnostic)
+    return { bindings, diagnostics, errors }
+  }
+  for (const entry of collected.exports) {
+    for (const warning of entry.warnings) {
+      diagnostics.push(`tskm: ${sourceAbs}: ${warning}`)
+    }
+    if (!hasStaticCell(entry.docs)) {
+      const lines =
+        entry.errors.length > 0
+          ? entry.errors
+          : [`${entry.name}: static JSON Schema was not emitted.`]
+      for (const error of lines) {
+        const line = `tskm: ${sourceAbs}: ${error}`
+        diagnostics.push(line)
+        errors.push(line)
+      }
+      continue
+    }
+    if (!/^[A-Za-z_$][\w$]*$/.test(entry.name)) {
+      const line = `tskm: ${sourceAbs}: ${entry.name}: static JSON Schema was not emitted because the export name is not an identifier.`
+      diagnostics.push(line)
+      errors.push(line)
+      continue
+    }
+    bindings.push({ exportName: entry.name, docs: entry.docs })
+  }
+  return { bindings, diagnostics, errors }
 }
 
 /**
@@ -375,6 +455,10 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       return { file: null, diagnostics: allDiagnostics }
     }
 
+    const staticJson = staticJsonSchemaForSidecar(sourceAbs, config, config.mode === "sidecar")
+    const staticDiagnostics = staticJson.diagnostics
+    const staticErrors = staticJson.errors
+
     if (config.mode === "inplace") {
       const emitted = emitInplace(sourceAbs, sourceText, resolved, {
         pretty,
@@ -390,7 +474,8 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
           mode: "inplace",
           changed: emitted.changed,
         },
-        diagnostics: [...allDiagnostics, ...emitted.diagnostics],
+        diagnostics: [...allDiagnostics, ...staticDiagnostics, ...emitted.diagnostics],
+        ...(staticErrors.length > 0 ? { errors: staticErrors } : {}),
       }
     }
 
@@ -409,6 +494,7 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
       const content = renderSidecar(resolved, {
         pretty,
         sourceImportPath: sourceImportSpecifier(sourceAbs),
+        staticJsonSchema: staticJson.bindings,
       })
       const verifyFile = verifyFilePath(sourceAbs)
       const verifyDiags = withQueryFile(client, verifyFile, content, () =>
@@ -435,13 +521,18 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
           file: null,
           diagnostics: [
             ...allDiagnostics,
+            ...staticDiagnostics,
             `tskm: the generated types for ${sourceAbs} do not compile (${codes}${namesPart}); nothing written.${leakHint} Existing output left untouched.`,
           ],
+          ...(staticErrors.length > 0 ? { errors: staticErrors } : {}),
         }
       }
     }
 
-    const emitted = emitSidecar(sourceAbs, resolved, { pretty })
+    const emitted = emitSidecar(sourceAbs, resolved, {
+      pretty,
+      staticJsonSchema: staticJson.bindings,
+    })
     digests.set(sourceAbs, digestOf(sourceText))
     return {
       file: {
@@ -451,7 +542,8 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
         mode: "sidecar",
         changed: true,
       },
-      diagnostics: allDiagnostics,
+      diagnostics: [...allDiagnostics, ...staticDiagnostics],
+      ...(staticErrors.length > 0 ? { errors: staticErrors } : {}),
     }
   }
 
@@ -554,6 +646,7 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
 
     const files: GeneratedFile[] = []
     const diagnostics: string[] = []
+    const errors: string[] = []
     // Register INSIDE the try so a throw mid-registration (a partial disk write or a failed
     // overlay apply) still reaches cleanupQueries in the finally, never orphaning query files.
     // cleanupQueries is idempotent (force rm, delete-notify tolerates unknown paths).
@@ -568,6 +661,9 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
           result = resolveAndFinalize(sourceAbs, prep, pretty, true)
         }
         diagnostics.push(...result.diagnostics)
+        if (result.errors) {
+          errors.push(...result.errors)
+        }
         if (result.file) {
           files.push(result.file)
         }
@@ -575,7 +671,11 @@ export function createSession(config: ResolvedTskmConfig): TskmSession {
     } finally {
       cleanupQueries(docs)
     }
-    return { files, diagnostics: makeRootRelative(diagnostics, config.root) }
+    return {
+      files,
+      diagnostics: makeRootRelative(diagnostics, config.root),
+      ...(errors.length > 0 ? { errors: makeRootRelative(errors, config.root) } : {}),
+    }
   }
 
   return {
