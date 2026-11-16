@@ -78,7 +78,7 @@ export type Category = {
 
 The table in [Why tskm?](#why-tskm) is direction, `ts-patch`, and the editor. This is a separate comparison: Standard Schema, Standard JSON Schema, generation method, runtime dependencies, and JSON Schema target. It was checked on 2026-11-12 UTC. Each cell in [`docs/comparison.md`](docs/comparison.md) names the version and a primary source. There is no runtime-speed column, and no new benchmarks were run.
 
-tskm's static path is `jsonSchema.emit: "standard"` plus `withStaticJsonSchema`. The documents are JSON literals, so that program does not bundle the walker. `withJsonSchema` is the runtime path for a schema `tskm gen` never saw: it walks the schema when `input` or `output` is called. Minify and gzip sizes are the existing measurements in [`bench/json-schema-static.md`](bench/json-schema-static.md).
+tskm's static path is `jsonSchema.emit: "standard"` plus `withStaticJsonSchema` (`@tskm/core` >= 0.5.0, `@tskm/compiler` >= 0.7.0). The documents are JSON literals, so that program does not bundle the walker. `withJsonSchema` is the runtime path for a schema `tskm gen` never saw: it walks the schema when `input` or `output` is called. Minify and gzip sizes are the existing measurements in [`bench/json-schema-static.md`](bench/json-schema-static.md).
 
 ## Simple Usage
 
@@ -414,7 +414,7 @@ A `transform` is exact on the input side. Set `jsonSchema: { io: "input" }` to d
 
 JSON Schema conversion is opt-in. Nothing wraps a schema on the way into a framework, and `@tskm/core` does not register a vendor.
 
-The recommended path is compile-time. Set `jsonSchema.emit: "standard"` and pass the sidecar const to `withStaticJsonSchema`. The documents are JSON literals, so that program does not bundle the walker. Measured minify and gzip sizes are in [`bench/json-schema-static.md`](bench/json-schema-static.md). Use `withJsonSchema` for a schema assembled at runtime, one `tskm gen` never saw. `withJsonSchema` walks the schema when `input` or `output` is called.
+The recommended path is compile-time (`@tskm/core` >= 0.5.0, `@tskm/compiler` >= 0.7.0). Set `jsonSchema.emit: "standard"` and pass the sidecar const to `withStaticJsonSchema`. The documents are JSON literals, so that program does not bundle the walker. Measured minify and gzip sizes are in [`bench/json-schema-static.md`](bench/json-schema-static.md). Use `withJsonSchema` for a schema assembled at runtime, one `tskm gen` never saw. `withJsonSchema` walks the schema when `input` or `output` is called.
 
 ### Static JSON Schema
 
