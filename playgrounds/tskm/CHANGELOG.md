@@ -1,5 +1,12 @@
 # @tskm/playground
 
+## 0.0.4
+
+### Patch Changes
+
+- Updated dependencies [30fc0bd]
+  - @tskm/core@0.5.0
+
 ## 0.0.3
 
 ### Patch Changes
