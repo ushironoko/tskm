@@ -45,6 +45,15 @@ describe("schemaToJsonSchemaViaAdapter — vendor dispatch (real libraries)", ()
     expect(outcome.schema.properties).toEqual({ name: { type: "string" } })
   })
 
+  it("converts a zod enum through the non-finite override's enum branch", async () => {
+    // The zod non-finite guard walks Object.values(def.entries) for an enum node; a
+    // finite enum passes the guard and converts to its JSON Schema `enum`.
+    const outcome = await schemaToJsonSchemaViaAdapter(z.enum(["a", "b"]), ctx())
+    expect(outcome.kind).toBe("converted")
+    if (outcome.kind !== "converted") return
+    expect(outcome.schema.enum).toEqual(["a", "b"])
+  })
+
   it("routes a tskm-shaped value to the native walker", async () => {
     // Duck-typed tskm schema (string), same as jsonschema.test.ts builds.
     const tskmString = { kind: "schema", type: "string" }
@@ -148,6 +157,24 @@ describe("schemaToJsonSchemaViaAdapter — a vendor conversion failure is reject
     if (outcome.kind !== "rejected") return
     expect(outcome.errors[0]).toContain('"@valibot/to-json-schema" is not installed in the project')
     expect(outcome.errors[0]).toContain("bun add -D @valibot/to-json-schema")
+  })
+
+  it("rejects when the imported @valibot/to-json-schema module has no toJsonSchema export (DI seam)", async () => {
+    // The project has the package but the imported module lacks the `toJsonSchema` export
+    // (e.g. a broken/partial install). The adapter rejects rather than calling undefined.
+    const outcome = await schemaToJsonSchemaViaAdapter(
+      v.object({ a: v.string() }),
+      ctx({
+        rootName: "Doc",
+        importModule: (specifier) =>
+          specifier === "@valibot/to-json-schema"
+            ? Promise.resolve({})
+            : import(specifier),
+      }),
+    )
+    expect(outcome.kind).toBe("rejected")
+    if (outcome.kind !== "rejected") return
+    expect(outcome.errors[0]).toContain('"@valibot/to-json-schema" has no toJsonSchema export')
   })
 
   it("rejects an allowed vendor that has no converter, naming the vendor", async () => {

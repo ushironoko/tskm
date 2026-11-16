@@ -230,6 +230,31 @@ describe("Standard JSON Schema — representable schemas", () => {
     expect(Object.keys(defs).sort()).toEqual(["recursive", "recursive_2"])
   })
 
+  it("emits a $ref for every later sighting of an already-hoisted cycle", () => {
+    // The recursive node is referenced from two sibling fields. The first sighting detects the
+    // cycle and reserves the def name; each later sighting of the SAME hoisted schema must emit
+    // a plain $ref to it rather than re-inlining or re-hoisting the body.
+    const node = recursive((self) => object({ next: optional(self), peers: array(self) }))
+    const json = output(node)
+    expect(json.$ref).toBe("#/$defs/recursive")
+    const def = (json.$defs as Record<string, { properties: Record<string, unknown> }>).recursive
+    expect(def.properties.next).toEqual({ $ref: "#/$defs/recursive" })
+    expect(def.properties.peers).toEqual({
+      type: "array",
+      items: { $ref: "#/$defs/recursive" },
+    })
+  })
+
+  it("disambiguates a nested cycle against an enclosing cycle's reserved name", () => {
+    // The inner cycle is hoisted while the outer cycle's default name ("recursive") is already
+    // reserved but not yet stored in $defs. The collision must be resolved against the reserved
+    // name set, not only the stored defs, so the inner node gets a distinct "recursive_2".
+    const inner = recursive((self) => object({ loop: optional(self) }))
+    const outer = recursive((self) => object({ self: optional(self), nested: inner }))
+    const defs = output(outer).$defs as Record<string, unknown>
+    expect(Object.keys(defs).sort()).toEqual(["recursive", "recursive_2"])
+  })
+
   it("returns a fresh document on every call", () => {
     const schema = object({ a: string() })
     const first = output(schema)
@@ -299,6 +324,16 @@ describe("Standard JSON Schema — input and output", () => {
     expect(() =>
       convertToJsonSchema(
         { type: "optional", wrapped: { type: "unknown" }, default: { a: undefined } },
+        "input",
+        draft,
+      ),
+    ).toThrow(/round-trip through JSON/)
+    // Same key COUNT on both sides, but a nested value that mutates under JSON (a Date
+    // serializes to a string): the deep key-by-key comparison, not the key-count check, must
+    // catch the divergence.
+    expect(() =>
+      convertToJsonSchema(
+        { type: "optional", wrapped: { type: "unknown" }, default: { a: new Date(0) } },
         "input",
         draft,
       ),
@@ -501,6 +536,19 @@ describe("Standard JSON Schema — errors", () => {
     ).toThrow(/check/)
   })
 
+  it("refuses a transform on output but describes the pre-transform schema on input", () => {
+    const widened = pipe(
+      string(),
+      transform((value) => value.length),
+    )
+    // The transform's output type is not reified at runtime, so output() cannot describe it.
+    expect(() => output(widened)).toThrow(
+      'tskm: cannot convert pipe item "transform" to JSON Schema output: the transform\'s output type is not reified at runtime. input() still describes the schema before the transform',
+    )
+    // input() stops at the schema before the transform runs, so it stays representable.
+    expect(input(widened)).toEqual({ type: "string" })
+  })
+
   it("refuses options that are not the spec object", () => {
     expect(() =>
       jsonSchema(string()).input(undefined as unknown as { target: "draft-07" }),
@@ -627,6 +675,18 @@ describe("Standard JSON Schema — malformed nodes", () => {
         draft,
       ),
     ).toThrow('tskm: cannot convert pipe item "regex" to JSON Schema: requirement is not a RegExp')
+    // A transform item missing `kind: "transformation"` slips past the structural pre-scan (which
+    // keys on isTransformItem), so the per-item switch is the backstop that still rejects it on
+    // output rather than silently dropping the transform.
+    expect(() =>
+      convertToJsonSchema(
+        { type: "string", pipe: [{ type: "string" }, { type: "transform" }] },
+        "output",
+        draft,
+      ),
+    ).toThrow(
+      'tskm: cannot convert pipe item "transform" to JSON Schema output: the transform\'s output type is not reified at runtime. input() still describes the schema before the transform',
+    )
     expect(() => convertToJsonSchema({ type: "discriminated_union" }, "output", draft)).toThrow(
       /options is not an array/,
     )

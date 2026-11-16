@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { main } from "../src/cli-core.ts"
@@ -22,6 +23,18 @@ const jsonOutput = fileURLToPath(
 // executable flag, so the override is passed through the existing config field.
 const tsgoConfig = fileURLToPath(new URL("./fixtures/basic/tskm.config.mjs", import.meta.url))
 let wroteTsgoOverride = false
+
+// A committed fixture whose tskm.config.mjs opts into static JSON Schema emit ("standard").
+// `goodSchema` emits a sidecar + JSON literals; `amountSchema` (bigint) has no JSON Schema
+// representation, so static emit fails closed — `generate()` returns a non-empty `errors`,
+// which is exactly what drives `runGen`'s diagnostics loop and its errors/exit-1 branch.
+const staticErrRoot = fileURLToPath(new URL("./fixtures/gen-static-errors", import.meta.url))
+const staticErrSidecar = fileURLToPath(
+  new URL("./fixtures/gen-static-errors/src/account.schema.gen.ts", import.meta.url),
+)
+const staticErrQuery = fileURLToPath(
+  new URL("./fixtures/gen-static-errors/src/account.schema.tskm-query.ts", import.meta.url),
+)
 
 function writeTsgoOverride(): void {
   const executable = testTsgoExecutable()
@@ -61,7 +74,7 @@ describe("cli-core main() — real command execution", () => {
     process.exitCode = savedExitCode ?? 0
     process.stdout.write = savedStdoutWrite as Writer
     process.stderr.write = savedStderrWrite as Writer
-    for (const f of [sidecar, queryGlob, jsonOutput]) {
+    for (const f of [sidecar, queryGlob, jsonOutput, staticErrSidecar, staticErrQuery]) {
       if (existsSync(f)) rmSync(f)
     }
     if (wroteTsgoOverride && existsSync(tsgoConfig)) rmSync(tsgoConfig)
@@ -192,6 +205,112 @@ describe("cli-core main() — real command execution", () => {
       )
     } finally {
       rmSync(srcDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it("`gen` on a root with no matching sources writes the diagnostic and reports no types (exit 0)", async () => {
+    // An empty `src` dir: `generate()` matches nothing, returning zero files and a single
+    // "no source files matched" diagnostic. This exercises `runGen`'s diagnostics loop (the
+    // diagnostic is written to stderr) and its empty-result branch (the stdout notice), with
+    // no errors, so the exit code stays 0.
+    const dir = mkdtempSync(join(tmpdir(), "tskm-gen-empty-"))
+    try {
+      mkdirSync(join(dir, "src"))
+      writeFileSync(
+        join(dir, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: { skipLibCheck: true, noEmit: true },
+          include: ["src"],
+        }),
+      )
+      install(["gen", "--root", dir])
+      await main()
+
+      expect(stdout).toContain("tskm: no types generated.")
+      expect(stderr).toContain("tskm: no source files matched src/**/*.ts")
+      expect(process.exitCode).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it("`gen` fails closed when static JSON Schema emit cannot represent a schema (exit 1)", async () => {
+    // The fixture's tskm.config.mjs sets jsonSchema.emit "standard". `goodSchema` emits a
+    // sidecar; `amountSchema` (bigint) cannot be expressed as JSON Schema, so `generate()`
+    // returns a non-empty `errors`. `runGen` must still announce the written sidecar, write
+    // each diagnostic to stderr, print the "gen failed with N ... error(s)" summary, and set
+    // exit code 1.
+    install(["gen", "--root", staticErrRoot])
+    await main()
+
+    expect(existsSync(staticErrSidecar)).toBe(true)
+    expect(stdout).toContain("tskm: wrote")
+    expect(stdout).toContain("account.schema.gen.ts")
+    // The bigint export's failure appears both as a diagnostic (stderr) and in the summary.
+    expect(stderr).toContain("amountSchema")
+    expect(stderr).toContain('cannot convert schema type "bigint"')
+    expect(stderr).toContain("gen failed with 2 static JSON Schema error(s)")
+    expect(stderr).toContain("those schemas were not emitted")
+    expect(process.exitCode).toBe(1)
+    // A sidecar was still produced, so the empty-result notice must NOT appear.
+    expect(stdout).not.toContain("tskm: no types generated.")
+  }, 60_000)
+
+  it("`watch` runs the initial generate, prints the watching banner, and the stop handler closes without exiting the process", async () => {
+    // `runWatch` ends in `await new Promise(() => {})`, so `main()` never resolves for the
+    // watch command. We start it without awaiting, let the initial generate + banner land,
+    // then drive the SIGINT/SIGTERM `stop` handler ourselves. `stop` calls `process.exit(0)`,
+    // which would kill the test runner, so `process.on` is intercepted to capture the handler
+    // (never registering a real signal listener) and `process.exit` is stubbed to a recorder.
+    // The fixture opts into static JSON emit, so the initial pass yields both a written file
+    // (the files loop) and diagnostics (the diagnostics loop) inside the onGenerate callback.
+    const savedOn = process.on.bind(process)
+    const savedExit = process.exit
+    let stop: (() => void) | undefined
+    let exitCalled = false
+    process.on = ((event: string, handler: (...a: unknown[]) => void) => {
+      if (event === "SIGINT" || event === "SIGTERM") {
+        stop = handler as () => void
+        return process
+      }
+      return (savedOn as (e: string, h: unknown) => typeof process)(event, handler)
+    }) as typeof process.on
+    process.exit = ((_code?: number) => {
+      exitCalled = true
+      return undefined as never
+    }) as typeof process.exit
+
+    const waitFor = async (predicate: () => boolean, budgetMs: number): Promise<boolean> => {
+      const deadline = Date.now() + budgetMs
+      while (Date.now() < deadline) {
+        if (predicate()) return true
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      return predicate()
+    }
+
+    try {
+      install(["watch", "--root", staticErrRoot, "--debounce", "30"])
+      // Deliberately not awaited: the watch command keeps the event loop alive forever.
+      void main()
+
+      const banner = await waitFor(() => stdout.includes("tskm: watching for changes"), 50_000)
+      expect(banner).toBe(true)
+      // The initial generate's onGenerate ran: it announced the sidecar (files loop) and the
+      // bigint diagnostics (diagnostics loop).
+      expect(stdout).toContain("tskm: wrote")
+      expect(stdout).toContain("account.schema.gen.ts")
+      expect(stderr).toContain('cannot convert schema type "bigint"')
+      // Both signal handlers were registered with the same `stop` closure.
+      expect(stop).toBeDefined()
+
+      // Invoke the stop handler: it closes the watcher, then calls process.exit(0) (stubbed).
+      stop?.()
+      const closed = await waitFor(() => exitCalled, 10_000)
+      expect(closed).toBe(true)
+    } finally {
+      process.on = savedOn as typeof process.on
+      process.exit = savedExit
     }
   }, 60_000)
 })

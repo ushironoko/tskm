@@ -519,3 +519,63 @@ describe("safeParseCompiled — general path __proto__ safety", () => {
     expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
   })
 })
+
+/**
+ * Structural-field fallback guards (compile.ts). `compile()` specializes on factory identity
+ * (`schema.reference`), but every specialized builder re-reads the structural field it needs
+ * (`entries` / `item` / `wrapped`) and, when that field is absent, bails to `compileFallback`
+ * so it runs the schema's own `~run` instead of dereferencing `undefined`. This is the
+ * TRUST-BOUNDARY path documented in `compile()`: a schema can carry a native `reference`
+ * while its shape diverges (a partially-built, cloned, or deliberately-forged schema), and the
+ * compiler must stay byte-identical to the interpreter rather than crash or silently bypass
+ * `~run`. Each case clones a genuine schema (so `reference` and `~run` are the real native
+ * ones) and strips the structural field the specialized path expects.
+ */
+describe("safeParseCompiled — structural-field fallback guards", () => {
+  it("object with reference but no entries falls back to its own ~run", () => {
+    const base = object({ a: string() })
+    // reference === object is preserved, so compile() enters compileObject, which then finds
+    // entries === undefined and must delegate to ~run.
+    const forged = { ...base, entries: undefined } as unknown as BaseSchema<unknown, unknown>
+    expectParity(forged, { a: "ok" })
+    expectParity(forged, { a: 1 })
+    expectParity(forged, null)
+  })
+
+  it("object whose entries map holds an undefined child falls back", () => {
+    const base = object({ a: string() })
+    // Object.keys(entries) still yields "a", but entries.a is undefined: the per-key guard in
+    // compileObject must trigger the fallback rather than compile a missing child.
+    const forged = {
+      ...base,
+      entries: { a: undefined },
+    } as unknown as BaseSchema<unknown, unknown>
+    expectParity(forged, { a: "ok" })
+    expectParity(forged, { a: 1 })
+  })
+
+  it("array with reference but no item falls back to its own ~run", () => {
+    const base = array(string())
+    const forged = { ...base, item: undefined } as unknown as BaseSchema<unknown, unknown>
+    expectParity(forged, ["ok"])
+    expectParity(forged, [1])
+    expectParity(forged, "not-an-array")
+  })
+
+  it("optional with reference but no wrapped falls back to its own ~run", () => {
+    const base = optional(string())
+    const forged = { ...base, wrapped: undefined } as unknown as BaseSchema<unknown, unknown>
+    expectParity(forged, "ok")
+    expectParity(forged, undefined)
+    expectParity(forged, 1)
+  })
+
+  it("nullish with reference but no wrapped falls back to its own ~run", () => {
+    const base = nullish(string())
+    const forged = { ...base, wrapped: undefined } as unknown as BaseSchema<unknown, unknown>
+    expectParity(forged, "ok")
+    expectParity(forged, null)
+    expectParity(forged, undefined)
+    expectParity(forged, 1)
+  })
+})

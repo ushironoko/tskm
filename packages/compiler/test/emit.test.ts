@@ -6,6 +6,7 @@ import {
   emitSidecar,
   reindentType,
   renderSidecar,
+  renderStaticJsonSchemaConsts,
   sidecarPath,
 } from "../src/emit.ts"
 import type { ResolvedSchema } from "../src/resolve.ts"
@@ -124,6 +125,13 @@ describe("reindentType — nested objects", () => {
   it("indents parenthesized groups", () => {
     const out = reindentType("( string | number )")
     expect(out).toBe("(\n  string | number\n)")
+  })
+
+  it("tolerates an unterminated index-signature bracket (matchingBracket returns -1)", () => {
+    // The `[` never closes, so the index-signature probe's matchingBracket scan runs off the end
+    // and returns -1; reindentType must fall through and break the `[` like an ordinary bracket
+    // rather than throw on the malformed input.
+    expect(reindentType("{ [key: string")).toBe("{\n  [\n    key: string")
   })
 })
 
@@ -339,5 +347,43 @@ describe("static JSON Schema literals", () => {
   it("leaves a type-only sidecar unchanged when no documents are passed", () => {
     const resolved = [{ typeName: "User", typeString: "string" }]
     expect(renderSidecar(resolved)).toBe(renderSidecar(resolved, { staticJsonSchema: [] }))
+  })
+})
+
+describe("renderStaticJsonSchemaConsts", () => {
+  it("returns an empty string when a binding's docs carry no input/output cell", () => {
+    // Empty docs → hasJsonSchemaCell is false → the only binding is skipped → no const is emitted,
+    // so the whole block collapses to the empty string (not even the leading comment banner).
+    expect(renderStaticJsonSchemaConsts([{ exportName: "userSchema", docs: {} }], false)).toBe("")
+  })
+
+  it("treats docs whose only target cell has neither input nor output as empty", () => {
+    // A present target key with an empty side object still has no input/output, so the cell check
+    // returns false and nothing is rendered.
+    expect(renderStaticJsonSchemaConsts([{ exportName: "s", docs: { "draft-07": {} } }], false)).toBe(
+      "",
+    )
+  })
+
+  it("skips a binding whose exportName is not a valid identifier", () => {
+    const out = renderStaticJsonSchemaConsts(
+      [{ exportName: "1bad", docs: { "draft-07": { output: { type: "string" } } } }],
+      false,
+    )
+    expect(out).toBe("")
+    expect(out).not.toContain("1bad")
+  })
+
+  it("emits the valid-identifier binding and skips the non-identifier one in the same call", () => {
+    const out = renderStaticJsonSchemaConsts(
+      [
+        { exportName: "1bad", docs: { "draft-07": { output: { type: "string" } } } },
+        { exportName: "good", docs: { "draft-07": { output: { type: "string" } } } },
+      ],
+      false,
+    )
+    expect(out).toContain("export const goodJsonSchema = ")
+    expect(out).not.toContain("1badJsonSchema")
+    expect(out).not.toContain("1bad")
   })
 })

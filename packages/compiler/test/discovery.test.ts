@@ -225,6 +225,16 @@ describe("discoverSchemas — Infer alias markers", () => {
     const { schemas } = discoverSchemas("a.ts", src)
     expect(schemas).toHaveLength(0)
   })
+
+  it("ignores an Infer alias whose typeof target is a qualified (dotted) name", () => {
+    // `typeof ns.schema` parses to a qualified name, which has no plain `.name`, so readInferAlias
+    // cannot capture a referenced schema identifier and discovers nothing.
+    const src = `
+      export type A = Infer<typeof ns.schema>
+    `
+    const { schemas } = discoverSchemas("a.ts", src)
+    expect(schemas).toHaveLength(0)
+  })
 })
 
 describe("discoverSchemas — multiple schemas & dedup", () => {
@@ -658,6 +668,20 @@ describe("discoverSchemas — recursive self-annotation capture", () => {
     })
   })
 
+  it("captures no annotation when the ZodType argument is not a plain identifier", () => {
+    // Only a bare identifier type argument is a self-annotation name. A keyword argument
+    // (z.ZodType<string>) is not a TSTypeReference, so no recursiveAnnotation is recorded — the
+    // schema is still discovered as a candidate, just without a captured self-type name.
+    const src = `
+      import { z } from "zod"
+      export const strSchema: z.ZodType<string> = z.string()
+    `
+    const { schemas } = discoverSchemas("a.ts", src, opts)
+    const found = find(schemas, "strSchema")
+    expect(found).toBeDefined()
+    expect(found?.recursiveAnnotation).toBeUndefined()
+  })
+
   it("treats a re-exported local type (export { CatT }) as exported", () => {
     const src = `
       import { z } from "zod"
@@ -748,5 +772,17 @@ describe("discoverSchemas — imports and callees that are not schema sources", 
     const { schemas, diagnostics } = discoverSchemas("b.ts", src)
     expect(diagnostics).toHaveLength(0)
     expect(schemas.map((s) => s.name)).toEqual(["real"])
+  })
+
+  it("does not discover a chained call whose callee bottoms out at a non-identifier base", () => {
+    // `[].map().object(...)`: the member/call chain never reaches an Identifier at its root (the
+    // base is an array literal), so rootIdentifierName returns undefined and calleeInfo bails —
+    // nothing is discovered even though `object` is a member name of a configured source.
+    const src = `import { z } from "zod"\nexport const x = [].map().object({})`
+    const { schemas, diagnostics } = discoverSchemas("a.ts", src, {
+      schemaSources: ["@tskm/core", "zod"],
+    })
+    expect(diagnostics).toHaveLength(0)
+    expect(schemas).toHaveLength(0)
   })
 })

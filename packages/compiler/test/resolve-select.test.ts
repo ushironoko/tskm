@@ -1,5 +1,6 @@
-import { chooseRendering } from "../src/resolve.ts"
-import type { ResolvedType } from "../src/tsgo-client.ts"
+import type { DiscoveredSchema } from "../src/discovery.ts"
+import { chooseRendering, resolveRegisteredQuery, resolveSchemas } from "../src/resolve.ts"
+import type { ResolvedType, TsgoClient } from "../src/tsgo-client.ts"
 import { describe, expect, it } from "./test-api.ts"
 
 const OBJECT_FLAGS = 1048576
@@ -80,5 +81,85 @@ describe("chooseRendering — raw/pretty selection", () => {
 
   it("tolerates leading whitespace when detecting the object form", () => {
     expect(chooseRendering(t("  { a: string; }"), t("{ a: string; }"))).toBe("{ a: string; }")
+  })
+})
+
+// A candidate external schema needs a vendor, a guard probe, and raw/pretty markers. Only
+// `withSnapshot` is exercised by the resolution loop, so a one-method stub TsgoClient plus a
+// scripted `resolveAt` drives the guard/raw outcomes without a real checker.
+const candidate = (over: Partial<DiscoveredSchema> = {}): DiscoveredSchema => ({
+  name: "userSchema",
+  typeName: "User",
+  origin: "const",
+  recursive: false,
+  capability: {
+    sourceKind: "standard",
+    vendorHint: "zod",
+    confidence: "candidate",
+    typeResolver: "standard-checker",
+    tier1Supported: false,
+    inplaceSupported: false,
+  },
+  ...over,
+})
+
+/** Stub whose `resolveAt` returns the scripted verdicts in call order. */
+const stubClient = (verdicts: ReadonlyArray<ResolvedType | null>): TsgoClient => {
+  let call = 0
+  return {
+    withSnapshot: <T>(fn: (resolveAt: () => ResolvedType | null) => T): T =>
+      fn(() => verdicts[call++] ?? null),
+  } as unknown as TsgoClient
+}
+
+const FAILURE_FLAGS = 1 | 2 | 262144
+
+describe("resolveSchemas / resolveRegisteredQuery — guard and hint paths", () => {
+  it("returns an empty result and never touches the client when there are no schemas", () => {
+    // queryArtifact is null for an empty schema list, so resolveSchemas short-circuits before
+    // it would ever write or register a query file.
+    const untouched = {} as unknown as TsgoClient
+    expect(resolveSchemas(untouched, "/project/src/a.ts", [])).toEqual({
+      resolved: [],
+      diagnostics: [],
+    })
+  })
+
+  it("adds a version-skew hint when every candidate of a vendor fails the guard", () => {
+    // Guard probe resolves to something other than the literal `true`, so the candidate is not
+    // a Standard Schema: it is dropped, and because the vendor had zero confirmations a single
+    // guidance diagnostic is emitted for that vendor.
+    const client = stubClient([{ flags: 0, text: "false" }])
+    const result = resolveRegisteredQuery(client, "/project/src/a.ts", [candidate()])
+    expect(result.resolved).toEqual([])
+    expect(result.diagnostics).toHaveLength(1)
+    expect(result.diagnostics[0]).toContain(
+      'no Standard Schema values found among the "zod" exports',
+    )
+  })
+
+  it("suggests a self annotation when a confirmed standard schema fails to resolve", () => {
+    // Guard passes (`true`) but the raw inference collapses to a failure type: for a standard
+    // schema with no captured self-annotation, the skip diagnostic points at the recursive case.
+    const client = stubClient([
+      { flags: 0, text: "true" },
+      { flags: FAILURE_FLAGS, text: "any" },
+    ])
+    const result = resolveRegisteredQuery(client, "/project/src/a.ts", [candidate()])
+    expect(result.resolved).toEqual([])
+    expect(result.diagnostics).toHaveLength(1)
+    expect(result.diagnostics[0]).toContain("add an explicit self type annotation")
+  })
+
+  it("drops an unrecognized-vendor candidate silently, with no version-skew hint", () => {
+    // A candidate whose import module did not map to a known vendor (vendorHint undefined) does
+    // not contribute to the per-vendor tally, so a guard failure leaves no diagnostic at all.
+    const client = stubClient([{ flags: 0, text: "false" }])
+    const schema = candidate({
+      capability: { ...candidate().capability, vendorHint: undefined },
+    })
+    const result = resolveRegisteredQuery(client, "/project/src/a.ts", [schema])
+    expect(result.resolved).toEqual([])
+    expect(result.diagnostics).toEqual([])
   })
 })

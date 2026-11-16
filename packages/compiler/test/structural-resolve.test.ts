@@ -180,6 +180,32 @@ describe("resolveRecursiveSchemas — degrade-safe branches (real worker)", () =
       result.diagnostics.some((d) => /whose canonical alias A could not be resolved/.test(d)),
     ).toBe(true)
   }, 30_000)
+
+  it("SAME-NAME DUPLICATE: a duplicate whose typeName equals the canonical is dropped silently", () => {
+    // L227-233: a binding carries two targets with the SAME typeName (e.g. `export const
+    // nodeSchema` plus `export type Node = Infer<typeof nodeSchema>`). The canonical already
+    // emits `type Node`; the duplicate's typeName === canonicalName, so a thin `type Node = Node`
+    // would be circular (TS2456). It is dropped with no re-export and no diagnostic.
+    const file = fixture(
+      `import { object, optional, recursive } from "@tskm/core"\n` +
+        `export const nodeSchema = recursive((self) => object({ next: optional(self) }))\n`,
+    )
+    const result = resolveRecursiveSchemas(
+      file,
+      [
+        target({ name: "nodeSchema", typeName: "Node" }),
+        target({ name: "nodeSchema", typeName: "Node", origin: "alias" }),
+      ],
+      options(dirname(file)),
+    )
+
+    // Exactly one resolution for Node, and no re-export / duplicate diagnostic at all.
+    expect(result.resolutions.filter((r) => r.typeName === "Node")).toHaveLength(1)
+    expect(result.resolutions.find((r) => r.typeName === "Node")?.skeleton).toContain(
+      "next: Node | undefined",
+    )
+    expect(result.diagnostics.some((d) => /duplicates the alias/.test(d))).toBe(false)
+  }, 30_000)
 })
 
 describe("bareAliasCycleNames (#22 G4: non-compiling bare-alias cycles)", () => {

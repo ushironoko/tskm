@@ -96,6 +96,48 @@ describe("walkSchema — tuple/union with malformed item arrays", () => {
       'Choice: cannot convert schema type "union" to JSON Schema: options is not an array.',
     ])
   })
+
+  it("a picklist whose options is not an array is an error, not an empty enum", () => {
+    const r = schemaToJsonSchema(
+      { kind: "schema", type: "picklist", options: "nope" },
+      { rootName: "Pick" },
+    )
+    expect(r.errors).toEqual([
+      'Pick: cannot convert schema type "picklist" to JSON Schema: options is not an array.',
+    ])
+  })
+
+  it("a discriminated union whose options is not an array is an error", () => {
+    const r = schemaToJsonSchema(
+      { kind: "schema", type: "discriminated_union", options: "nope" },
+      { rootName: "Tagged" },
+    )
+    expect(r.errors).toEqual([
+      'Tagged: cannot convert schema type "discriminated_union" to JSON Schema: options is not an array.',
+    ])
+  })
+
+  it("an array whose item is not a schema object is an error, not an open array", () => {
+    const r = schemaToJsonSchema({ kind: "schema", type: "array", item: 42 }, { rootName: "List" })
+    expect(r.errors).toEqual([
+      'List: cannot convert schema type "array" to JSON Schema: item is not a schema.',
+    ])
+  })
+
+  it("a record whose value is not a schema object is an error", () => {
+    const r = schemaToJsonSchema({ kind: "schema", type: "record", value: 42 }, { rootName: "Map" })
+    expect(r.errors).toEqual([
+      'Map: cannot convert schema type "record" to JSON Schema: value is not a schema.',
+    ])
+  })
+
+  it("a pipe whose base is not a schema object is an error", () => {
+    const r = schemaToJsonSchema(
+      { kind: "schema", type: "string", pipe: [42] },
+      { rootName: "Piped" },
+    )
+    expect(r.errors).toEqual(["Piped: cannot convert a pipe whose base is not a schema object."])
+  })
 })
 
 describe("walkObject — optional/nullish keys are excluded from required", () => {

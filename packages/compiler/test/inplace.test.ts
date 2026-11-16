@@ -170,6 +170,32 @@ describe("collectInplaceTargets", () => {
     expect(targets.length).toBe(2)
   })
 
+  it("dedupes two aliases that share a typeName, keeping the first", () => {
+    // Distinct from the alias-vs-sentinel dedupe above: here both entries are aliases
+    // with the same typeName, so the second is dropped by the alias-loop `seen` guard.
+    const aSchema: DiscoveredSchema = {
+      name: "aSchema",
+      typeName: "User",
+      origin: "alias",
+      recursive: false,
+      capability: tskmCapability(false),
+    }
+    const bSchema: DiscoveredSchema = {
+      name: "bSchema",
+      typeName: "User",
+      origin: "alias",
+      recursive: false,
+      capability: tskmCapability(false),
+    }
+
+    const { targets, diagnostics } = collectInplaceTargets("", [aSchema, bSchema])
+
+    expect(diagnostics).toEqual([])
+    expect(targets.length).toBe(1)
+    expect(targets[0]?.name).toBe("aSchema")
+    expect(targets[0]?.typeName).toBe("User")
+  })
+
   it("dedupes by typeName when an alias already matches a sentinel", () => {
     const hash = expectedHash("{ id: string }", "userSchema", "User")
     const sentinel = [
@@ -392,6 +418,43 @@ describe("emitInplace — CRLF round-trip", () => {
     })
     expect(result.changed).toBe(false)
     expect(result.content).toBe(crlf)
+  })
+})
+
+describe("emitInplace — sentinel wins over a stray Infer marker for the same type", () => {
+  it("uses the sentinel region and leaves a same-type Infer marker line untouched", () => {
+    // A file that has BOTH a sentinel region for `User` and a later stray single-line
+    // `Infer<typeof userSchema>` marker for the same type. locateInferMarkers must skip
+    // the marker (its typeName is already taken by the sentinel), so only the sentinel
+    // region is rewritten and the stray line survives verbatim.
+    const source = [
+      "// @tskm-gen User from userSchema #00000000",
+      "export type User = { id: string }",
+      "// @tskm-end User",
+      "export type User = Infer<typeof userSchema>",
+      "",
+    ].join("\n")
+    const file = tmpFile("sentinel-wins.ts", source)
+
+    const result = emitInplace(
+      file,
+      source,
+      [{ typeName: "User", typeString: "{ id: string; age: number }" }],
+      { version: VERSION },
+    )
+
+    expect(result.changed).toBe(true)
+    expect(result.typeNames).toEqual(["User"])
+    // The sentinel region is the only thing rewritten; no second region is minted for
+    // the stray marker.
+    const genCount = result.content.split("// @tskm-gen User").length - 1
+    expect(genCount).toBe(1)
+    // The new hash lands on the sentinel region and the updated body is present.
+    const newHash = expectedHash("{ id: string; age: number }", "userSchema", "User")
+    expect(result.content).toContain(`// @tskm-gen User from userSchema #${newHash}`)
+    expect(result.content).toContain("age: number")
+    // The stray Infer marker line is left exactly as it was.
+    expect(result.content).toContain("export type User = Infer<typeof userSchema>")
   })
 })
 

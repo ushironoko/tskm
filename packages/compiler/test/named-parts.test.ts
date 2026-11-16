@@ -153,6 +153,18 @@ describe("referenceNamedParts: object parts", () => {
       ])[1],
     ).toBe("{ a: { street: string; city: string }")
   })
+
+  it("leaves a body with a stray closing brace untouched (more `}` than `{`)", () => {
+    // The extra trailing `}` pops the brace stack empty, so scanBraces returns undefined and the
+    // malformed body is returned verbatim — never partially rewritten even though Address matches.
+    const broken = `{ a: ${ADDRESS}; }}`
+    expect(
+      rewrite([
+        ["Address", ADDRESS],
+        ["Broken", broken],
+      ])[1],
+    ).toBe(broken)
+  })
 })
 
 describe("referenceNamedParts: unions of object literals", () => {
@@ -659,5 +671,13 @@ describe("referenceNamedParts: round-trip fuzz", () => {
         expect(new RegExp(`\\b${name}\\b`).test(out)).toBe(false)
       }
     }
+  })
+})
+
+describe("referenceNamedParts: nothing to factor out", () => {
+  it("returns the entries unchanged when no object or union parts are present", () => {
+    // Primitive bodies carry no nested object/union literal, so there is nothing to hoist or
+    // reference: the function returns the original entries untouched (fast-path short circuit).
+    expect(rewrite([["A", "string"], ["B", "number"]])).toEqual(["string", "number"])
   })
 })

@@ -476,3 +476,49 @@ describe("schemaToTypeString — keyed record (#19)", () => {
     ).toBe('{ [K in "a" | "b"]?: number }')
   })
 })
+
+describe("schemaToTypeString — degenerate and spelling variants", () => {
+  it("an option-less picklist, union, or discriminated union is the never type", () => {
+    // An empty set of options describes no value, which is `never`, not an empty union.
+    expect(walk(s.picklist([])).typeString).toBe("never")
+    expect(walk(s.union([])).typeString).toBe("never")
+    expect(walk({ kind: "schema", type: "discriminated_union", options: [] }).typeString).toBe(
+      "never",
+    )
+  })
+
+  it("renders a compact object body when checker spelling is disabled", () => {
+    // checkerSpelling defaults to true (every member ends in `;`). With it off, the body uses
+    // the walker's own compact `{ a: string }` form, and an entry-less object collapses to `{}`.
+    expect(
+      schemaToTypeString(s.object({ a: s.string() }), {
+        rootName: "Root",
+        typeNames: new Map(),
+        checkerSpelling: false,
+      }).typeString,
+    ).toBe("{ a: string }")
+    expect(
+      schemaToTypeString(s.object({}), {
+        rootName: "Root",
+        typeNames: new Map(),
+        checkerSpelling: false,
+      }).typeString,
+    ).toBe("{}")
+  })
+
+  it("ignores a non-object pipe item and renders the base schema", () => {
+    // A pipe whose item list contains a non-object (e.g. a malformed/null entry) skips that
+    // entry rather than throwing; the base schema's type is what survives.
+    const base = s.string()
+    expect(walk(pipe(base, null)).typeString).toBe("string")
+  })
+
+  it("treats an escaped quote inside a literal as opaque when parenthesizing a compound", () => {
+    // The parens-insertion scan must not mistake the escaped `"` inside the literal for the end
+    // of the string, or it would see a bare `|` inside the quote and wrap at the wrong place.
+    const literalWithQuote = s.literal('a"b')
+    expect(walk(s.array(s.union([literalWithQuote, s.string()]))).typeString).toBe(
+      '("a\\"b" | string)[]',
+    )
+  })
+})
