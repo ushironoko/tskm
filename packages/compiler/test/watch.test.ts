@@ -47,6 +47,16 @@ describe("planWatchActions — the gate", () => {
     expect(plan.files).toEqual([])
   })
 
+  it("ignores a non-.ts change that is not the tsconfig or a known source", () => {
+    // A plain data file is not a generated artifact, not the tsconfig, not a known source,
+    // and not a `.ts` module: it cannot affect generation, so it is dropped rather than
+    // forcing a conservative full rebuild.
+    expect(planWatchActions([change(`${root}/src/data.csv`)], ctx)).toEqual({
+      full: false,
+      files: [],
+    })
+  })
+
   it("drops generated artifacts", () => {
     const plan = planWatchActions(
       [change(`${root}/src/a.gen.ts`), change(`${root}/src/b.schema.json`)],

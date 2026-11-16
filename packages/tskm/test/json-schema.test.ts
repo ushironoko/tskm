@@ -235,13 +235,21 @@ describe("Standard JSON Schema — representable schemas", () => {
     // cycle and reserves the def name; each later sighting of the SAME hoisted schema must emit
     // a plain $ref to it rather than re-inlining or re-hoisting the body.
     const node = recursive((self) => object({ next: optional(self), peers: array(self) }))
-    const json = output(node)
-    expect(json.$ref).toBe("#/$defs/recursive")
-    const def = (json.$defs as Record<string, { properties: Record<string, unknown> }>).recursive
-    expect(def.properties.next).toEqual({ $ref: "#/$defs/recursive" })
-    expect(def.properties.peers).toEqual({
-      type: "array",
-      items: { $ref: "#/$defs/recursive" },
+    // The node is referenced from two sibling fields; both later sightings emit a plain $ref to
+    // the single hoisted def rather than re-inlining or re-hoisting the body.
+    expect(output(node)).toEqual({
+      $ref: "#/$defs/recursive",
+      $defs: {
+        recursive: {
+          type: "object",
+          properties: {
+            next: { $ref: "#/$defs/recursive" },
+            peers: { type: "array", items: { $ref: "#/$defs/recursive" } },
+          },
+          required: ["peers"],
+          additionalProperties: false,
+        },
+      },
     })
   })
 
@@ -539,7 +547,7 @@ describe("Standard JSON Schema — errors", () => {
   it("refuses a transform on output but describes the pre-transform schema on input", () => {
     const widened = pipe(
       string(),
-      transform((value) => value.length),
+      transform((value: string) => value.length),
     )
     // The transform's output type is not reified at runtime, so output() cannot describe it.
     expect(() => output(widened)).toThrow(

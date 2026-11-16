@@ -120,90 +120,74 @@ describe("TsgoClient on the /dev/fd fallback", () => {
 // early-return branches the overlay scenarios never touch. A real subprocess spawns, so each
 // test caps its own time so a hung checker fails loudly instead of stalling the run.
 describe("TsgoClient construction and update guards", () => {
-  it(
-    "closes the checker and rethrows the original failure when the tsconfig opens no projects",
-    () => {
-      // A tsconfig path the checker can load a snapshot for but that resolves to no configured
-      // project drives the capability probe's "no projects" throw. The constructor must dispose
-      // the just-spawned channel (its inner api.close()) and re-raise that same error, not mask
-      // it with a close-time failure.
-      const root = mkdtempSync(join(tmpdir(), "tskm-noproj-"))
-      roots.push(root)
-      const missingConfig = join(root, "does-not-exist.tsconfig.json")
-      expect(() =>
-        createTsgoClient({ cwd: root, tsconfigPath: missingConfig }),
-      ).toThrow(`tskm: tsconfig opened no projects: ${missingConfig}`)
-    },
-    30_000,
-  )
+  it("closes the checker and rethrows the original failure when the tsconfig opens no projects", () => {
+    // A tsconfig path the checker can load a snapshot for but that resolves to no configured
+    // project drives the capability probe's "no projects" throw. The constructor must dispose
+    // the just-spawned channel (its inner api.close()) and re-raise that same error, not mask
+    // it with a close-time failure.
+    const root = mkdtempSync(join(tmpdir(), "tskm-noproj-"))
+    roots.push(root)
+    const missingConfig = join(root, "does-not-exist.tsconfig.json")
+    expect(() => createTsgoClient({ cwd: root, tsconfigPath: missingConfig })).toThrow(
+      `tskm: tsconfig opened no projects: ${missingConfig}`,
+    )
+  }, 30_000)
 
-  it(
-    "treats updateFiles with no created/changed/deleted paths as a no-op",
-    () => {
-      const { root, tsconfig } = project()
-      const client = createTsgoClient({ cwd: root, tsconfigPath: tsconfig })
-      const query = join(root, "src/noop-update.tskm-query.ts")
-      const body = `import { user } from "./schema"\ndeclare const __q: typeof user\n`
-      try {
-        client.applyOverlay([{ document: query, text: body }])
-        // Neither form commits a snapshot, so the overlay registered above must still resolve.
-        client.updateFiles({})
-        client.updateFiles({ created: [], changed: [], deleted: [] })
-        expect(client.resolveTypeAt(query, body.indexOf("__q"))?.text).toContain("id: number")
-      } finally {
-        client.close()
-      }
-    },
-    30_000,
-  )
+  it("treats updateFiles with no created/changed/deleted paths as a no-op", () => {
+    const { root, tsconfig } = project()
+    const client = createTsgoClient({ cwd: root, tsconfigPath: tsconfig })
+    const query = join(root, "src/noop-update.tskm-query.ts")
+    const body = `import { user } from "./schema"\ndeclare const __q: typeof user\n`
+    try {
+      client.applyOverlay([{ document: query, text: body }])
+      // Neither form commits a snapshot, so the overlay registered above must still resolve.
+      client.updateFiles({})
+      client.updateFiles({ created: [], changed: [], deleted: [] })
+      expect(client.resolveTypeAt(query, body.indexOf("__q"))?.text).toContain("id: number")
+    } finally {
+      client.close()
+    }
+  }, 30_000)
 
-  it(
-    "treats clearOverlay for an unregistered document as a no-op",
-    () => {
-      const { root, tsconfig } = project()
-      const client = createTsgoClient({ cwd: root, tsconfigPath: tsconfig })
-      const query = join(root, "src/kept.tskm-query.ts")
-      const body = `import { user } from "./schema"\ndeclare const __q: typeof user\n`
-      try {
-        client.applyOverlay([{ document: query, text: body }])
-        // Clearing a document that was never registered removes nothing and commits no
-        // snapshot, so the real overlay document is untouched and still resolves.
-        client.clearOverlay([join(root, "src/never-registered.tskm-query.ts")])
-        expect(client.resolveTypeAt(query, body.indexOf("__q"))?.text).toContain("id: number")
-      } finally {
-        client.close()
-      }
-    },
-    30_000,
-  )
+  it("treats clearOverlay for an unregistered document as a no-op", () => {
+    const { root, tsconfig } = project()
+    const client = createTsgoClient({ cwd: root, tsconfigPath: tsconfig })
+    const query = join(root, "src/kept.tskm-query.ts")
+    const body = `import { user } from "./schema"\ndeclare const __q: typeof user\n`
+    try {
+      client.applyOverlay([{ document: query, text: body }])
+      // Clearing a document that was never registered removes nothing and commits no
+      // snapshot, so the real overlay document is untouched and still resolves.
+      client.clearOverlay([join(root, "src/never-registered.tskm-query.ts")])
+      expect(client.resolveTypeAt(query, body.indexOf("__q"))?.text).toContain("id: number")
+    } finally {
+      client.close()
+    }
+  }, 30_000)
 
-  it(
-    "rethrows a checker error that is not a missing source file",
-    () => {
-      const { root, tsconfig } = project()
-      const client = createTsgoClient({ cwd: root, tsconfigPath: tsconfig })
-      const query = join(root, "src/bad-position.tskm-query.ts")
-      const body = `import { user } from "./schema"\ndeclare const __q: typeof user\n`
+  it("rethrows a checker error that is not a missing source file", () => {
+    const { root, tsconfig } = project()
+    const client = createTsgoClient({ cwd: root, tsconfigPath: tsconfig })
+    const query = join(root, "src/bad-position.tskm-query.ts")
+    const body = `import { user } from "./schema"\ndeclare const __q: typeof user\n`
+    try {
+      client.applyOverlay([{ document: query, text: body }])
+      // A negative position is an invalid request, not a missing document: the "source file
+      // not found" guard does not match, so resolveAt must propagate the error rather than
+      // swallow it as a null (fail-closed) result.
+      let thrown: unknown
       try {
-        client.applyOverlay([{ document: query, text: body }])
-        // A negative position is an invalid request, not a missing document: the "source file
-        // not found" guard does not match, so resolveAt must propagate the error rather than
-        // swallow it as a null (fail-closed) result.
-        let thrown: unknown
-        try {
-          client.resolveTypeAt(query, -1)
-        } catch (error) {
-          thrown = error
-        }
-        expect(thrown).toBeInstanceOf(Error)
-        expect((thrown as Error).message).not.toContain("source file not found")
-        // The valid document still resolves afterward, proving the throw was the query's, not
-        // a wrecked session.
-        expect(client.resolveTypeAt(query, body.indexOf("__q"))?.text).toContain("id: number")
-      } finally {
-        client.close()
+        client.resolveTypeAt(query, -1)
+      } catch (error) {
+        thrown = error
       }
-    },
-    30_000,
-  )
+      expect(thrown).toBeInstanceOf(Error)
+      expect((thrown as Error).message).not.toContain("source file not found")
+      // The valid document still resolves afterward, proving the throw was the query's, not
+      // a wrecked session.
+      expect(client.resolveTypeAt(query, body.indexOf("__q"))?.text).toContain("id: number")
+    } finally {
+      client.close()
+    }
+  }, 30_000)
 })

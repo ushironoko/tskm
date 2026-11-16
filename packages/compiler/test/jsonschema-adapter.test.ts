@@ -167,9 +167,7 @@ describe("schemaToJsonSchemaViaAdapter — a vendor conversion failure is reject
       ctx({
         rootName: "Doc",
         importModule: (specifier) =>
-          specifier === "@valibot/to-json-schema"
-            ? Promise.resolve({})
-            : import(specifier),
+          specifier === "@valibot/to-json-schema" ? Promise.resolve({}) : import(specifier),
       }),
     )
     expect(outcome.kind).toBe("rejected")

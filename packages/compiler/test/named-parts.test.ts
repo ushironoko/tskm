@@ -678,6 +678,11 @@ describe("referenceNamedParts: nothing to factor out", () => {
   it("returns the entries unchanged when no object or union parts are present", () => {
     // Primitive bodies carry no nested object/union literal, so there is nothing to hoist or
     // reference: the function returns the original entries untouched (fast-path short circuit).
-    expect(rewrite([["A", "string"], ["B", "number"]])).toEqual(["string", "number"])
+    expect(
+      rewrite([
+        ["A", "string"],
+        ["B", "number"],
+      ]),
+    ).toEqual(["string", "number"])
   })
 })

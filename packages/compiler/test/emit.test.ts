@@ -360,9 +360,9 @@ describe("renderStaticJsonSchemaConsts", () => {
   it("treats docs whose only target cell has neither input nor output as empty", () => {
     // A present target key with an empty side object still has no input/output, so the cell check
     // returns false and nothing is rendered.
-    expect(renderStaticJsonSchemaConsts([{ exportName: "s", docs: { "draft-07": {} } }], false)).toBe(
-      "",
-    )
+    expect(
+      renderStaticJsonSchemaConsts([{ exportName: "s", docs: { "draft-07": {} } }], false),
+    ).toBe("")
   })
 
   it("skips a binding whose exportName is not a valid identifier", () => {
