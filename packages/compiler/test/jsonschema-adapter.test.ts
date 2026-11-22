@@ -436,3 +436,24 @@ describe("schemaToJsonSchemaViaAdapter — zod fallback (no native ~standard.jso
     expect(outcome.errors[0]).toContain("unrepresentable type")
   })
 })
+
+describe("schemaToJsonSchemaViaAdapter — converter edge cases", () => {
+  it("converts a zod enum, exercising the enum branch of the non-finite guard", () => {
+    return schemaToJsonSchemaViaAdapter(z.enum(["a", "b"]), ctx()).then((outcome) => {
+      expect(outcome.kind).toBe("converted")
+      if (outcome.kind !== "converted") return
+      expect(outcome.schema.type).toBe("string")
+      expect(outcome.schema.enum).toEqual(["a", "b"])
+    })
+  })
+
+  it("rejects a valibot schema when the installed converter has no toJsonSchema export", async () => {
+    const outcome = await schemaToJsonSchemaViaAdapter(
+      v.string(),
+      ctx({ importModule: () => Promise.resolve({}) }),
+    )
+    expect(outcome.kind).toBe("rejected")
+    if (outcome.kind !== "rejected") return
+    expect(outcome.errors[0]).toContain('"@valibot/to-json-schema" has no toJsonSchema export')
+  })
+})

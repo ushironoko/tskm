@@ -635,3 +635,49 @@ describe("schemaToJsonSchema — template literals", () => {
     })
   })
 })
+
+describe("schemaToJsonSchema — malformed nodes report a scoped error and emit {}", () => {
+  it("picklist whose options are not an array", () => {
+    const r = schemaToJsonSchema({ kind: "schema", type: "picklist", options: "x" })
+    expect(r.schema).toEqual({})
+    expect(r.errors).toEqual([
+      'schema: cannot convert schema type "picklist" to JSON Schema: options is not an array.',
+    ])
+  })
+
+  it("array whose item is not a schema", () => {
+    const r = schemaToJsonSchema({ kind: "schema", type: "array", item: "x" })
+    expect(r.errors).toEqual([
+      'schema: cannot convert schema type "array" to JSON Schema: item is not a schema.',
+    ])
+  })
+
+  it("record whose value is not a schema", () => {
+    const r = schemaToJsonSchema({ kind: "schema", type: "record", value: "x" })
+    expect(r.errors).toEqual([
+      'schema: cannot convert schema type "record" to JSON Schema: value is not a schema.',
+    ])
+  })
+
+  it("discriminated_union whose options are not an array", () => {
+    const r = schemaToJsonSchema({ kind: "schema", type: "discriminated_union", options: "x" })
+    expect(r.errors).toEqual([
+      'schema: cannot convert schema type "discriminated_union" to JSON Schema: options is not an array.',
+    ])
+  })
+
+  it("a pipe whose base is not a schema object", () => {
+    const r = schemaToJsonSchema({ kind: "schema", pipe: ["x"] })
+    expect(r.schema).toEqual({})
+    expect(r.errors).toEqual(["schema: cannot convert a pipe whose base is not a schema object."])
+  })
+
+  it("a numeric-keyword requirement of null names the offending value kind", () => {
+    const r = schemaToJsonSchema(
+      pipe(s.number(), { kind: "validation", type: "min_value", requirement: null }),
+    )
+    expect(r.errors).toEqual([
+      'schema: cannot convert pipe item "min_value" to JSON Schema: its requirement is of type null, not a finite number, so it has no minimum keyword.',
+    ])
+  })
+})

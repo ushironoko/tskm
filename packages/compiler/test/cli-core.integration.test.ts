@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { main } from "../src/cli-core.ts"
@@ -157,6 +158,72 @@ describe("cli-core main() — real command execution", () => {
       expect(stderr).toContain("approximated nonfinite as a schema no JSON value matches.")
     } finally {
       rmSync(limitsOutput, { force: true })
+    }
+  }, 60_000)
+
+  it("`gen` reports no types and echoes the no-match diagnostic when nothing is included", async () => {
+    // A fresh project whose default `src/**/*.ts` glob matches no file: generateAll
+    // short-circuits to `{ files: [], diagnostics: ["tskm: no source files matched …"] }`.
+    // This drives runGen's diagnostics loop (the diagnostic reaches stderr) AND its
+    // empty-files branch ("tskm: no types generated.") without spawning a tsgo query.
+    const emptyRoot = mkdtempSync(join(tmpdir(), "tskm-gen-empty-"))
+    try {
+      mkdirSync(join(emptyRoot, "src"), { recursive: true })
+      writeFileSync(
+        join(emptyRoot, "tsconfig.json"),
+        JSON.stringify({ compilerOptions: { noEmit: true }, include: ["src"] }),
+      )
+      install(["gen", "--root", emptyRoot])
+      await main()
+
+      // runGen wrote no "wrote"/"unchanged" line (files is empty) and announced the empty run.
+      expect(stdout).toContain("tskm: no types generated.")
+      expect(stdout).not.toContain("tskm: wrote")
+      // The lone diagnostic from generateAll was forwarded to stderr by runGen's loop.
+      expect(stderr).toContain("tskm: no source files matched")
+      expect(process.exitCode).toBe(0)
+    } finally {
+      rmSync(emptyRoot, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it("`gen` with jsonSchema.emit standard fails closed on a bigint: exit 1 and the static error is reported", async () => {
+    // Reuse the static-json fixture (userSchema is representable, amountSchema is a bigint
+    // that has no JSON Schema form). A config with emit "standard" makes runGen embed static
+    // JSON literals into the sidecar; the bigint becomes a static error, driving runGen's
+    // `result.errors` branch: the per-error line + the summary reach stderr, and exitCode is 1.
+    const staticRoot = fileURLToPath(new URL("./fixtures/static-json", import.meta.url))
+    const genFile = join(staticRoot, "src", "user.schema.gen.ts")
+    const queryFile = join(staticRoot, "src", "user.schema.tskm-query.ts")
+    const configFile = join(staticRoot, "tskm.config.mjs")
+    const executable = testTsgoExecutable()
+    try {
+      // main() -> generate() loads this config from the fixture root; the CLI has no emit flag.
+      const config: Record<string, unknown> = {
+        include: ["src/user.schema.ts"],
+        jsonSchema: { emit: "standard" },
+        worker: { execPath: process.execPath },
+      }
+      if (executable !== undefined) config.executable = executable
+      writeFileSync(configFile, `export default ${JSON.stringify(config)}\n`)
+
+      install(["gen", "--root", staticRoot])
+      await main()
+
+      // The representable schema's sidecar was still written (fail-closed is per-schema).
+      expect(existsSync(genFile)).toBe(true)
+      expect(stdout).toContain("tskm: wrote")
+      expect(stdout).toContain("user.schema.gen.ts")
+      // The bigint export produced a static error: both the detail line and the summary
+      // reach stderr, and the process exits nonzero so CI sees the failure.
+      expect(stderr).toContain("amountSchema")
+      expect(stderr).toContain("bigint has no JSON representation")
+      expect(stderr).toContain("tskm: gen failed with 2 static JSON Schema error(s)")
+      expect(process.exitCode).toBe(1)
+    } finally {
+      for (const f of [genFile, queryFile, configFile]) {
+        if (existsSync(f)) rmSync(f)
+      }
     }
   }, 60_000)
 

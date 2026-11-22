@@ -180,6 +180,102 @@ describe("resolveRecursiveSchemas — degrade-safe branches (real worker)", () =
       result.diagnostics.some((d) => /whose canonical alias A could not be resolved/.test(d)),
     ).toBe(true)
   }, 30_000)
+
+  it("NOT ALIASABLE: a flag-routed non-recursive sibling with an empty structural body uses the checker type", () => {
+    // L183-186: `foreignSchema` is a non-tskm Standard Schema — extractable (so the worker
+    // emits an entry) but NOT tskm-walkable, so the walker returns an empty typeString. Routed
+    // as a non-recursive sibling (target.recursive = false), it must be skipped with the
+    // "not a structurally-aliasable schema" diagnostic so the CHECKER type stands, never
+    // overwriting it with an empty alias. The real recursive root beside it still resolves.
+    const file = fixture(
+      `import { object, optional, recursive } from "@tskm/core"\n` +
+        `export const nodeSchema = recursive((self) => object({ next: optional(self) }))\n` +
+        `export const foreignSchema = { "~standard": { vendor: "zod", version: 1 } }\n`,
+    )
+    const result = resolveRecursiveSchemas(
+      file,
+      [
+        target({ name: "nodeSchema", typeName: "Node" }),
+        target({ name: "foreignSchema", typeName: "Foreign", recursive: false }),
+      ],
+      options(dirname(file)),
+    )
+
+    // The foreign sibling produced no resolution and reported the checker-fallback diagnostic.
+    expect(result.resolutions.find((r) => r.typeName === "Foreign")).toBeUndefined()
+    expect(
+      result.diagnostics.some((d) =>
+        /"foreignSchema" is not a structurally-aliasable schema; using the checker-resolved type for Foreign\./.test(
+          d,
+        ),
+      ),
+    ).toBe(true)
+    // The real recursive() root beside it still resolves to its structural body.
+    const node = result.resolutions.find((r) => r.typeName === "Node")
+    expect(node?.skeleton).toContain("next: Node | undefined")
+  }, 30_000)
+
+  it("BARE-ALIAS CYCLE: a mutual-lazy pair rendering as `type A = B; type B = A` is dropped as non-compiling", () => {
+    // L209-220: two bare mutual `lazy` schemas each resolve to nothing but the other's alias
+    // name, so the worker emits `type A = B` and `type B = A` — a TS2456 cycle. The caller must
+    // detect the cycle, drop BOTH resolutions, and emit the "bare alias cycle" diagnostic for
+    // each so the CHECKER type stands instead of a non-compiling sidecar (issue #22 review, G4).
+    const file = fixture(
+      `import { lazy } from "@tskm/core"\n` +
+        `export const aSchema = lazy(() => bSchema)\n` +
+        `export const bSchema = lazy(() => aSchema)\n`,
+    )
+    const result = resolveRecursiveSchemas(
+      file,
+      [
+        target({ name: "aSchema", typeName: "A", recursive: false }),
+        target({ name: "bSchema", typeName: "B", recursive: false }),
+      ],
+      options(dirname(file)),
+    )
+
+    // Both cyclic bare aliases are spliced out — nothing is emitted for this pair.
+    expect(result.resolutions).toEqual([])
+    // Each reports the bare-alias-cycle fallback.
+    expect(
+      result.diagnostics.some((d) =>
+        /"A" resolves to a bare alias cycle \(e\.g\. mutual lazy\)/.test(d),
+      ),
+    ).toBe(true)
+    expect(
+      result.diagnostics.some((d) =>
+        /"B" resolves to a bare alias cycle \(e\.g\. mutual lazy\)/.test(d),
+      ),
+    ).toBe(true)
+  }, 30_000)
+
+  it("DUPLICATE SAME-NAME ALIAS: a duplicate target with the same typeName on the same binding is dropped silently", () => {
+    // L227-233: two targets share BOTH the export binding (nodeSchema) and the emitted typeName
+    // (Node) — the in-module backstop for `export const nodeSchema` + two identical
+    // `export type Node = Infer<typeof nodeSchema>`. The duplicate's `type Node = Node` would be
+    // circular (TS2456), so it is dropped SILENTLY (no re-export, no diagnostic); the single
+    // canonical Node still resolves to its real structural body.
+    const file = fixture(
+      `import { object, optional, recursive } from "@tskm/core"\n` +
+        `export const nodeSchema = recursive((self) => object({ next: optional(self) }))\n`,
+    )
+    const result = resolveRecursiveSchemas(
+      file,
+      [
+        target({ name: "nodeSchema", typeName: "Node" }),
+        target({ name: "nodeSchema", typeName: "Node", origin: "alias" }),
+      ],
+      options(dirname(file)),
+    )
+
+    // Exactly one resolution survives (the canonical); the duplicate was dropped silently.
+    expect(result.resolutions).toHaveLength(1)
+    const node = result.resolutions[0]
+    expect(node?.typeName).toBe("Node")
+    expect(node?.skeleton).toContain("next: Node | undefined")
+    // No re-export / duplicate diagnostic was produced for the silent drop.
+    expect(result.diagnostics.some((d) => /duplicates the alias/.test(d))).toBe(false)
+  }, 30_000)
 })
 
 describe("bareAliasCycleNames (#22 G4: non-compiling bare-alias cycles)", () => {

@@ -476,3 +476,34 @@ describe("schemaToTypeString — keyed record (#19)", () => {
     ).toBe('{ [K in "a" | "b"]?: number }')
   })
 })
+
+describe("schemaToTypeString — empty composite and formatting edges", () => {
+  it("an empty picklist, union, or discriminated_union collapses to never", () => {
+    expect(walk(s.picklist([])).typeString).toBe("never")
+    expect(walk(s.union([])).typeString).toBe("never")
+    expect(walk({ kind: "schema", type: "discriminated_union", options: [] }).typeString).toBe(
+      "never",
+    )
+  })
+
+  it("checkerSpelling:false prints an object without the trailing member semicolon", () => {
+    const opts = { rootName: "Root", typeNames: new Map<object, string>(), checkerSpelling: false }
+    expect(schemaToTypeString(s.object({ a: s.string() }), opts).typeString).toBe("{ a: string }")
+    expect(schemaToTypeString(s.object({}), opts).typeString).toBe("{}")
+  })
+
+  it("a non-object pipe item is skipped and the base type is kept", () => {
+    const result = walk(pipe(s.string(), null))
+    expect(result.typeString).toBe("string")
+    expect(result.unsupported).toBe(false)
+  })
+
+  it("parenthesizing a union scans past an escaped backslash inside a string literal", () => {
+    // The literal value is the three characters a\b; rendered as "a\\b" the compound-type
+    // scanner must step over the escaped backslash rather than mistaking it for a delimiter
+    // when it decides the array element needs parentheses.
+    const result = walk(s.array(s.union([s.literal("a\\b"), s.string()])))
+    expect(result.typeString).toBe('("a\\\\b" | string)[]')
+    expect(result.unsupported).toBe(false)
+  })
+})

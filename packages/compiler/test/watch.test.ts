@@ -55,6 +55,16 @@ describe("planWatchActions — the gate", () => {
     expect(plan).toEqual({ full: false, files: [] })
   })
 
+  it("ignores a change to a non-.ts file that is not a generated artifact", () => {
+    // A stylesheet is not our artifact, not the tsconfig, not a known source, and not a
+    // rename, so it falls through to the extension gate and is dropped rather than forcing
+    // a rebuild.
+    expect(planWatchActions([change(`${root}/src/styles.css`)], ctx)).toEqual({
+      full: false,
+      files: [],
+    })
+  })
+
   it("dedupes repeated changes to the same source", () => {
     const plan = planWatchActions([change(sourceA), change(sourceA)], ctx)
     expect(plan).toEqual({ full: false, files: [sourceA] })

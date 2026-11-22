@@ -6,6 +6,7 @@ import {
   emitSidecar,
   reindentType,
   renderSidecar,
+  renderStaticJsonSchemaConsts,
   sidecarPath,
 } from "../src/emit.ts"
 import type { ResolvedSchema } from "../src/resolve.ts"
@@ -339,5 +340,35 @@ describe("static JSON Schema literals", () => {
   it("leaves a type-only sidecar unchanged when no documents are passed", () => {
     const resolved = [{ typeName: "User", typeString: "string" }]
     expect(renderSidecar(resolved)).toBe(renderSidecar(resolved, { staticJsonSchema: [] }))
+  })
+})
+
+describe("reindentType — unbalanced input", () => {
+  it("falls back to normal bracket breaking when a '[' has no matching ']'", () => {
+    // The index-signature fast-path needs a matching `]` right before `:`. With an
+    // unbalanced `[`, matchingBracket finds no close, so the `[` is broken like any
+    // other open bracket instead — and the pretty-printer never throws on bad input.
+    expect(reindentType("{ a: [b }")).toBe("{\n  a: [\n    b\n  }")
+  })
+})
+
+describe("renderStaticJsonSchemaConsts", () => {
+  it("skips a binding whose export name is not a valid identifier", () => {
+    const docs = { "draft-2020-12": { output: { type: "string" } } } as const
+    expect(renderStaticJsonSchemaConsts([{ exportName: "1bad", docs }], false)).toBe("")
+  })
+
+  it("skips a binding that carries no input or output cell", () => {
+    expect(renderStaticJsonSchemaConsts([{ exportName: "userSchema", docs: {} }], false)).toBe("")
+  })
+
+  it("renders an `as const` block for a binding with at least one cell", () => {
+    const out = renderStaticJsonSchemaConsts(
+      [{ exportName: "userSchema", docs: { "draft-2020-12": { output: { type: "object" } } } }],
+      false,
+    )
+    expect(out).toContain(
+      'export const userSchemaJsonSchema = {"draft-2020-12":{"output":{"type":"object"}}} as const',
+    )
   })
 })

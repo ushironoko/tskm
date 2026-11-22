@@ -230,6 +230,37 @@ describe("Standard JSON Schema — representable schemas", () => {
     expect(Object.keys(defs).sort()).toEqual(["recursive", "recursive_2"])
   })
 
+  it("reuses one $ref when a recursive node appears in sibling positions", () => {
+    // Both properties point at the same recursive node object. The first reference
+    // hoists it into $defs and names it; the second must reuse that name rather than
+    // re-walk the body or mint a second def.
+    const node = recursive((self) => object({ a: optional(self), b: optional(self) }))
+    const schema = output(node)
+    expect(schema.$ref).toBe("#/$defs/recursive")
+    const body = (schema.$defs as Record<string, { properties: Record<string, unknown> }>).recursive
+    expect(body).toBeDefined()
+    expect(body?.properties.a).toEqual({ $ref: "#/$defs/recursive" })
+    expect(body?.properties.b).toEqual({ $ref: "#/$defs/recursive" })
+  })
+
+  it("disambiguates two recursive nodes whose base names collide while both are mid-walk", () => {
+    // `inner` is still being walked (its name lives only in the cycle-guard's live
+    // name map, not yet in $defs) when `outer`'s self-cycle asks for the base name
+    // "recursive". The collision must be seen through the live map, so `inner` keeps
+    // "recursive" and the later one becomes "recursive_2".
+    const inner = recursive((self) => object({ x: optional(self) }))
+    const outer = recursive((self) => object({ y: optional(self), z: inner }))
+    const schema = output(outer)
+    const defs = schema.$defs as Record<string, { properties: Record<string, unknown> }>
+    expect(Object.keys(defs).sort()).toEqual(["recursive", "recursive_2"])
+    // The two distinct recursive nodes resolve to two distinct defs, and `outer`'s body
+    // references `inner` by its disambiguated name.
+    const outerName = schema.$ref as string
+    const outerBody = defs[outerName.replace("#/$defs/", "")]
+    const otherName = Object.keys(defs).find((name) => `#/$defs/${name}` !== outerName) as string
+    expect(outerBody?.properties.z).toEqual({ $ref: `#/$defs/${otherName}` })
+  })
+
   it("returns a fresh document on every call", () => {
     const schema = object({ a: string() })
     const first = output(schema)
@@ -299,6 +330,16 @@ describe("Standard JSON Schema — input and output", () => {
     expect(() =>
       convertToJsonSchema(
         { type: "optional", wrapped: { type: "unknown" }, default: { a: undefined } },
+        "input",
+        draft,
+      ),
+    ).toThrow(/round-trip through JSON/)
+    // A nested non-finite number survives JSON.stringify as `null`, so the value and its
+    // round-trip keep the same keys but differ on a nested leaf — the deep structural
+    // compare must reject it rather than emit a default that misrepresents the runtime value.
+    expect(() =>
+      convertToJsonSchema(
+        { type: "optional", wrapped: { type: "unknown" }, default: { a: Number.NaN } },
         "input",
         draft,
       ),

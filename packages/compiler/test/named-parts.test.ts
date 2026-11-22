@@ -661,3 +661,36 @@ describe("referenceNamedParts: round-trip fuzz", () => {
     }
   })
 })
+
+describe("referenceNamedParts: malformed bodies are left untouched", () => {
+  const ADDRESS = "{ street: string; city: string }"
+
+  it("does not treat a body with an unbalanced closing brace as an object literal", () => {
+    // scanBraces pops an empty stack and returns undefined, so `} oops` is never a candidate
+    // and is returned verbatim.
+    expect(rewrite([["X", "} oops"]])).toEqual(["} oops"])
+  })
+
+  it("leaves a body with an unterminated string literal unchanged", () => {
+    // The quote never closes, so the brace/literal scanners bail and no replacement is made,
+    // even though a real `Address` candidate is present.
+    const bad = '{ a: "unterminated }'
+    expect(
+      rewrite([
+        ["Address", ADDRESS],
+        ["Bad", bad],
+      ])[1],
+    ).toBe(bad)
+  })
+
+  it("leaves a union-shaped body with an unterminated literal operand unchanged", () => {
+    const union = '{ k: "a" } | { k: "b" }'
+    const wrap = `{ x: ${union}; y: "unterminated`
+    expect(
+      rewrite([
+        ["Shape", union],
+        ["Wrap", wrap],
+      ])[1],
+    ).toBe(wrap)
+  })
+})

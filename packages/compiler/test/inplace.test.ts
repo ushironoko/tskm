@@ -407,3 +407,41 @@ describe("emitInplace — unlocatable target", () => {
     expect(result.diagnostics.some((d) => d.includes("Ghost"))).toBe(true)
   })
 })
+
+describe("collectInplaceTargets — alias dedupe", () => {
+  it("keeps only the first alias when two aliases share a typeName", () => {
+    const aliasUser: DiscoveredSchema = {
+      name: "userSchema",
+      typeName: "User",
+      origin: "alias",
+      recursive: false,
+      capability: tskmCapability(false),
+    }
+    const { targets, diagnostics } = collectInplaceTargets("", [aliasUser, aliasUser])
+    expect(targets).toHaveLength(1)
+    expect(targets[0]?.typeName).toBe("User")
+    expect(diagnostics).toEqual([])
+  })
+})
+
+describe("emitInplace — sentinel precedence over a stray Infer marker", () => {
+  it("ignores an Infer marker for a type already owned by a sentinel block", () => {
+    const source = [
+      "// @tskm-gen User from userSchema #00000000",
+      "export type User = string",
+      "// @tskm-end User",
+      "export type User = Infer<typeof userSchema>",
+      "",
+    ].join("\n")
+    const file = tmpFile("taken.ts", source)
+    const resolved: ReadonlyArray<ResolvedSchema> = [{ typeName: "User", typeString: "string" }]
+
+    const result = emitInplace(file, source, resolved, { version: VERSION })
+
+    // The sentinel region owns `User`, so the duplicate Infer line is not converted into a
+    // second managed block — it is left in place verbatim and `User` is emitted once.
+    expect(result.content.match(/@tskm-gen User/g)).toHaveLength(1)
+    expect(result.content).toContain("export type User = Infer<typeof userSchema>")
+    expect(result.typeNames).toEqual(["User"])
+  })
+})
